@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -19,9 +18,9 @@ export default function SubmissionForm({ onBack }: SubmissionFormProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const categories = [
-    { id: "gold-kill", label: "Голд килл", icon: Trophy, color: "text-gaming-success" },
-    { id: "victory", label: "Победа", icon: Target, color: "text-gaming-primary" },
-    { id: "funny", label: "Смешной момент", icon: Zap, color: "text-gaming-warning" },
+    { id: "gold-kill", label: "Голд килл", icon: Trophy, color: "text-gaming-success", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
+    { id: "victory", label: "Победа", icon: Target, color: "text-gaming-primary", bgColor: "bg-gaming-primary/10 border-gaming-primary/20" },
+    { id: "funny", label: "Смешной момент", icon: Zap, color: "text-gaming-warning", bgColor: "bg-gaming-warning/10 border-gaming-warning/20" },
   ];
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -68,7 +67,7 @@ export default function SubmissionForm({ onBack }: SubmissionFormProps) {
     const fileUrl = URL.createObjectURL(selectedFile);
 
     return (
-      <div className="mt-6 p-4 bg-card rounded-lg border">
+      <div className="mt-6 p-4 bg-card/50 rounded-lg border border-border backdrop-blur-sm">
         <div className="flex items-center gap-3 mb-3">
           {isVideo ? (
             <FileVideo className="h-5 w-5 text-gaming-primary" />
@@ -76,7 +75,7 @@ export default function SubmissionForm({ onBack }: SubmissionFormProps) {
             <FileImage className="h-5 w-5 text-gaming-secondary" />
           )}
           <span className="font-medium">{selectedFile.name}</span>
-          <Badge variant="secondary">{(selectedFile.size / 1024 / 1024).toFixed(1)} MB</Badge>
+          <Badge variant="secondary" className="font-gaming">{(selectedFile.size / 1024 / 1024).toFixed(1)} MB</Badge>
         </div>
         <div className="aspect-video bg-muted rounded-lg overflow-hidden">
           {isVideo ? (
@@ -102,30 +101,26 @@ export default function SubmissionForm({ onBack }: SubmissionFormProps) {
   if (isSubmitted) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card className="max-w-md mx-auto text-center">
-          <CardHeader>
-            <div className="w-16 h-16 rounded-full bg-gaming-success/20 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="h-8 w-8 text-gaming-success" />
-            </div>
-            <CardTitle className="font-gaming">Заявка отправлена!</CardTitle>
-            <CardDescription>
-              Твой контент отправлен на модерацию. Мы рассмотрим его в течение 24 часов.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button 
-              onClick={() => {
-                setIsSubmitted(false);
-                setSelectedFile(null);
-                setSelectedCategory("");
-              }}
-              className="w-full"
-              data-testid="button-submit-another"
-            >
-              Отправить еще один
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="max-w-md mx-auto text-center p-8 bg-card/50 backdrop-blur-sm rounded-lg border border-border">
+          <div className="w-16 h-16 rounded-full bg-gaming-success/20 flex items-center justify-center mx-auto mb-6">
+            <CheckCircle className="h-8 w-8 text-gaming-success" />
+          </div>
+          <h1 className="text-2xl font-bold font-gaming mb-4">Заявка отправлена!</h1>
+          <p className="text-muted-foreground mb-6">
+            Твой контент отправлен на модерацию. Мы рассмотрим его в течение 24 часов.
+          </p>
+          <Button 
+            onClick={() => {
+              setIsSubmitted(false);
+              setSelectedFile(null);
+              setSelectedCategory("");
+            }}
+            className="w-full font-gaming"
+            data-testid="button-submit-another"
+          >
+            Отправить еще один
+          </Button>
+        </div>
       </div>
     );
   }
@@ -137,7 +132,7 @@ export default function SubmissionForm({ onBack }: SubmissionFormProps) {
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {onBack && (
-              <Button variant="ghost" size="icon" onClick={onBack} data-testid="button-back">
+              <Button variant="ghost" size="icon" onClick={onBack} data-testid="button-back" className="hover-elevate">
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             )}
@@ -155,108 +150,153 @@ export default function SubmissionForm({ onBack }: SubmissionFormProps) {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
-        <div className="max-w-2xl mx-auto space-y-8">
-          <div className="text-center">
-            <h1 className="text-3xl font-bold font-gaming mb-2">
+        <div className="max-w-6xl mx-auto">
+          {/* Title */}
+          <div className="text-center mb-8">
+            <h1 className="text-4xl font-bold font-gaming mb-2">
               Загрузи свой контент
             </h1>
-            <p className="text-muted-foreground">
+            <p className="text-muted-foreground text-lg">
               Выбери файл и категорию для отправки на модерацию
             </p>
           </div>
 
-          {/* File Upload */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-gaming">Файл</CardTitle>
-              <CardDescription>
-                Загрузи скриншот или видео (макс. 50 МБ)
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div
-                className={cn(
-                  "border-2 border-dashed rounded-lg p-8 text-center transition-colors",
-                  isDragOver 
-                    ? "border-primary bg-primary/5" 
-                    : "border-border hover:border-primary/50"
-                )}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                data-testid="upload-zone"
-              >
-                <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <div className="space-y-2">
-                  <p className="text-lg font-medium">
-                    Перетащи файл сюда или
-                  </p>
-                  <Button
-                    variant="outline"
-                    onClick={() => fileInputRef.current?.click()}
-                    data-testid="button-select-file"
-                  >
-                    Выбери файл
-                  </Button>
-                  <p className="text-sm text-muted-foreground">
-                    Поддерживаются: PNG, JPG, MP4, MOV
+          {/* Main Content Grid */}
+          <div className="grid lg:grid-cols-3 gap-8">
+            {/* File Upload - Takes 2 columns */}
+            <div className="lg:col-span-2">
+              <div className="h-full">
+                <Label className="text-lg font-gaming mb-4 block">Файл</Label>
+                <div
+                  className={cn(
+                    "border-2 border-dashed rounded-lg text-center transition-all duration-300 min-h-[400px] flex flex-col justify-center bg-card/30 backdrop-blur-sm",
+                    isDragOver 
+                      ? "border-primary bg-primary/10 scale-[1.02]" 
+                      : "border-border hover:border-primary/50 hover:bg-card/50"
+                  )}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  data-testid="upload-zone"
+                >
+                  {!selectedFile ? (
+                    <div className="p-8">
+                      <Upload className="h-16 w-16 text-muted-foreground mx-auto mb-6 transition-transform duration-300 hover:scale-110" />
+                      <div className="space-y-4">
+                        <h3 className="text-2xl font-bold font-gaming">
+                          Перетащи файл сюда
+                        </h3>
+                        <p className="text-muted-foreground">
+                          или нажми на кнопку ниже
+                        </p>
+                        <Button
+                          size="lg"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="font-gaming hover-elevate"
+                          data-testid="button-select-file"
+                        >
+                          Выбрать файл
+                        </Button>
+                        <p className="text-sm text-muted-foreground">
+                          Поддерживаются: PNG, JPG, MP4, MOV (макс. 50 МБ)
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-6">
+                      {renderFilePreview()}
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedFile(null);
+                          if (fileInputRef.current) {
+                            fileInputRef.current.value = '';
+                          }
+                        }}
+                        className="mt-4 font-gaming"
+                      >
+                        Выбрать другой файл
+                      </Button>
+                    </div>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Category Selection Sidebar */}
+            <div className="lg:col-span-1">
+              <div className="space-y-6">
+                <div>
+                  <Label className="text-lg font-gaming mb-4 block">Категория</Label>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Выбери тип своего игрового момента
                   </p>
                 </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*,video/*"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-              </div>
 
-              {renderFilePreview()}
-            </CardContent>
-          </Card>
-
-          {/* Category Selection */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-gaming">Категория</CardTitle>
-              <CardDescription>
-                Выбери тип своего игрового момента
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <RadioGroup value={selectedCategory} onValueChange={setSelectedCategory}>
-                <div className="grid gap-4">
+                <RadioGroup value={selectedCategory} onValueChange={setSelectedCategory} className="space-y-4">
                   {categories.map((category) => (
-                    <div key={category.id} className="flex items-center space-x-3">
-                      <RadioGroupItem 
-                        value={category.id} 
-                        id={category.id}
-                        data-testid={`radio-${category.id}`}
-                      />
-                      <Label 
+                    <div key={category.id}>
+                      <label 
                         htmlFor={category.id} 
-                        className="flex items-center gap-3 cursor-pointer flex-1 p-3 rounded-lg hover:bg-accent/50 transition-colors"
+                        className={cn(
+                          "flex items-start gap-4 p-4 rounded-lg border-2 cursor-pointer transition-all duration-300 hover-elevate",
+                          selectedCategory === category.id 
+                            ? category.bgColor + " border-current" 
+                            : "border-border bg-card/30 hover:bg-card/50"
+                        )}
                       >
-                        <category.icon className={cn("h-5 w-5", category.color)} />
-                        <span className="font-gaming">{category.label}</span>
-                      </Label>
+                        <RadioGroupItem 
+                          value={category.id} 
+                          id={category.id}
+                          className="mt-1"
+                          data-testid={`radio-${category.id}`}
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <category.icon className={cn("h-6 w-6", category.color)} />
+                            <span className="font-gaming font-semibold">{category.label}</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            {category.id === 'gold-kill' && 'Эпичные убийства и скиллы'}
+                            {category.id === 'victory' && 'Victory Royale моменты'}
+                            {category.id === 'funny' && 'Забавные игровые ситуации'}
+                          </p>
+                        </div>
+                      </label>
                     </div>
                   ))}
-                </div>
-              </RadioGroup>
-            </CardContent>
-          </Card>
+                </RadioGroup>
 
-          {/* Submit Button */}
-          <Button
-            size="lg"
-            className="w-full text-lg py-6 font-gaming hover-elevate"
-            disabled={!selectedFile || !selectedCategory}
-            onClick={handleSubmit}
-            data-testid="button-submit"
-          >
-            Отправить на модерацию
-          </Button>
+                {/* Submit Button */}
+                <div className="pt-4">
+                  <Button
+                    size="lg"
+                    className="w-full text-lg py-6 font-gaming hover-elevate"
+                    disabled={!selectedFile || !selectedCategory}
+                    onClick={handleSubmit}
+                    data-testid="button-submit"
+                  >
+                    {!selectedFile ? 'Выбери файл' : 
+                     !selectedCategory ? 'Выбери категорию' : 
+                     'Отправить на модерацию'}
+                  </Button>
+                  
+                  {selectedFile && selectedCategory && (
+                    <p className="text-sm text-muted-foreground mt-2 text-center">
+                      Все готово к отправке!
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </main>
     </div>
