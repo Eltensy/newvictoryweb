@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import mapBackground from "@assets/generated_images/Fortnite_gaming_map_background_a9f5dacd.png";
 
 export default function LandingPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -70,51 +71,57 @@ export default function LandingPage() {
         </div>
       </div>
 
-      {/* Info Sections */}
-      <section className="py-20 bg-card/30">
-        <div className="container mx-auto px-4">
-          <div className="max-w-6xl mx-auto">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl font-bold font-gaming mb-4">Как это работает</h2>
-              <p className="text-muted-foreground text-lg">Три простых шага до получения вознаграждения</p>
-            </div>
-            
-            <div className="grid md:grid-cols-3 gap-8">
-              <Card className="hover-elevate">
-                <CardHeader>
-                  <div className="w-12 h-12 rounded-lg bg-primary/20 flex items-center justify-center mb-4">
-                    <Play className="h-6 w-6 text-primary" />
+      {/* Map Section */}
+      <section className="py-20 relative overflow-hidden">
+        <div 
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundImage: `url(${mapBackground})` }}
+        >
+          {/* Dark overlay for better text readability */}
+          <div className="absolute inset-0 bg-black/70"></div>
+        </div>
+        
+        <div className="container mx-auto px-4 relative z-10">
+          <div className="max-w-4xl mx-auto text-center">
+            <div className="bg-black/40 backdrop-blur-sm rounded-2xl p-12 border border-white/10">
+              <h2 className="text-5xl font-bold font-gaming mb-6 text-white">
+                Играйте на нашей карте
+              </h2>
+              <p className="text-white/80 text-xl mb-12">
+                Заходи в игру, записывай лучшие моменты и зарабатывай реальные деньги
+              </p>
+              
+              <div className="grid md:grid-cols-3 gap-8 text-white">
+                <div className="space-y-4">
+                  <div className="w-16 h-16 rounded-full bg-primary/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-primary/50">
+                    <Play className="h-8 w-8 text-primary" />
                   </div>
-                  <CardTitle className="font-gaming">1. Загрузи контент</CardTitle>
-                  <CardDescription>
-                    Загружай скриншоты и видео своих лучших игровых моментов из Fortnite и других игр
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+                  <h3 className="text-xl font-bold font-gaming">1. Загрузи</h3>
+                  <p className="text-white/70">
+                    Скриншоты и видео твоих лучших игровых моментов
+                  </p>
+                </div>
 
-              <Card className="hover-elevate">
-                <CardHeader>
-                  <div className="w-12 h-12 rounded-lg bg-gaming-secondary/20 flex items-center justify-center mb-4">
-                    <Users className="h-6 w-6 text-gaming-secondary" />
+                <div className="space-y-4">
+                  <div className="w-16 h-16 rounded-full bg-gaming-secondary/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-gaming-secondary/50">
+                    <Users className="h-8 w-8 text-gaming-secondary" />
                   </div>
-                  <CardTitle className="font-gaming">2. Модерация</CardTitle>
-                  <CardDescription>
-                    Наша команда проверит твой контент и оценит его качество и уникальность
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+                  <h3 className="text-xl font-bold font-gaming">2. Модерация</h3>
+                  <p className="text-white/70">
+                    Наша команда оценит качество и уникальность контента
+                  </p>
+                </div>
 
-              <Card className="hover-elevate">
-                <CardHeader>
-                  <div className="w-12 h-12 rounded-lg bg-gaming-success/20 flex items-center justify-center mb-4">
-                    <Trophy className="h-6 w-6 text-gaming-success" />
+                <div className="space-y-4">
+                  <div className="w-16 h-16 rounded-full bg-gaming-success/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-gaming-success/50">
+                    <Trophy className="h-8 w-8 text-gaming-success" />
                   </div>
-                  <CardTitle className="font-gaming">3. Получи награду</CardTitle>
-                  <CardDescription>
-                    За качественный контент ты получишь вознаграждение на свой баланс
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+                  <h3 className="text-xl font-bold font-gaming">3. Получи награду</h3>
+                  <p className="text-white/70">
+                    Зарабатывай реальные деньги за качественный контент
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
