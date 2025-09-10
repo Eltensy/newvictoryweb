@@ -89,10 +89,10 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["Inter", "var(--font-sans)"],
+        sans: ["Poppins", "var(--font-sans)"],
         serif: ["var(--font-serif)"],
         mono: ["var(--font-mono)"],
-        gaming: ["Rajdhani", "Inter", "sans-serif"],
+        gaming: ["Orbitron", "Poppins", "sans-serif"],
       },
       keyframes: {
         "accordion-down": {
