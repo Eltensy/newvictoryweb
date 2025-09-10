@@ -7,9 +7,11 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import mapBackground from "@assets/generated_images/Fortnite_gaming_map_background_a9f5dacd.png";
+import UserProfile from "./UserProfile";
 
 export default function LandingPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   const handleEpicLogin = () => {
     console.log("Epic Games login triggered");
@@ -23,7 +25,7 @@ export default function LandingPage() {
   };
 
   if (isLoggedIn) {
-    return <LoggedInSubmissionPage />;
+    return <LoggedInSubmissionPage profileOpen={isProfileOpen} setProfileOpen={setIsProfileOpen} />;
   }
 
   return (
@@ -130,7 +132,7 @@ export default function LandingPage() {
   );
 }
 
-function LoggedInSubmissionPage() {
+function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: boolean; setProfileOpen: (open: boolean) => void }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -258,7 +260,17 @@ function LoggedInSubmissionPage() {
             <Badge variant="secondary" className="font-gaming">
               Баланс: 2,450 ₽
             </Badge>
-            <div className="w-8 h-8 rounded-full bg-primary"></div>
+            <button 
+              onClick={() => setProfileOpen(true)}
+              className="w-8 h-8 rounded-full bg-primary hover:scale-110 transition-transform duration-200 hover-elevate"
+              data-testid="button-profile"
+            >
+              <span className="sr-only">Открыть профиль</span>
+            </button>
+            <UserProfile 
+              isOpen={profileOpen} 
+              onClose={() => setProfileOpen(false)} 
+            />
           </div>
         </div>
       </header>
