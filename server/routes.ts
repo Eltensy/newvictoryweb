@@ -421,15 +421,22 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
       
       // Generate preview/thumbnail for images
       try {
-        if (detectedFileType === 'image') {
+       if (detectedFileType === 'image') {
+        try {
           const previewFilename = `preview-${filename}.webp`;
           previewPath = path.join('./uploads', previewFilename);
-          
+
           await sharp(req.file.buffer)
             .resize(300, 300, { fit: 'cover' })
             .webp({ quality: 80 })
             .toFile(previewPath);
+
+          console.log('Preview created at:', previewPath);
+        } catch (previewError) {
+          console.warn('Preview generation failed:', previewError);
+          previewPath = null;
         }
+      }
       } catch (previewError) {
         console.warn('Preview generation failed:', previewError);
         // Continue without preview - not critical
@@ -462,7 +469,9 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
       
       res.json({
         ...submission,
-        previewUrl: previewPath ? `/api/preview/${submission.id}` : null
+        previewUrl: submission.fileType === 'image' 
+          ? `/api/preview/${submission.id}` 
+          : null // для видео пока нет миниатюры
       });
     } catch (error) {
       console.error('Upload error:', error);
@@ -513,6 +522,39 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+  app.get("/api/preview/:submissionId", async (req, res) => {
+  try {
+    const submission = await storage.getSubmission(req.params.submissionId);
+    if (!submission || !submission.filename) {
+      return res.status(404).json({ error: "Preview not found" });
+    }
+
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    // Файл превью
+    const previewFilename = `preview-${submission.filename}.webp`;
+    const previewPath = path.resolve('./uploads', previewFilename);
+
+    // Если превью нет на диске — 404
+    try {
+      await fs.access(previewPath);
+    } catch {
+      return res.status(404).json({ error: "Preview not available" });
+    }
+
+    res.sendFile(previewPath);
+  } catch (error) {
+    console.error('Serve preview error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
   // Get single submission
   app.get("/api/submission/:id", async (req, res) => {

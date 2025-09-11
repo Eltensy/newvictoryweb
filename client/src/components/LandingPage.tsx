@@ -403,7 +403,7 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
               Баланс: {user.balance} ₽
             </Badge>
             <span className="text-sm text-muted-foreground">
-              Привет, {user.displayName} + {user.isAdmin}!
+              Привет, {user.displayName}!
             </span>
 
               {user.isAdmin && (
