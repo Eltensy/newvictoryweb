@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { storage } from "./storage";
+import fs from 'fs/promises';
 import { 
   insertSubmissionSchema, 
   reviewSubmissionSchema, 
@@ -80,7 +81,6 @@ const authenticateAdmin = async (req: any): Promise<{ adminId: string, admin: an
 
 // File cleanup helper
 const cleanupFiles = async (filePath: string | null, previewPath: string | null) => {
-  const fs = require('fs').promises;
   
   if (filePath) {
     try {
@@ -267,7 +267,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ===== USER ROUTES =====
-  
+  app.get("/api/user/epic/:epicId", async (req, res) => {
+  try {
+    const user = await storage.getUserByEpicGamesId(req.params.epicId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const { epicGamesId, ...safeUser } = user;
+    res.json(safeUser);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
   // Get user by ID
   app.get("/api/user/:id", async (req, res) => {
     try {
@@ -295,7 +307,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+  app.get("/api/user/:id/telegram", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) return res.status(authResult.status).json({ error: authResult.error });
 
+    if (authResult.userId !== req.params.id) return res.status(403).json({ error: "Access denied" });
+
+    const user = await storage.getUser(req.params.id);
+    res.json({ telegramUsername: user.telegramUsername || null });
+  } catch (error) {
+    console.error('Check Telegram error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+app.delete("/api/user/:id/telegram", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) return res.status(authResult.status).json({ error: authResult.error });
+
+    if (authResult.userId !== req.params.id) return res.status(403).json({ error: "Access denied" });
+
+    const user = await storage.updateUser(req.params.id, { telegramUsername: null });
+    res.json({ message: "Telegram unlinked successfully", telegramUsername: user.telegramUsername });
+  } catch (error) {
+    console.error('Unlink Telegram error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
   // Link Telegram account
   app.post("/api/user/:id/telegram", async (req, res) => {
     try {
@@ -375,7 +414,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       uploadedFilePath = path.join('./uploads', filename);
       
       // Ensure uploads directory exists
-      const fs = require('fs').promises;
       await fs.mkdir('./uploads', { recursive: true });
       
       // Write file to disk

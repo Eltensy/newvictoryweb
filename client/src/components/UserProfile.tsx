@@ -1,330 +1,282 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { 
   User, 
   Settings, 
-  Ticket, 
-  FileVideo, 
-  FileImage, 
+  LogOut, 
   Trophy, 
   Target, 
-  Zap, 
-  MessageCircle,
-  Check,
+  Clock, 
   X,
-  Clock,
-  Link,
-  Bell
+  ExternalLink,
+  Wallet
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useAuth } from "../hooks/useAuth"; // <- твой хук
 
 interface UserProfileProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-interface UserTicket {
-  id: string;
-  filename: string;
-  category: string;
-  type: 'image' | 'video';
-  status: 'pending' | 'approved' | 'rejected';
-  submittedAt: string;
-  reward?: number;
-}
-
 export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
+  const { user, getAuthToken, logout } = useAuth();
+  const [stats, setStats] = useState({
+    totalSubmissions: 0,
+    approvedSubmissions: 0,
+    pendingSubmissions: 0,
+    totalEarnings: 0
+  });
+  const [loadingStats, setLoadingStats] = useState(false);
   const [telegramUsername, setTelegramUsername] = useState("");
   const [isLinkingTelegram, setIsLinkingTelegram] = useState(false);
-  const [isTelegramLinked, setIsTelegramLinked] = useState(false);
+  const [linkedTelegram, setLinkedTelegram] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  
 
-  // TODO: remove mock functionality - replace with real user data
-  const mockUser = {
-    username: "GamerPro2024",
-    balance: 2450,
-    totalSubmissions: 8,
-    approvedSubmissions: 5,
-    pendingSubmissions: 2,
-    rejectedSubmissions: 1,
-    joinedAt: "2024-01-01T00:00:00Z"
-  };
+  useEffect(() => {
+  const fetchData = async () => {
+    if (!user) return;
+    try {
+      const token = getAuthToken();
+      setToken(token);
 
-  const mockTickets: UserTicket[] = [
-    {
-      id: '1',
-      filename: 'epic_kill.mp4',
-      category: 'gold-kill',
-      type: 'video',
-      status: 'approved',
-      submittedAt: '2024-01-15T10:30:00Z',
-      reward: 500
-    },
-    {
-      id: '2',
-      filename: 'victory_royale.png',
-      category: 'victory',
-      type: 'image',
-      status: 'pending',
-      submittedAt: '2024-01-14T15:20:00Z'
-    },
-    {
-      id: '3',
-      filename: 'funny_fail.mp4',
-      category: 'funny',
-      type: 'video',
-      status: 'rejected',
-      submittedAt: '2024-01-13T09:45:00Z'
-    },
-    {
-      id: '4',
-      filename: 'headshot.jpg',
-      category: 'gold-kill',
-      type: 'image',
-      status: 'approved',
-      submittedAt: '2024-01-12T18:10:00Z',
-      reward: 300
-    },
-    {
-      id: '5',
-      filename: 'clutch_moment.mp4',
-      category: 'victory',
-      type: 'video',
-      status: 'pending',
-      submittedAt: '2024-01-11T14:30:00Z'
-    }
-  ];
+      // Stats
+      setLoadingStats(true);
+      const statsRes = await fetch(`/api/user/${user.id}/stats`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const statsData = await statsRes.json();
+      setStats(statsData);
+      setLoadingStats(false);
 
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case 'gold-kill': return <Trophy className="h-4 w-4 text-gaming-success" />;
-      case 'victory': return <Target className="h-4 w-4 text-gaming-primary" />;
-      case 'funny': return <Zap className="h-4 w-4 text-gaming-warning" />;
-      default: return null;
+      // Telegram
+      const telegramRes = await fetch(`/api/user/${user.id}/telegram`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const telegramData = await telegramRes.json();
+
+      if (telegramData.error) {
+        setLinkedTelegram(null);
+      } else {
+        setLinkedTelegram(
+          typeof telegramData === "string"
+            ? telegramData
+            : telegramData.telegramUsername || null
+        );
+      }
+    } catch (err) {
+      console.error(err);
+      setLinkedTelegram(null);
+      setLoadingStats(false);
     }
   };
 
-  const getCategoryLabel = (category: string) => {
-    switch (category) {
-      case 'gold-kill': return 'Голд килл';
-      case 'victory': return 'Победа';
-      case 'funny': return 'Смешной момент';
-      default: return category;
-    }
-  };
+  fetchData();
+}, [user?.id]);
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return <Badge variant="secondary" className="flex items-center gap-1"><Clock className="h-3 w-3" />На рассмотрении</Badge>;
-      case 'approved':
-        return <Badge className="bg-gaming-success text-white flex items-center gap-1"><Check className="h-3 w-3" />Одобрено</Badge>;
-      case 'rejected':
-        return <Badge variant="destructive" className="flex items-center gap-1"><X className="h-3 w-3" />Отклонено</Badge>;
-      default:
-        return <Badge variant="secondary">{status}</Badge>;
-    }
-  };
 
-  const handleLinkTelegram = () => {
-    if (telegramUsername.trim()) {
-      console.log('Linking Telegram:', telegramUsername);
-      // TODO: remove mock functionality - replace with real Telegram linking
-      setIsLinkingTelegram(true);
-      setTimeout(() => {
-        setIsTelegramLinked(true);
-        setIsLinkingTelegram(false);
-      }, 2000);
-    }
-  };
+const handleLinkTelegram = async () => {
+  if (!telegramUsername.trim() || !user) return;
 
-  const handleUnlinkTelegram = () => {
-    console.log('Unlinking Telegram');
-    // TODO: remove mock functionality - replace with real Telegram unlinking
-    setIsTelegramLinked(false);
+  setIsLinkingTelegram(true);
+  try {
+    const token = getAuthToken();
+    if (!token) throw new Error("No auth token");
+
+    // видаляємо @ на початку, якщо є
+    const cleanUsername = telegramUsername.trim().replace(/^@/, '');
+
+    const response = await fetch(`/api/user/${user.id}/telegram`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ telegramUsername: cleanUsername }) // сервер очікує поле `username`
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to link Telegram');
+    }
+
+    setLinkedTelegram(data.username || cleanUsername);
     setTelegramUsername("");
+  } catch (error: any) {
+    console.error('Link Telegram error:', error);
+    alert(`Failed to link Telegram: ${error.message}`);
+  } finally {
+    setIsLinkingTelegram(false);
+  }
+};
+
+
+  const handleLogout = async () => {
+    try {
+      const token = getAuthToken();
+      if (token) {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+      }
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+    logout();
+    onClose();
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !user) return null;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="font-gaming flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
-              <User className="h-5 w-5 text-white" />
-            </div>
+          <DialogTitle className="font-gaming flex items-center gap-2">
+            <User className="h-5 w-5" />
             Профиль пользователя
           </DialogTitle>
           <DialogDescription>
-            Управляй своим профилем и просматривай историю заявок
+            Управление аккаунтом и настройками
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* User Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold font-gaming text-primary">{mockUser.balance}₽</div>
-                <div className="text-sm text-muted-foreground">Баланс</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold font-gaming">{mockUser.totalSubmissions}</div>
-                <div className="text-sm text-muted-foreground">Всего заявок</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold font-gaming text-gaming-success">{mockUser.approvedSubmissions}</div>
-                <div className="text-sm text-muted-foreground">Одобрено</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <div className="text-2xl font-bold font-gaming text-gaming-warning">{mockUser.pendingSubmissions}</div>
-                <div className="text-sm text-muted-foreground">На рассмотрении</div>
-              </CardContent>
-            </Card>
+          {/* User Info */}
+          <div className="flex items-center gap-4 p-4 bg-card/50 rounded-lg border">
+            <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center">
+              <span className="text-primary-foreground font-bold">
+                {user.displayName.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div className="flex-1">
+              <h3 className="font-gaming font-semibold">{user.displayName}</h3>
+              <p className="text-sm text-muted-foreground">@{user.username}</p>
+              {user.isAdmin && (
+                <Badge variant="secondary" className="text-xs mt-1">
+                  Администратор
+                </Badge>
+              )}
+            </div>
           </div>
 
-          {/* Telegram Notifications */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-gaming flex items-center gap-2">
-                <MessageCircle className="h-5 w-5 text-gaming-secondary" />
-                Уведомления в Telegram
-              </CardTitle>
-              <CardDescription>
-                Получай уведомления о статусе своих заявок в Telegram
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!isTelegramLinked ? (
-                <div className="space-y-4">
-                  <div>
-                    <Label htmlFor="telegram">Имя пользователя в Telegram</Label>
-                    <div className="flex gap-2 mt-2">
-                      <Input
-                        id="telegram"
-                        placeholder="@username"
-                        value={telegramUsername}
-                        onChange={(e) => setTelegramUsername(e.target.value)}
-                        data-testid="input-telegram"
-                      />
-                      <Button 
-                        onClick={handleLinkTelegram}
-                        disabled={!telegramUsername.trim() || isLinkingTelegram}
-                        className="font-gaming"
-                        data-testid="button-link-telegram"
-                      >
-                        {isLinkingTelegram ? (
-                          <>
-                            <Bell className="h-4 w-4 mr-2 animate-pulse" />
-                            Привязка...
-                          </>
-                        ) : (
-                          <>
-                            <Link className="h-4 w-4 mr-2" />
-                            Привязать
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    После привязки напиши боту @GameRewardsBot команду /start
-                  </p>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between p-4 bg-gaming-success/10 rounded-lg border border-gaming-success/20">
-                  <div className="flex items-center gap-3">
-                    <Check className="h-5 w-5 text-gaming-success" />
-                    <div>
-                      <div className="font-medium">Telegram привязан</div>
-                      <div className="text-sm text-muted-foreground">{telegramUsername}</div>
-                    </div>
-                  </div>
-                  <Button 
-                    variant="outline"
-                    onClick={handleUnlinkTelegram}
-                    data-testid="button-unlink-telegram"
-                  >
-                    Отвязать
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Balance */}
+          <div className="space-y-2">
+            <Label className="font-gaming">Баланс</Label>
+            <div className="flex items-center gap-2 p-3 bg-gaming-success/10 rounded-lg border border-gaming-success/20">
+              <Wallet className="h-5 w-5 text-gaming-success" />
+              <span className="text-xl font-bold font-gaming">{user.balance} ₽</span>
+            </div>
+          </div>
 
-          {/* Tickets History */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-gaming flex items-center gap-2">
-                <Ticket className="h-5 w-5" />
-                История заявок
-              </CardTitle>
-              <CardDescription>
-                Все твои отправленные заявки
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Файл</TableHead>
-                    <TableHead>Категория</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead>Дата</TableHead>
-                    <TableHead>Награда</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mockTickets.map((ticket) => (
-                    <TableRow key={ticket.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {ticket.type === 'video' ? (
-                            <FileVideo className="h-4 w-4 text-gaming-primary" />
-                          ) : (
-                            <FileImage className="h-4 w-4 text-gaming-secondary" />
-                          )}
-                          <span className="font-medium">{ticket.filename}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {getCategoryIcon(ticket.category)}
-                          {getCategoryLabel(ticket.category)}
-                        </div>
-                      </TableCell>
-                      <TableCell>{getStatusBadge(ticket.status)}</TableCell>
-                      <TableCell>
-                        {new Date(ticket.submittedAt).toLocaleDateString('ru-RU')}
-                      </TableCell>
-                      <TableCell>
-                        {ticket.reward ? (
-                          <Badge variant="secondary" className="font-gaming">
-                            +{ticket.reward}₽
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+          {/* Statistics */}
+          <div className="space-y-2">
+            <Label className="font-gaming">Статистика</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 bg-card/30 rounded-lg text-center">
+                <div className="flex items-center justify-center mb-1">
+                  <Trophy className="h-4 w-4 text-gaming-success" />
+                </div>
+                <div className="text-lg font-bold font-gaming">{loadingStats ? '...' : stats.approvedSubmissions}</div>
+                <div className="text-xs text-muted-foreground">Одобрено</div>
+              </div>
+              <div className="p-3 bg-card/30 rounded-lg text-center">
+                <div className="flex items-center justify-center mb-1">
+                  <Clock className="h-4 w-4 text-gaming-warning" />
+                </div>
+                <div className="text-lg font-bold font-gaming">{loadingStats ? '...' : stats.pendingSubmissions}</div>
+                <div className="text-xs text-muted-foreground">На рассмотрении</div>
+              </div>
+              <div className="p-3 bg-card/30 rounded-lg text-center">
+                <div className="flex items-center justify-center mb-1">
+                  <Target className="h-4 w-4 text-gaming-primary" />
+                </div>
+                <div className="text-lg font-bold font-gaming">{loadingStats ? '...' : stats.totalSubmissions}</div>
+                <div className="text-xs text-muted-foreground">Всего заявок</div>
+              </div>
+              <div className="p-3 bg-card/30 rounded-lg text-center">
+                <div className="flex items-center justify-center mb-1">
+                  <Wallet className="h-4 w-4 text-gaming-success" />
+                </div>
+                <div className="text-lg font-bold font-gaming">{loadingStats ? '...' : stats.totalEarnings} ₽</div>
+                <div className="text-xs text-muted-foreground">Заработано</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Telegram Integration */}
+          <div className="space-y-3">
+            <Label className="font-gaming">Telegram для уведомлений</Label>
+            {linkedTelegram ? (
+              <div className="flex items-center gap-2 p-3 bg-gaming-success/10 rounded-lg border border-gaming-success/20">
+                <ExternalLink className="h-4 w-4 text-gaming-success" />
+                <span className="text-sm">{linkedTelegram}</span>
+                <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    await fetch(`/api/user/${user.id}/telegram`, {
+                    method: "DELETE",
+                    headers: {
+                      "Authorization": `Bearer ${token}` // тут токен користувача
+                    }
+                  });
+                    setLinkedTelegram(null); // оновлюємо локальний стан
+                  } catch (err) {
+                    console.error("Failed to unlink Telegram", err);
+                  }
+                }}
+                className="ml-auto h-6 w-6 p-0"
+              >
+                X
+              </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Input
+                  placeholder="@username"
+                  value={telegramUsername}
+                  onChange={(e) => setTelegramUsername(e.target.value)}
+                  disabled={isLinkingTelegram}
+                />
+                <Button
+                  onClick={handleLinkTelegram}
+                  disabled={!telegramUsername.trim() || isLinkingTelegram}
+                  size="sm"
+                  className="w-full font-gaming"
+                >
+                  {isLinkingTelegram ? 'Подключаем...' : 'Подключить Telegram'}
+                </Button>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Получай уведомления о статусе своих заявок
+            </p>
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-4 border-t">
+            <Button variant="outline" className="flex-1 font-gaming" onClick={onClose}>
+              <Settings className="h-4 w-4 mr-2" />
+              Закрыть
+            </Button>
+            <Button 
+              variant="destructive" 
+              className="flex-1 font-gaming" 
+              onClick={handleLogout}
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Выйти
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

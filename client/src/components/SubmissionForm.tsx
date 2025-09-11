@@ -265,7 +265,7 @@ export default function SubmissionForm({ onBack }: SubmissionFormProps) {
                           </div>
                           <p className="text-sm text-muted-foreground">
                             {category.id === 'gold-kill' && 'Эпичные убийства и скиллы'}
-                            {category.id === 'victory' && 'Victory Royale моменты'}
+                            {category.id === 'victory' && 'Vi123ctory Royale моменты'}
                             {category.id === 'funny' && 'Забавные игровые ситуации'}
                           </p>
                         </div>

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,31 +9,119 @@ import { cn } from "@/lib/utils";
 import mapBackground from "@assets/generated_images/bg.jpg";
 import epiclogo from "@assets/generated_images/epiclogo.png";
 import UserProfile from "./UserProfile";
+import { useAuth } from '@/hooks/useAuth';
+import { useLocation } from "wouter";
 import { Redirect } from "wouter";
+import { c } from "node_modules/vite/dist/node/types.d-aGj9QkWt";
+
+interface User {
+  id: string;
+  username: string;
+  displayName: string;
+  balance: number;
+  isAdmin: boolean;
+}
 
 export default function LandingPage() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const { user: authUser, isLoggedIn, getAuthToken, login, logout } = useAuth();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const currentUser = authUser; 
+
+  const [location, setLocation] = useLocation(); // useLocation из Wouter
+
+  useEffect(() => {
+  const handleEpicCallback = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const authStatus = urlParams.get('auth');
+    const token = urlParams.get('token');
+    const userParam = urlParams.get('user');
+
+    if (authStatus === 'success' && token && userParam) {
+      try {
+        const userData = JSON.parse(decodeURIComponent(userParam));
+        console.log('Decoded userData:', userData);
+
+        // Используй login из верхнего уровня
+        login(userData, token);
+
+        // Очистка URL
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+      } catch (err) {
+        console.error('Failed to parse user data:', err);
+      }
+    }
+    setIsLoading(false);
+  };
+
+  handleEpicCallback();
+}, [login]);
+
+  const handleAuthError = (message: string) => {
+    console.error('Auth error:', message);
+    // You could show a toast notification here
+    alert(`Authentication failed: ${message}`);
+    
+    // Clean up URL
+    const newUrl = window.location.pathname;
+    window.history.replaceState({}, document.title, newUrl);
+  };
 
   const handleEpicLogin = async () => {
     console.log("Epic Games login triggered");
+    setIsLoading(true);
 
-    const res = await fetch("/api/auth/epic/login");
-    const data = await res.json();
+    try {
+      const res = await fetch("/api/auth/epic/login");
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
 
-    // Перенаправляем пользователя на Epic Games
-    window.location.href = data.authUrl;
+      // Перенаправляем пользователя на Epic Games
+      window.location.href = data.authUrl;
+    } catch (error) {
+      console.error('Epic login error:', error);
+      alert('Failed to initialize Epic Games login. Please try again.');
+      setIsLoading(false);
+    }
   };
 
-  const handleSubmissionClick = () => {
-    console.log("Navigate to submission form");
-    // TODO: remove mock functionality - replace with real navigation
+  const handleLogout = () => {
+    logout(); // хук сам обнуляет user и токен
+    setIsProfileOpen(false); // закрываем профиль
+    console.log("User logged out");
   };
 
-  if (isLoggedIn) {
-    return <LoggedInSubmissionPage profileOpen={isProfileOpen} setProfileOpen={setIsProfileOpen} />;
+  // Show loading state while processing authentication
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="text-muted-foreground">Logging you in...</p>
+        </div>
+      </div>
+    );
   }
 
+   if (isLoggedIn && currentUser) {
+  return (
+    <LoggedInSubmissionPage 
+      user={currentUser} 
+      profileOpen={isProfileOpen} 
+      setProfileOpen={setIsProfileOpen}
+      onLogout={() => {
+        setIsProfileOpen(false);
+        logout();
+      }}
+      getAuthToken={getAuthToken} // <-- вот это ключевое
+    />
+  );
+}
   return (
       
       <div className="min-h-screen bg-background">
@@ -63,6 +151,7 @@ export default function LandingPage() {
                 size="lg" 
                 className="text-lg px-12 py-6 bg-primary hover:bg-primary/90 font-gaming hover-elevate"
                 onClick={handleEpicLogin}
+                disabled={isLoading}
                 data-testid="button-epic-login"
               >
                 <div className="flex items-center gap-3">
@@ -71,8 +160,8 @@ export default function LandingPage() {
                       <img src={epiclogo} alt="Logo" className="h-24 w-24 object-contain" />
                     </div>
                   </div>
-                  Войти через Epic Games
-                  <ArrowRight className="ml-2 h-5 w-5" />
+                  {isLoading ? 'Подключение...' : 'Войти через Epic Games'}
+                  {!isLoading && <ArrowRight className="ml-2 h-5 w-5" />}
                 </div>
               </Button>
               <p className="text-sm text-muted-foreground">
@@ -141,17 +230,28 @@ export default function LandingPage() {
   );
 }
 
-function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: boolean; setProfileOpen: (open: boolean) => void }) {
+interface LoggedInSubmissionPageProps {
+  user: User;
+  profileOpen: boolean;
+  setProfileOpen: (open: boolean) => void;
+  onLogout: () => void;
+  getAuthToken: () => string | null; // <-- добавляем
+}
+
+function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, getAuthToken }: LoggedInSubmissionPageProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const categories = [
-    { id: "gold-kill", label: "Голд килл", icon: Trophy, color: "text-gaming-success", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
+    { id: "gold-kill", label: "Голд килл", icon: Trophy, color: "text-yellow-400", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
+    { id: "silver-kill", label: "Серебряный килл", icon: Trophy, color: "text-white-950", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
+    { id: "bronze-kill", label: "Бронзовый килл", icon: Trophy, color: "text-yellow-700", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
     { id: "victory", label: "Победа", icon: Target, color: "text-gaming-primary", bgColor: "bg-gaming-primary/10 border-gaming-primary/20" },
-    { id: "funny", label: "Смешной момент", icon: Zap, color: "text-gaming-warning", bgColor: "bg-gaming-warning/10 border-gaming-warning/20" },
+    { id: "funny", label: "Другое", icon: Zap, color: "text-gaming-warning", bgColor: "bg-gaming-warning/10 border-gaming-warning/20" },
   ];
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -183,11 +283,43 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
     }
   };
 
-  const handleSubmit = () => {
-    if (selectedFile && selectedCategory) {
-      console.log("Submitting:", { file: selectedFile.name, category: selectedCategory });
-      // TODO: remove mock functionality - replace with real submission
-      setIsSubmitted(true);
+  const handleSubmit = async () => {
+    if (!selectedFile || !selectedCategory) return;
+    
+    setIsSubmitting(true);
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('category', selectedCategory);
+
+      const token = getAuthToken(); // <-- достаем токен из хука
+      if (!token) {
+        alert('Вы не авторизованы');
+        return;
+      }
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}` // токен корректно вставляем
+        },
+        body: formData
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log("Submission successful:", result);
+        setIsSubmitted(true);
+      } else {
+        const error = await response.json();
+        throw new Error(error.error || 'Upload failed');
+      }
+    } catch (error) {
+      console.error('Submission error:', error);
+      alert(`Failed to submit: ${error}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -249,7 +381,7 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
             className="w-full font-gaming"
             data-testid="button-submit-another"
           >
-            Отправить еще один
+            Вернуться
           </Button>
         </div>
       </div>
@@ -263,12 +395,15 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Trophy className="h-8 w-8 text-primary" />
-            <span className="text-xl font-bold font-gaming">GameRewards</span>
+            <span className="text-xl font-bold font-gaming">ContestGG</span>
           </div>
           <div className="flex items-center gap-4">
             <Badge variant="secondary" className="font-gaming">
-              Баланс: 2,450 ₽
+              Баланс: {user.balance} ₽
             </Badge>
+            <span className="text-sm text-muted-foreground">
+              Привет, {user.displayName}!
+            </span>
             <button 
               onClick={() => setProfileOpen(true)}
               className="w-8 h-8 rounded-full bg-primary hover:scale-110 transition-transform duration-200 hover-elevate"
@@ -276,9 +411,12 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
             >
               <span className="sr-only">Открыть профиль</span>
             </button>
-            <UserProfile 
-              isOpen={profileOpen} 
-              onClose={() => setProfileOpen(false)} 
+            <UserProfile
+              isOpen={profileOpen} // вместо isProfileOpen
+              onClose={() => setProfileOpen(false)}
+              user={user}
+              onLogout={onLogout}
+              getAuthToken={getAuthToken}
             />
           </div>
         </div>
@@ -293,7 +431,7 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
               Готов к загрузке контента?
             </h1>
             <p className="text-muted-foreground text-lg">
-              Загружай свои лучшие игровые моменты и получай вознаграждения
+              Загружайте свои победы и получай вознаграждения
             </p>
           </div>
 
@@ -330,6 +468,7 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
                           onClick={() => fileInputRef.current?.click()}
                           className="font-gaming hover-elevate"
                           data-testid="button-select-file"
+                          disabled={isSubmitting}
                         >
                           Выбрать файл
                         </Button>
@@ -350,6 +489,7 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
                           }
                         }}
                         className="mt-4 font-gaming"
+                        disabled={isSubmitting}
                       >
                         Выбрать другой файл
                       </Button>
@@ -368,12 +508,9 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
 
             {/* Category Selection Sidebar */}
             <div className="lg:col-span-1">
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <div>
                   <Label className="text-lg font-gaming mb-4 block">Категория</Label>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Выбери тип своего игрового момента
-                  </p>
                 </div>
 
                 <RadioGroup value={selectedCategory} onValueChange={setSelectedCategory} className="space-y-4">
@@ -393,17 +530,13 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
                           id={category.id}
                           className="mt-1"
                           data-testid={`radio-${category.id}`}
+                          disabled={isSubmitting}
                         />
                         <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
+                          <div className="flex items-center gap-3">
                             <category.icon className={cn("h-6 w-6", category.color)} />
                             <span className="font-gaming font-semibold">{category.label}</span>
                           </div>
-                          <p className="text-sm text-muted-foreground">
-                            {category.id === 'gold-kill' && 'Эпичные убийства и скиллы'}
-                            {category.id === 'victory' && 'Victory Royale моменты'}
-                            {category.id === 'funny' && 'Забавные игровые ситуации'}
-                          </p>
                         </div>
                       </label>
                     </div>
@@ -415,16 +548,17 @@ function LoggedInSubmissionPage({ profileOpen, setProfileOpen }: { profileOpen: 
                   <Button
                     size="lg"
                     className="w-full text-lg py-6 font-gaming hover-elevate"
-                    disabled={!selectedFile || !selectedCategory}
+                    disabled={!selectedFile || !selectedCategory || isSubmitting}
                     onClick={handleSubmit}
                     data-testid="button-submit"
                   >
-                    {!selectedFile ? 'Выбери файл' : 
+                    {isSubmitting ? 'Отправка...' :
+                     !selectedFile ? 'Выбери файл' : 
                      !selectedCategory ? 'Выбери категорию' : 
                      'Отправить на модерацию'}
                   </Button>
                   
-                  {selectedFile && selectedCategory && (
+                  {selectedFile && selectedCategory && !isSubmitting && (
                     <p className="text-sm text-muted-foreground mt-2 text-center">
                       Все готово к отправке!
                     </p>
