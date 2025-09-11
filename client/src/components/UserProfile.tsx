@@ -17,6 +17,7 @@ import {
   Wallet
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth"; // <- твой хук
+import { Redirect } from "wouter";
 
 interface UserProfileProps {
   isOpen: boolean;
@@ -125,6 +126,7 @@ const handleLinkTelegram = async () => {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` }
         });
+        window.location.href = '/'; // редирект на головну сторінку після виходу
       }
     } catch (error) {
       console.error('Logout error:', error);
