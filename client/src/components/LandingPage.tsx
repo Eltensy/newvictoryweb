@@ -28,9 +28,8 @@ export default function LandingPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   const currentUser = authUser; 
-
+  
   const [location, setLocation] = useLocation(); // useLocation из Wouter
-
   useEffect(() => {
   const handleEpicCallback = () => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -58,6 +57,8 @@ export default function LandingPage() {
 
   handleEpicCallback();
 }, [login]);
+
+
 
   const handleAuthError = (message: string) => {
     console.error('Auth error:', message);
@@ -89,7 +90,7 @@ export default function LandingPage() {
       setIsLoading(false);
     }
   };
-
+  
   const handleLogout = () => {
     logout(); // хук сам обнуляет user и токен
     setIsProfileOpen(false); // закрываем профиль
@@ -402,8 +403,19 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
               Баланс: {user.balance} ₽
             </Badge>
             <span className="text-sm text-muted-foreground">
-              Привет, {user.displayName}!
+              Привет, {user.displayName} + {user.isAdmin}!
             </span>
+
+              {user.isAdmin && (
+                <Button
+                  variant="outline"
+                  onClick={() => window.location.href = "/admin"}
+                  className="font-gaming"
+                  data-testid="button-admin"
+                >
+                  Панель админа
+                </Button>
+              )}
             <button 
               onClick={() => setProfileOpen(true)}
               className="w-8 h-8 rounded-full bg-primary hover:scale-110 transition-transform duration-200 hover-elevate"

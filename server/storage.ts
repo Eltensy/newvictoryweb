@@ -40,6 +40,7 @@ export interface IStorage {
     pendingSubmissions: number;
     rejectedSubmissions: number;
     totalEarnings: number;
+    isAdmin: boolean;
   }>;
 }
 
@@ -170,6 +171,7 @@ export class DatabaseStorage implements IStorage {
     pendingSubmissions: number;
     rejectedSubmissions: number;
     totalEarnings: number;
+    isAdmin: boolean;
   }> {
     const userSubmissions = await this.getSubmissionsByUserId(userId);
     
@@ -178,6 +180,7 @@ export class DatabaseStorage implements IStorage {
       approvedSubmissions: userSubmissions.filter(s => s.status === 'approved').length,
       pendingSubmissions: userSubmissions.filter(s => s.status === 'pending').length,
       rejectedSubmissions: userSubmissions.filter(s => s.status === 'rejected').length,
+      isAdmin: (await this.getUser(userId))?.isAdmin || false,
       totalEarnings: userSubmissions
         .filter(s => s.status === 'approved' && s.reward)
         .reduce((sum, s) => sum + (s.reward || 0), 0)

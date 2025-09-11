@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth"; // <- твой хук
 import { Redirect } from "wouter";
+import { is } from "drizzle-orm";
 
 interface UserProfileProps {
   isOpen: boolean;
@@ -30,7 +31,8 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     totalSubmissions: 0,
     approvedSubmissions: 0,
     pendingSubmissions: 0,
-    totalEarnings: 0
+    totalEarnings: 0,
+    isAdmin: false
   });
   const [loadingStats, setLoadingStats] = useState(false);
   const [telegramUsername, setTelegramUsername] = useState("");
@@ -52,6 +54,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
         headers: { Authorization: `Bearer ${token}` },
       });
       const statsData = await statsRes.json();
+      console.log("Fetched stats:", statsData);
       setStats(statsData);
       setLoadingStats(false);
 
