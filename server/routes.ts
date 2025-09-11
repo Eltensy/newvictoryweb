@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import path from "path";
+import crypto from 'crypto';
 import { fileTypeFromFile } from "file-type";
 import sharp from "sharp";
 import { storage } from "./storage";
@@ -417,7 +418,158 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Добавь эти роуты после существующих в функции registerRoutes
+
+  // Epic Games OAuth Routes
+  app.get("/api/auth/epic/login", async (req, res) => {
+    try {
+      const state = crypto.randomBytes(32).toString('hex');
+      const nonce = crypto.randomBytes(32).toString('hex');
+      
+      // В продакшене сохрани state в session или Redis для проверки
+      // Сейчас для простоты пропускаем
+      
+      const params = new URLSearchParams({
+        client_id: process.env.EPIC_CLIENT_ID || '',
+        redirect_uri: process.env.EPIC_REDIRECT_URI || '',
+        response_type: 'code',
+        scope: 'basic_profile',
+        state: state,
+        nonce: nonce
+      });
+      
+      const authUrl = `https://www.epicgames.com/id/authorize?${params}`;
+      res.json({ authUrl, state });
+    } catch (error) {
+      console.error('Epic login error:', error);
+      res.status(500).json({ error: "Failed to initialize Epic Games login" });
+    }
+  });
+
+  app.get("/api/auth/epic/callback", async (req, res) => {
+    try {
+      const { code, state } = req.query;
+      
+      if (!code) {
+        return res.status(400).json({ error: "Authorization code is required" });
+      }
+      
+      // Обмен code на токен
+      const tokenResponse = await fetch('https://api.epicgames.dev/epic/oauth/v2/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${Buffer.from(`${process.env.EPIC_CLIENT_ID}:${process.env.EPIC_CLIENT_SECRET}`).toString('base64')}`
+        },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: code as string,
+          redirect_uri: process.env.EPIC_REDIRECT_URI || ''
+        })
+      });
+      
+      if (!tokenResponse.ok) {
+        throw new Error(`Token exchange failed: ${tokenResponse.statusText}`);
+      }
+      
+      const tokenData = await tokenResponse.json();
+      
+      // Получение профиля пользователя
+      const profileResponse = await fetch('https://api.epicgames.dev/epic/oauth/v2/userInfo', {
+        headers: {
+          'Authorization': `Bearer ${tokenData.access_token}`
+        }
+      });
+      
+      if (!profileResponse.ok) {
+        throw new Error(`Profile fetch failed: ${profileResponse.statusText}`);
+      }
+      
+      const profile = await profileResponse.json();
+      
+      // Проверка существует ли пользователь
+      let user = await storage.getUserByEpicGamesId(profile.sub);
+      
+      if (!user) {
+        // Создание нового пользователя
+        user = await storage.createUser({
+          id: crypto.randomUUID(),
+          username: profile.preferred_username || `epic_${profile.sub.slice(0, 8)}`,
+          epicGamesId: profile.sub,
+          displayName: profile.name || profile.preferred_username,
+          email: profile.email,
+          balance: 0,
+          isAdmin: false
+        });
+      }
+      
+      // Генерация простого JWT токена (в продакшене используй библиотеку типа jsonwebtoken)
+      const userToken = Buffer.from(JSON.stringify({
+        userId: user.id,
+        epicGamesId: user.epicGamesId,
+        exp: Date.now() + (24 * 60 * 60 * 1000) // 24 часа
+      })).toString('base64');
+      
+      // Редирект на фронтенд с токеном
+      res.redirect(`/?token=${userToken}&user=${encodeURIComponent(JSON.stringify({
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        balance: user.balance
+      }))}`);
+      
+    } catch (error) {
+      console.error('Epic callback error:', error);
+      res.redirect('/?error=auth_failed');
+    }
+  });
+
+  // Проверка текущего пользователя
+  app.get("/api/auth/me", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      
+      const token = authHeader.substring(7);
+      const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
+      
+      // Проверка срока действия токена
+      if (decoded.exp < Date.now()) {
+        return res.status(401).json({ error: "Token expired" });
+      }
+      
+      const user = await storage.getUser(decoded.userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      res.json({
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        balance: user.balance,
+        isAdmin: user.isAdmin
+      });
+    } catch (error) {
+      console.error('Auth check error:', error);
+      res.status(401).json({ error: "Invalid token" });
+    }
+  });
+
+  // Логаут
+  app.post("/api/auth/logout", async (req, res) => {
+    // Для простых токенов просто возвращаем успех
+    // В продакшене нужно добавить токен в blacklist
+    res.json({ message: "Logged out successfully" });
+  });
+
+
   const httpServer = createServer(app);
 
   return httpServer;
+  
 }
+
+
