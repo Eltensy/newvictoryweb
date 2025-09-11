@@ -3,6 +3,7 @@ import pkg from 'pg';
 const { Pool } = pkg;
 import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from './shared/schema.ts'; // твой файл с таблицами
+import { eq } from "drizzle-orm";
 
 // Настройка подключения с SSL для Render
 const pool = new Pool({
@@ -38,5 +39,24 @@ async function showDatabase() {
     await pool.end();
   }
 }
+
+async function updateUser() {
+  try {
+    const result = await db
+      .update(schema.users)
+      .set({ isAdmin: true })
+      .where(eq(schema.users.epicGamesId, '880f141819fc4296aa71145d992312f2'))
+      .returning();
+
+    console.log("Updated rows:");
+    console.table(result);
+  } catch (err) {
+    console.error("Error updating user:", err);
+  } finally {
+    await pool.end();
+  }
+}
+
+updateUser();
 
 showDatabase();

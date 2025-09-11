@@ -640,7 +640,13 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
       res.status(500).json({ error: "Failed to update balance" });
     }
   });
-
+  app.get("/api/checkadmin", async (req, res) => {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return false;
+      }
+      res.json(true);
+  });
   // Get admin actions log
   app.get("/api/admin/actions", async (req, res) => {
     try {

@@ -27,7 +27,7 @@ export default function ThemeToggle() {
     updateTheme(newTheme);
   };
 
-  return (
+  /*return (
     <Button
       variant="ghost"
       size="icon"
@@ -42,5 +42,5 @@ export default function ThemeToggle() {
       )}
       <span className="sr-only">Переключить тему</span>
     </Button>
-  );
+  ); */
 }
