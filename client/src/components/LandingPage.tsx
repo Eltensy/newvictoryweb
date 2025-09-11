@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import mapBackground from "@assets/generated_images/Fortnite_gaming_map_background_a9f5dacd.png";
+import mapBackground from "@assets/generated_images/bg.jpg";
+import epiclogo from "@assets/generated_images/epiclogo.png";
 import UserProfile from "./UserProfile";
 
 export default function LandingPage() {
@@ -29,52 +30,54 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Glassmorphism Hero Section */}
-      <div className="relative min-h-screen flex items-center justify-center overflow-hidden">
-        {/* Background Pattern */}
-        <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
-        
-        {/* Content */}
-        <div className="relative z-10 max-w-4xl mx-auto px-4 text-center space-y-8">
-          <div className="space-y-4">
-            <Badge variant="secondary" className="text-sm font-gaming mb-4">
-              Игровая платформа нового поколения
-            </Badge>
-            <h1 className="text-5xl md:text-7xl font-bold font-gaming bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-              GameRewards
-            </h1>
-            <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto">
-              Загружай свои лучшие игровые моменты и получай вознаграждения за каждый эпичный клип
-            </p>
-          </div>
+      
+      <div className="min-h-screen bg-background">
+        {/* Glassmorphism Hero Section */}
+        <div className="relative min-h-screen flex items-center justify-center overflow-hidden h-screen snap-start flex items-center justify-center">
+          {/* Background Pattern */}
+          <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
+          
+          {/* Content */}
+          <div className="relative z-10 max-w-4xl mx-auto px-4 text-center space-y-8">
+            <div className="space-y-4">
+              <Badge variant="secondary" className="text-sm font-gaming mb-4">
+                Игровая платформа нового поколения
+              </Badge>
+              <h1 className="text-5xl md:text-7xl font-bold font-gaming bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                GameRewards
+              </h1>
+              <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto">
+                Загружай свои лучшие игровые моменты и получай вознаграждения за каждый эпичный клип
+              </p>
+            </div>
 
-          {/* Epic Games Login Button */}
-          <div className="space-y-6">
-            <Button 
-              size="lg" 
-              className="text-lg px-12 py-6 bg-primary hover:bg-primary/90 font-gaming hover-elevate"
-              onClick={handleEpicLogin}
-              data-testid="button-epic-login"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-6 h-6 bg-white rounded-sm flex items-center justify-center">
-                  <span className="text-black font-bold text-xs">E</span>
+            {/* Epic Games Login Button */}
+            <div className="space-y-6">
+              <Button 
+                size="lg" 
+                className="text-lg px-12 py-6 bg-primary hover:bg-primary/90 font-gaming hover-elevate"
+                onClick={handleEpicLogin}
+                data-testid="button-epic-login"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-sm flex items-center justify-center">
+                    <div className="flex items-center"> 
+                      <img src={epiclogo} alt="Logo" className="h-24 w-24 object-contain" />
+                    </div>
+                  </div>
+                  Войти через Epic Games
+                  <ArrowRight className="ml-2 h-5 w-5" />
                 </div>
-                Войти через Epic Games
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </div>
-            </Button>
-            <p className="text-sm text-muted-foreground">
-              Безопасная авторизация через Epic Games
-            </p>
+              </Button>
+              <p className="text-sm text-muted-foreground">
+                Безопасная авторизация через Epic Games
+              </p>
+            </div>
           </div>
-        </div>
-      </div>
 
       {/* Map Section */}
-      <section className="py-20 relative overflow-hidden">
+      <section className="min-h-screen flex items-center relative overflow-hidden h-screen snap-start flex items-center justify-center">
         <div 
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{ backgroundImage: `url(${mapBackground})` }}
@@ -128,6 +131,7 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+    </div>
     </div>
   );
 }
