@@ -9,15 +9,20 @@ import { cn } from "@/lib/utils";
 import mapBackground from "@assets/generated_images/bg.jpg";
 import epiclogo from "@assets/generated_images/epiclogo.png";
 import UserProfile from "./UserProfile";
+import { Redirect } from "wouter";
 
 export default function LandingPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
-  const handleEpicLogin = () => {
+  const handleEpicLogin = async () => {
     console.log("Epic Games login triggered");
-    // TODO: remove mock functionality - replace with real Epic Games OAuth
-    setIsLoggedIn(true);
+
+    const res = await fetch("/api/auth/epic/login");
+    const data = await res.json();
+
+    // Перенаправляем пользователя на Epic Games
+    window.location.href = data.authUrl;
   };
 
   const handleSubmissionClick = () => {
@@ -42,13 +47,13 @@ export default function LandingPage() {
           <div className="relative z-10 max-w-4xl mx-auto px-4 text-center space-y-8">
             <div className="space-y-4">
               <Badge variant="secondary" className="text-sm font-gaming mb-4">
-                Игровая платформа нового поколения
+                UEFN нового поколения
               </Badge>
               <h1 className="text-5xl md:text-7xl font-bold font-gaming bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                GameRewards
+                ContestGG
               </h1>
               <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto">
-                Загружай свои лучшие игровые моменты и получай вознаграждения за каждый эпичный клип
+                Играй на нашей карте и получай награды за свои результаты!
               </p>
             </div>
 
@@ -93,7 +98,7 @@ export default function LandingPage() {
                 Играйте на нашей карте
               </h2>
               <p className="text-white/80 text-xl mb-12">
-                Заходи в игру, записывай лучшие моменты и зарабатывай реальные деньги
+                Заходи в игру, выигрывай, получай достижения и зарабатывай реальные деньги
               </p>
               
               <div className="grid md:grid-cols-3 gap-8 text-white">
@@ -103,7 +108,7 @@ export default function LandingPage() {
                   </div>
                   <h3 className="text-xl font-bold font-gaming">1. Загрузи</h3>
                   <p className="text-white/70">
-                    Скриншоты и видео твоих лучших игровых моментов
+                    Скриншоты или видео твоих результатов
                   </p>
                 </div>
 
@@ -113,7 +118,7 @@ export default function LandingPage() {
                   </div>
                   <h3 className="text-xl font-bold font-gaming">2. Модерация</h3>
                   <p className="text-white/70">
-                    Наша команда оценит качество и уникальность контента
+                    Наша команда оценит достоверность и уникальность контента
                   </p>
                 </div>
 
@@ -123,7 +128,7 @@ export default function LandingPage() {
                   </div>
                   <h3 className="text-xl font-bold font-gaming">3. Получи награду</h3>
                   <p className="text-white/70">
-                    Зарабатывай реальные деньги за качественный контент
+                    Зарабатывай реальные деньги за свою игру
                   </p>
                 </div>
               </div>
