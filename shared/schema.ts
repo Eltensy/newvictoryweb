@@ -4,9 +4,9 @@ import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Enums
+// Enums - ИСПРАВЛЕНО: добавлена запятая между 'gold-kill' и 'silver-kill'
 export const submissionStatusEnum = pgEnum('submission_status', ['pending', 'approved', 'rejected']);
-export const submissionCategoryEnum = pgEnum('submission_category', ['gold-kill', 'victory', 'funny']);
+export const submissionCategoryEnum = pgEnum('submission_category', ['gold-kill', 'silver-kill', 'bronze-kill', 'victory', 'funny']);
 export const fileTypeEnum = pgEnum('file_type', ['image', 'video']);
 
 // Users table

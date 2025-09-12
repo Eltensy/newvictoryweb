@@ -81,20 +81,31 @@ const authenticateAdmin = async (req: any): Promise<{ adminId: string, admin: an
 
 // File cleanup helper
 const cleanupFiles = async (filePath: string | null, previewPath: string | null) => {
-  
   if (filePath) {
     try {
+      // Проверяем существование файла перед удалением
+      await fs.access(filePath);
       await fs.unlink(filePath);
-    } catch (cleanupError) {
-      console.error('Failed to cleanup uploaded file:', cleanupError);
+      console.log('Successfully cleaned up uploaded file:', filePath);
+    } catch (cleanupError: any) {
+      // Игнорируем ошибку если файл не существует
+      if (cleanupError.code !== 'ENOENT') {
+        console.error('Failed to cleanup uploaded file:', cleanupError);
+      }
     }
   }
   
   if (previewPath) {
     try {
+      // Проверяем существование файла перед удалением
+      await fs.access(previewPath);
       await fs.unlink(previewPath);
-    } catch (cleanupError) {
-      console.error('Failed to cleanup preview file:', cleanupError);
+      console.log('Successfully cleaned up preview file:', previewPath);
+    } catch (cleanupError: any) {
+      // Игнорируем ошибку если файл не существует
+      if (cleanupError.code !== 'ENOENT') {
+        console.error('Failed to cleanup preview file:', cleanupError);
+      }
     }
   }
 };
@@ -374,116 +385,113 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
 
   // Upload file and create submission
   app.post("/api/upload", upload.single('file'), async (req, res) => {
-    let uploadedFilePath: string | null = null;
-    let previewPath: string | null = null;
-    let success = false;
-    
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      // Authenticate user BEFORE any disk operations
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-      
-      const { userId, user } = authResult;
-
-      // Advanced file type validation using magic bytes
-      const fileType = await fileTypeFromBuffer(req.file.buffer);
-      if (!fileType) {
-        return res.status(400).json({ error: "Unable to determine file type" });
-      }
-
-      const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-      const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
-      const allAllowedTypes = [...allowedImageTypes, ...allowedVideoTypes];
-
-      if (!allAllowedTypes.includes(fileType.mime)) {
-        return res.status(400).json({ error: "Invalid file type detected. Only images and videos are allowed." });
-      }
-
-      const detectedFileType = allowedImageTypes.includes(fileType.mime) ? 'image' : 'video';
-      
-      // Generate unique filename and write to disk
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
-      const filename = `file-${uniqueSuffix}${ext}`;
-      uploadedFilePath = path.join('./uploads', filename);
-      
-      // Ensure uploads directory exists
-      await fs.mkdir('./uploads', { recursive: true });
-      
-      // Write file to disk
-      await fs.writeFile(uploadedFilePath, req.file.buffer);
-      
-      // Generate preview/thumbnail for images
-      try {
-       if (detectedFileType === 'image') {
-        try {
-          const previewFilename = `preview-${filename}.webp`;
-          previewPath = path.join('./uploads', previewFilename);
-
-          await sharp(req.file.buffer)
-            .resize(300, 300, { fit: 'cover' })
-            .webp({ quality: 80 })
-            .toFile(previewPath);
-
-          console.log('Preview created at:', previewPath);
-        } catch (previewError) {
-          console.warn('Preview generation failed:', previewError);
-          previewPath = null;
-        }
-      }
-      } catch (previewError) {
-        console.warn('Preview generation failed:', previewError);
-        // Continue without preview - not critical
-      }
-      
-      // Validate submission data
-      const submissionData = {
-        userId: userId,
-        filename: filename,
-        originalFilename: req.file.originalname,
-        fileType: detectedFileType,
-        fileSize: req.file.size,
-        filePath: uploadedFilePath,
-        category: req.body.category
-      };
-
-      const validation = insertSubmissionSchema.safeParse(submissionData);
-      if (!validation.success) {
-        await cleanupFiles(uploadedFilePath, previewPath);
-        return res.status(400).json({ 
-          error: "Invalid submission data", 
-          details: validation.error.errors 
-        });
-      }
-
-      const submission = await storage.createSubmission(validation.data);
-      
-      // Mark success to prevent cleanup
-      success = true;
-      
-      res.json({
-        ...submission,
-        previewUrl: submission.fileType === 'image' 
-          ? `/api/preview/${submission.id}` 
-          : null // для видео пока нет миниатюры
-      });
-    } catch (error) {
-      console.error('Upload error:', error);
-      res.status(500).json({ error: "Failed to process upload" });
-    } finally {
-      // Cleanup on failure
-      if (!success) {
-        await cleanupFiles(uploadedFilePath, previewPath);
-      }
+  let uploadedFilePath: string | null = null;
+  let previewPath: string | null = null;
+  let fileWritten = false; // Флаг для отслеживания записи файла
+  let previewWritten = false; // Флаг для отслеживания создания превью
+  
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
     }
-  });
 
+    // Authenticate user BEFORE any disk operations
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+    
+    const { userId, user } = authResult;
+
+    // Advanced file type validation using magic bytes
+    const fileType = await fileTypeFromBuffer(req.file.buffer);
+    if (!fileType) {
+      return res.status(400).json({ error: "Unable to determine file type" });
+    }
+
+    const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
+    const allAllowedTypes = [...allowedImageTypes, ...allowedVideoTypes];
+
+    if (!allAllowedTypes.includes(fileType.mime)) {
+      return res.status(400).json({ error: "Invalid file type detected. Only images and videos are allowed." });
+    }
+
+    const detectedFileType = allowedImageTypes.includes(fileType.mime) ? 'image' : 'video';
+    
+    // Generate unique filename and write to disk
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
+    const filename = `file-${uniqueSuffix}${ext}`;
+    uploadedFilePath = path.join('./uploads', filename);
+    
+    // Ensure uploads directory exists
+    await fs.mkdir('./uploads', { recursive: true });
+    
+    // Write file to disk
+    await fs.writeFile(uploadedFilePath, req.file.buffer);
+    fileWritten = true; // Отмечаем что файл записан
+    console.log('File written successfully:', uploadedFilePath);
+    
+    // Generate preview/thumbnail for images
+    try {
+      if (detectedFileType === 'image') {
+        const previewFilename = `preview-${filename}.webp`;
+        previewPath = path.join('./uploads', previewFilename);
+        
+        await sharp(req.file.buffer)
+          .resize(300, 300, { fit: 'cover' })
+          .webp({ quality: 80 })
+          .toFile(previewPath);
+        
+        previewWritten = true; // Отмечаем что превью создано
+        console.log('Preview created successfully:', previewPath);
+      }
+    } catch (previewError) {
+      console.warn('Preview generation failed:', previewError);
+      // Continue without preview - not critical
+    }
+    
+    // Validate submission data
+    const submissionData = {
+      userId: userId,
+      filename: filename,
+      originalFilename: req.file.originalname,
+      fileType: detectedFileType,
+      fileSize: req.file.size,
+      filePath: uploadedFilePath,
+      category: req.body.category
+    };
+
+    const validation = insertSubmissionSchema.safeParse(submissionData);
+    if (!validation.success) {
+      throw new Error(`Invalid submission data: ${validation.error.errors.map(e => e.message).join(', ')}`);
+    }
+
+    const submission = await storage.createSubmission(validation.data);
+    console.log('Submission created successfully:', submission.id);
+    
+    // Success response
+    res.json({
+      ...submission,
+      previewUrl: previewPath ? `/api/preview/${submission.id}` : null
+    });
+    
+  } catch (error) {
+    console.error('Upload error:', error);
+    
+    // Cleanup only if files were actually written
+    if (fileWritten && uploadedFilePath) {
+      await cleanupFiles(uploadedFilePath, null);
+    }
+    if (previewWritten && previewPath) {
+      await cleanupFiles(null, previewPath);
+    }
+    
+    const errorMessage = error instanceof Error ? error.message : "Failed to process upload";
+    res.status(500).json({ error: errorMessage });
+  }
+});
   // ===== SUBMISSION ROUTES =====
 
   // Get all submissions (admin only)
