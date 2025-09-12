@@ -203,7 +203,187 @@ export default function AdminDashboard() {
       setUsersLoading(false);
     }
   };
+  // Добавьте этот улучшенный компонент в AdminDashboard.tsx:
 
+const FilePreview = ({ submission }: { submission: Submission }) => {
+  const [imageError, setImageError] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [debugInfo, setDebugInfo] = useState<{
+    fileUrl: string;
+    previewUrl: string;
+    responseStatus?: number;
+    errorMessage?: string;
+  }>({
+    fileUrl: `/api/files/${submission.id}`,
+    previewUrl: `/api/preview/${submission.id}`,
+  });
+
+  // Проверяем доступность файла
+  const checkFileAvailability = async () => {
+    try {
+      console.log('Checking file availability for submission:', submission.id);
+      console.log('File URL:', debugInfo.fileUrl);
+      
+      const response = await fetch(debugInfo.fileUrl, {
+        method: 'HEAD', // Используем HEAD для проверки без загрузки
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+        }
+      });
+      
+      setDebugInfo(prev => ({
+        ...prev,
+        responseStatus: response.status,
+        errorMessage: response.ok ? undefined : `HTTP ${response.status}: ${response.statusText}`
+      }));
+
+      if (!response.ok) {
+        console.error('File not accessible:', {
+          status: response.status,
+          statusText: response.statusText,
+          url: debugInfo.fileUrl
+        });
+        
+        // Попробуем получить детали ошибки
+        try {
+          const errorData = await fetch(debugInfo.fileUrl, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+            }
+          }).then(r => r.text());
+          console.error('Error details:', errorData);
+        } catch (e) {
+          console.error('Could not get error details:', e);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Failed to check file availability:', error);
+      setDebugInfo(prev => ({
+        ...prev,
+        errorMessage: `Network error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }));
+    }
+  };
+
+  useEffect(() => {
+    checkFileAvailability();
+  }, [submission.id]);
+
+  const handleImageLoad = () => {
+    setLoading(false);
+    console.log('✅ Image loaded successfully for submission:', submission.id);
+  };
+
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    console.error('❌ Failed to load image for submission:', submission.id);
+    console.error('Submission details:', {
+      id: submission.id,
+      filename: submission.filename,
+      originalFilename: submission.originalFilename,
+      fileType: submission.fileType,
+      filePath: submission.filePath,
+      status: submission.status
+    });
+    console.error('Debug info:', debugInfo);
+    
+    setImageError(true);
+    setLoading(false);
+  };
+
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
+    console.error('❌ Failed to load video for submission:', submission.id);
+    console.error('Video error event:', e);
+  };
+
+  const retryLoad = () => {
+    setImageError(false);
+    setLoading(true);
+    checkFileAvailability();
+  };
+
+  return (
+    <div className="aspect-video bg-muted rounded-lg flex items-center justify-center relative">
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-muted/80 z-10">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <span className="ml-2 text-sm">Загрузка файла...</span>
+        </div>
+      )}
+      
+      {submission.fileType === "image" ? (
+        <>
+          {!imageError ? (
+            <img  
+              src={debugInfo.fileUrl}
+              alt={submission.originalFilename || submission.filename}
+              className="object-contain w-full h-full"
+              onLoad={handleImageLoad}
+              onError={handleImageError}
+              style={{ display: loading ? 'none' : 'block' }}
+            />
+          ) : (
+            <div className="text-center p-4 space-y-3">
+              <AlertCircle className="h-12 w-12 text-destructive mx-auto" />
+              <div>
+                <p className="text-sm font-medium text-destructive">
+                  Не удалось загрузить изображение
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {submission.originalFilename || submission.filename}
+                </p>
+                
+                {/* Диагностическая информация */}
+                <div className="mt-3 p-2 bg-muted rounded text-xs text-left">
+                  <p><strong>ID:</strong> {submission.id}</p>
+                  <p><strong>Файл:</strong> {submission.filename}</p>
+                  <p><strong>URL:</strong> {debugInfo.fileUrl}</p>
+                  {debugInfo.responseStatus && (
+                    <p><strong>Статус:</strong> {debugInfo.responseStatus}</p>
+                  )}
+                  {debugInfo.errorMessage && (
+                    <p className="text-destructive"><strong>Ошибка:</strong> {debugInfo.errorMessage}</p>
+                  )}
+                </div>
+                
+                <Button
+                  variant="outline" 
+                  size="sm"
+                  onClick={retryLoad}
+                  className="mt-2"
+                >
+                  <RefreshCw className="h-4 w-4 mr-1" />
+                  Повторить
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <video
+          src={debugInfo.fileUrl}
+          controls
+          className="object-contain w-full h-full"
+          onError={handleVideoError}
+          onLoadedMetadata={() => setLoading(false)}
+          style={{ display: loading ? 'none' : 'block' }}
+        />
+      )}
+      
+      {/* Индикатор статуса файла в углу */}
+      <div className="absolute top-2 right-2">
+        {debugInfo.responseStatus && (
+          <Badge 
+            variant={debugInfo.responseStatus === 200 ? "default" : "destructive"}
+            className="text-xs"
+          >
+            {debugInfo.responseStatus}
+          </Badge>
+        )}
+      </div>
+    </div>
+  );
+};
   const handleApprove = async (submissionId: string) => {
     if (!rewardAmount || isNaN(Number(rewardAmount)) || Number(rewardAmount) <= 0) {
       toast({
@@ -628,21 +808,8 @@ export default function AdminDashboard() {
                                   </DialogDescription>
                                 </DialogHeader>
                                 <div className="space-y-4">
-                                  <div className="aspect-video bg-muted rounded-lg flex items-center justify-center">
-                                    {submission.fileType === "image" ? (
-                                        <img  
-                                          src={`/uploads/file-1757614290639-949791573.jpg`} // путь к файлу на сервере
-                                          alt={submission.originalFilename || submission.filename}
-                                          className="object-contain w-full h-full"
-                                        />
-                                      ) : (
-                                        <video
-                                          src={`/uploads/${submission.filename}`} // путь к видео
-                                          controls
-                                          className="object-contain w-full h-full"
-                                        />
-                                      )}
-                                                                      </div>
+
+                                 <FilePreview submission={submission} />
                                   <div className="grid grid-cols-2 gap-4 text-sm">
                                     <div>
                                       <strong>Категория:</strong> {getCategoryLabel(submission.category)}
