@@ -8,6 +8,7 @@ import NotFound from "@/pages/not-found";
 import LandingPage from "@/components/LandingPage";
 import AdminDashboard from "@/components/AdminDashboard";
 import ThemeToggle from "@/components/ThemeToggle";
+import PrivacyPolicyPage from "./components/PrivacyPolicyPage"; 
 
 function GameApp() {
   // Theme toggle in top right corner
@@ -35,6 +36,14 @@ function Router() {
             <ThemeToggle />
           </div>
           <AdminDashboard />
+        </>
+      )} />
+      <Route path="/privacy" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <PrivacyPolicyPage />
         </>
       )} />
       <Route component={NotFound} />
