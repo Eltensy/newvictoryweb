@@ -530,40 +530,7 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
       res.status(500).json({ error: "Internal server error" });
     }
   });
-  app.get("/api/preview/:submissionId", async (req, res) => {
-  try {
-    const submission = await storage.getSubmission(req.params.submissionId);
-    if (!submission || !submission.filename) {
-      return res.status(404).json({ error: "Preview not found" });
-    }
-
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
-      return res.status(403).json({ error: "Access denied" });
-    }
-
-    // Файл превью
-    const previewFilename = `preview-${submission.filename}.webp`;
-    const previewPath = path.resolve('./uploads', previewFilename);
-
-    // Если превью нет на диске — 404
-    try {
-      await fs.access(previewPath);
-    } catch {
-      return res.status(404).json({ error: "Preview not available" });
-    }
-
-    res.sendFile(previewPath);
-  } catch (error) {
-    console.error('Serve preview error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
+  
   // Get single submission
   app.get("/api/submission/:id", async (req, res) => {
     try {
@@ -716,37 +683,143 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
   // ===== FILE SERVING ROUTES =====
 
   // Serve uploaded files securely by submission ID
-  app.get("/api/files/:submissionId", async (req, res) => {
-    try {
-      const submission = await storage.getSubmission(req.params.submissionId);
-      if (!submission) {
-        return res.status(404).json({ error: "File not found" });
-      }
+  // Замените маршрут /api/files/:submissionId в routes.ts на этот улучшенный вариант:
 
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-
-      // Users can only access their own files, admins can access any
-      if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      
-      // Validate file path is safe
-      const filePath = path.resolve(submission.filePath);
-      const uploadsDir = path.resolve('./uploads');
-      
-      if (!filePath.startsWith(uploadsDir)) {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      
-      res.sendFile(filePath);
-    } catch (error) {
-      console.error('Serve file error:', error);
-      res.status(500).json({ error: "Internal server error" });
+app.get("/api/files/:submissionId", async (req, res) => {
+  const submissionId = req.params.submissionId;
+  console.log(`📁 File request for submission: ${submissionId}`);
+  
+  try {
+    // Получаем данные о submission
+    const submission = await storage.getSubmission(submissionId);
+    if (!submission) {
+      console.error(`❌ Submission not found: ${submissionId}`);
+      return res.status(404).json({ error: "File not found - submission not found" });
     }
-  });
+
+    console.log(`📄 Submission found:`, {
+      id: submission.id,
+      filename: submission.filename,
+      originalFilename: submission.originalFilename,
+      fileType: submission.fileType,
+      filePath: submission.filePath,
+      userId: submission.userId,
+      status: submission.status
+    });
+
+    // Проверяем аутентификацию
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      console.error(`❌ Authentication failed for submission ${submissionId}:`, authResult.error);
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    console.log(`👤 User authenticated: ${authResult.userId}, isAdmin: ${authResult.user.isAdmin}`);
+
+    // Проверяем права доступа
+    if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
+      console.error(`❌ Access denied for user ${authResult.userId} to submission ${submissionId} (owner: ${submission.userId})`);
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    // Проверяем безопасность пути
+    const filePath = path.resolve(submission.filePath);
+    const uploadsDir = path.resolve('./uploads');
+    
+    console.log(`🔍 Path validation:`, {
+      filePath,
+      uploadsDir,
+      startsWithUploads: filePath.startsWith(uploadsDir),
+      fileExists: false // будет проверено ниже
+    });
+    
+    if (!filePath.startsWith(uploadsDir)) {
+      console.error(`❌ Dangerous path detected: ${filePath}`);
+      return res.status(403).json({ error: "Access denied - invalid path" });
+    }
+    
+    // Проверяем существование файла
+    try {
+      await fs.access(filePath, fs.constants.F_OK);
+      console.log(`✅ File exists: ${filePath}`);
+      
+      // Получаем информацию о файле
+      const stats = await fs.stat(filePath);
+      console.log(`📊 File stats:`, {
+        size: stats.size,
+        isFile: stats.isFile(),
+        modified: stats.mtime
+      });
+      
+      // Устанавливаем правильные заголовки
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg', 
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mov': 'video/quicktime'
+      };
+      
+      const contentType = mimeTypes[ext] || 'application/octet-stream';
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', stats.size);
+      res.setHeader('Cache-Control', 'private, max-age=3600'); // Кэшируем на 1 час
+      
+      console.log(`📤 Sending file with content-type: ${contentType}`);
+      res.sendFile(filePath);
+      
+    } catch (accessError: any) {
+      console.error(`❌ File access error for ${filePath}:`, {
+        error: accessError.message,
+        code: accessError.code,
+        errno: accessError.errno
+      });
+      
+      // Проверим, что файл точно не существует
+      if (accessError.code === 'ENOENT') {
+        console.error(`❌ File does not exist: ${filePath}`);
+        
+        // Попробуем найти файл в папке uploads по имени
+        try {
+          const uploadFiles = await fs.readdir('./uploads');
+          console.log(`📂 Files in uploads directory:`, uploadFiles.slice(0, 10)); // Показываем первые 10 файлов
+          
+          const matchingFiles = uploadFiles.filter(file => 
+            file.includes(submission.filename) || 
+            file.includes(submission.originalFilename || '')
+          );
+          
+          if (matchingFiles.length > 0) {
+            console.log(`🔍 Potentially matching files found:`, matchingFiles);
+          }
+          
+        } catch (listError) {
+          console.error(`❌ Could not list uploads directory:`, listError);
+        }
+      }
+      
+      return res.status(404).json({ 
+        error: "File not found on disk",
+        details: {
+          filePath: submission.filePath,
+          filename: submission.filename,
+          code: accessError.code
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error(`❌ Serve file error for submission ${submissionId}:`, error);
+    res.status(500).json({ 
+      error: "Internal server error",
+      message: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
 
   // Serve preview thumbnails securely
   app.get("/api/preview/:submissionId", async (req, res) => {
