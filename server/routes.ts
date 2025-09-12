@@ -1,3 +1,4 @@
+// Make sure your imports at the top of routes.ts look like this:
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
@@ -6,7 +7,8 @@ import crypto from 'crypto';
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { storage } from "./storage";
-import fs from 'fs/promises';
+import { promises as fs } from 'fs';
+
 import { 
   insertSubmissionSchema, 
   reviewSubmissionSchema, 
@@ -15,6 +17,7 @@ import {
   insertUserSchema,
   type InsertUser
 } from "@shared/schema";
+
 
 // File upload configuration using memory storage for security
 const upload = multer({
@@ -110,10 +113,142 @@ const cleanupFiles = async (filePath: string | null, previewPath: string | null)
   }
 };
 
+
 export async function registerRoutes(app: Express): Promise<Server> {
   
   // ===== AUTHENTICATION ROUTES =====
+  if (process.env.NODE_ENV === 'development') {
+  // В режиме разработки также обслуживаем файлы напрямую для тестирования
   
+  // Логирование запросов к uploads
+  app.use('/uploads/*', (req, res, next) => {
+    console.log(`📂 Direct uploads request: ${req.path}`);
+    next();
+  });
+}
+
+// Добавьте эти routes в routes.ts в разделе ADMIN ROUTES:
+
+// Debug route для проверки файлов
+app.get("/api/debug/files", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const uploadsPath = path.resolve('./uploads');
+    console.log('📂 Checking uploads directory:', uploadsPath);
+    
+    try {
+      // Ensure directory exists
+      await fs.mkdir(uploadsPath, { recursive: true });
+      
+      const files = await fs.readdir(uploadsPath);
+      const fileDetails = await Promise.all(files.slice(0, 50).map(async (file) => {
+        const filePath = path.join(uploadsPath, file);
+        try {
+          const stats = await fs.stat(filePath);
+          return {
+            name: file,
+            size: stats.size,
+            modified: stats.mtime,
+            isFile: stats.isFile(),
+            path: filePath
+          };
+        } catch (statError) {
+          return {
+            name: file,
+            error: 'Could not read file stats',
+            path: filePath
+          };
+        }
+      }));
+      
+      res.json({
+        uploadsPath,
+        totalFiles: files.length,
+        files: fileDetails
+      });
+    } catch (readError: any) {
+      console.error('❌ Could not read uploads directory:', readError);
+      res.json({
+        uploadsPath,
+        error: `Could not read directory: ${readError.message}`,
+        totalFiles: 0,
+        files: []
+      });
+    }
+  } catch (error) {
+    console.error('Debug files error:', error);
+    res.status(500).json({ error: 'Failed to read uploads directory' });
+  }
+});
+
+// Debug route для конкретной заявки
+app.get("/api/debug/submission/:id", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const submission = await storage.getSubmission(req.params.id);
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+
+    // Check if file exists
+    let fileExists = false;
+    let fileStats = null;
+    let alternativeFiles = [];
+
+    try {
+      const stats = await fs.stat(submission.filePath);
+      fileExists = true;
+      fileStats = {
+        size: stats.size,
+        modified: stats.mtime,
+        isFile: stats.isFile()
+      };
+    } catch (error) {
+      console.log('File not found at stored path, checking alternatives...');
+      
+      // Try to find alternative files
+      const uploadsDir = path.resolve('./uploads');
+      try {
+        const files = await fs.readdir(uploadsDir);
+        alternativeFiles = files.filter(file => 
+          file.includes(submission.filename) || 
+          file.includes(submission.originalFilename) ||
+          file.includes(submission.id)
+        );
+      } catch (readError) {
+        console.error('Could not read uploads directory:', readError);
+      }
+    }
+
+    res.json({
+      submission: {
+        id: submission.id,
+        filename: submission.filename,
+        originalFilename: submission.originalFilename,
+        filePath: submission.filePath,
+        fileType: submission.fileType,
+        fileSize: submission.fileSize,
+        status: submission.status,
+        createdAt: submission.createdAt
+      },
+      fileExists,
+      fileStats,
+      alternativeFiles,
+      uploadsDirectory: path.resolve('./uploads')
+    });
+  } catch (error) {
+    console.error('Debug submission error:', error);
+    res.status(500).json({ error: 'Failed to debug submission' });
+  }
+});
   // Epic Games OAuth - Initialize login
   app.get("/api/auth/epic/login", async (req, res) => {
     try {
@@ -142,7 +277,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to initialize Epic Games login" });
     }
   });
-
+  
   // Epic Games OAuth - Handle callback
   app.get("/api/auth/epic/callback", async (req, res) => {
     try {
@@ -384,11 +519,13 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
   // ===== FILE UPLOAD ROUTES =====
 
   // Upload file and create submission
-  app.post("/api/upload", upload.single('file'), async (req, res) => {
+ // Замените upload route в routes.ts на этот исправленный вариант:
+
+app.post("/api/upload", upload.single('file'), async (req, res) => {
   let uploadedFilePath: string | null = null;
   let previewPath: string | null = null;
-  let fileWritten = false; // Флаг для отслеживания записи файла
-  let previewWritten = false; // Флаг для отслеживания создания превью
+  let fileWritten = false;
+  let previewWritten = false;
   
   try {
     if (!req.file) {
@@ -423,45 +560,59 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
     const filename = `file-${uniqueSuffix}${ext}`;
-    uploadedFilePath = path.join('./uploads', filename);
     
-    // Ensure uploads directory exists
-    await fs.mkdir('./uploads', { recursive: true });
+    // ВАЖНО: Ensure uploads directory exists
+    const uploadsDir = path.resolve('./uploads');
+    await fs.mkdir(uploadsDir, { recursive: true });
+    console.log(`📂 Uploads directory ensured: ${uploadsDir}`);
+    
+    uploadedFilePath = path.join(uploadsDir, filename);
+    console.log(`💾 Writing file to: ${uploadedFilePath}`);
     
     // Write file to disk
     await fs.writeFile(uploadedFilePath, req.file.buffer);
-    fileWritten = true; // Отмечаем что файл записан
-    console.log('File written successfully:', uploadedFilePath);
+    fileWritten = true;
+    
+    // Verify file was written
+    const stats = await fs.stat(uploadedFilePath);
+    console.log(`✅ File written successfully:`, {
+      path: uploadedFilePath,
+      size: stats.size,
+      originalSize: req.file.size,
+      exists: stats.isFile()
+    });
     
     // Generate preview/thumbnail for images
     try {
       if (detectedFileType === 'image') {
         const previewFilename = `preview-${filename}.webp`;
-        previewPath = path.join('./uploads', previewFilename);
+        previewPath = path.join(uploadsDir, previewFilename);
         
         await sharp(req.file.buffer)
           .resize(300, 300, { fit: 'cover' })
           .webp({ quality: 80 })
           .toFile(previewPath);
         
-        previewWritten = true; // Отмечаем что превью создано
-        console.log('Preview created successfully:', previewPath);
+        previewWritten = true;
+        console.log('✅ Preview created successfully:', previewPath);
       }
     } catch (previewError) {
-      console.warn('Preview generation failed:', previewError);
+      console.warn('⚠️ Preview generation failed:', previewError);
       // Continue without preview - not critical
     }
     
-    // Validate submission data
+    // Validate submission data - ВАЖНО: сохраняем полный путь к файлу
     const submissionData = {
       userId: userId,
       filename: filename,
       originalFilename: req.file.originalname,
       fileType: detectedFileType,
       fileSize: req.file.size,
-      filePath: uploadedFilePath,
+      filePath: uploadedFilePath, // Сохраняем полный путь
       category: req.body.category
     };
+
+    console.log(`📝 Creating submission with data:`, submissionData);
 
     const validation = insertSubmissionSchema.safeParse(submissionData);
     if (!validation.success) {
@@ -469,7 +620,11 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
     }
 
     const submission = await storage.createSubmission(validation.data);
-    console.log('Submission created successfully:', submission.id);
+    console.log('✅ Submission created successfully:', {
+      id: submission.id,
+      filename: submission.filename,
+      filePath: submission.filePath
+    });
     
     // Success response
     res.json({
@@ -478,7 +633,7 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Upload error:', error);
+    console.error('❌ Upload error:', error);
     
     // Cleanup only if files were actually written
     if (fileWritten && uploadedFilePath) {
@@ -560,110 +715,134 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
 
   // Review submission (approve/reject)
   app.post("/api/admin/submission/:id/review", async (req, res) => {
-    try {
-      const authResult = await authenticateAdmin(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-
-      const validation = reviewSubmissionSchema.safeParse(req.body);
-      if (!validation.success) {
-        return res.status(400).json({ 
-          error: "Invalid review data", 
-          details: validation.error.errors 
-        });
-      }
-
-      const { status, reward, rejectionReason } = validation.data;
-      
-      // Validate business rules
-      if (status === 'approved' && !reward) {
-        return res.status(400).json({ error: "Reward amount required for approved submissions" });
-      }
-      
-      if (status === 'rejected' && !rejectionReason) {
-        return res.status(400).json({ error: "Rejection reason required for rejected submissions" });
-      }
-
-      const submission = await storage.updateSubmissionStatus(
-        req.params.id, 
-        status, 
-        authResult.adminId, 
-        reward, 
-        rejectionReason
-      );
-
-      // If approved, update user balance
-      if (status === 'approved' && reward) {
-        await storage.updateUserBalance(submission.userId, reward);
-        
-        // Log admin action
-        await storage.createAdminAction({
-          adminId: authResult.adminId,
-          action: 'approve_submission',
-          targetType: 'submission',
-          targetId: submission.id,
-          details: JSON.stringify({ reward, submissionId: submission.id })
-        });
-      } else if (status === 'rejected') {
-        // Log admin action
-        await storage.createAdminAction({
-          adminId: authResult.adminId,
-          action: 'reject_submission',
-          targetType: 'submission',
-          targetId: submission.id,
-          details: JSON.stringify({ rejectionReason, submissionId: submission.id })
-        });
-      }
-
-      res.json(submission);
-    } catch (error) {
-      console.error('Review error:', error);
-      res.status(500).json({ error: "Failed to process review" });
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
     }
-  });
 
-  // Update user balance (admin only)
-  app.post("/api/admin/user/:id/balance", async (req, res) => {
-    try {
-      const authResult = await authenticateAdmin(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
+    console.log('Review request body:', req.body); // Для отладки
 
-      const validation = updateUserBalanceSchema.safeParse(req.body);
-      if (!validation.success) {
-        return res.status(400).json({ 
-          error: "Invalid balance update data", 
-          details: validation.error.errors 
-        });
-      }
+    // Преобразуем данные перед валидацией
+    const reviewData = {
+      status: req.body.status,
+      reward: req.body.reward ? Number(req.body.reward) : undefined, // Преобразуем в число
+      rejectionReason: req.body.rejectionReason
+    };
 
-      const { amount, reason } = validation.data;
-      const user = await storage.updateUserBalance(req.params.id, amount);
+    console.log('Transformed review data:', reviewData); // Для отладки
+
+    const validation = reviewSubmissionSchema.safeParse(reviewData);
+    if (!validation.success) {
+      console.error('Validation failed:', validation.error.errors); // Для отладки
+      return res.status(400).json({ 
+        error: "Invalid review data", 
+        details: validation.error.errors 
+      });
+    }
+
+    const { status, reward, rejectionReason } = validation.data;
+    
+    // Validate business rules
+    if (status === 'approved' && (!reward || reward <= 0)) {
+      return res.status(400).json({ error: "Valid reward amount required for approved submissions" });
+    }
+    
+    if (status === 'rejected' && !rejectionReason?.trim()) {
+      return res.status(400).json({ error: "Rejection reason required for rejected submissions" });
+    }
+
+    const submission = await storage.updateSubmissionStatus(
+      req.params.id, 
+      status, 
+      authResult.adminId, 
+      reward, 
+      rejectionReason
+    );
+
+    // If approved, update user balance
+    if (status === 'approved' && reward) {
+      await storage.updateUserBalance(submission.userId, reward);
       
       // Log admin action
       await storage.createAdminAction({
         adminId: authResult.adminId,
-        action: 'adjust_balance',
-        targetType: 'user',
-        targetId: user.id,
-        details: JSON.stringify({ amount, reason, newBalance: user.balance })
+        action: 'approve_submission',
+        targetType: 'submission',
+        targetId: submission.id,
+        details: JSON.stringify({ reward, submissionId: submission.id })
       });
-
-      res.json(user);
-    } catch (error) {
-      console.error('Update balance error:', error);
-      res.status(500).json({ error: "Failed to update balance" });
+    } else if (status === 'rejected') {
+      // Log admin action
+      await storage.createAdminAction({
+        adminId: authResult.adminId,
+        action: 'reject_submission',
+        targetType: 'submission',
+        targetId: submission.id,
+        details: JSON.stringify({ rejectionReason, submissionId: submission.id })
+      });
     }
-  });
-  app.get("/api/checkadmin", async (req, res) => {
-      const authResult = await authenticateAdmin(req);
-      if ('error' in authResult) {
-        return false;
-      }
-      res.json(true);
-  });
+
+    res.json(submission);
+  } catch (error) {
+    console.error('Review error:', error);
+    res.status(500).json({ error: "Failed to process review" });
+  }
+});
+  app.post("/api/admin/user/:id/balance", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    console.log('Balance update request body:', req.body); // Для отладки
+
+    // Преобразуем данные перед валидацией
+    const balanceData = {
+      amount: req.body.amount ? Number(req.body.amount) : undefined, // Преобразуем в число
+      reason: req.body.reason
+    };
+
+    console.log('Transformed balance data:', balanceData); // Для отладки
+
+    const validation = updateUserBalanceSchema.safeParse(balanceData);
+    if (!validation.success) {
+      console.error('Balance validation failed:', validation.error.errors); // Для отладки
+      return res.status(400).json({ 
+        error: "Invalid balance update data", 
+        details: validation.error.errors 
+      });
+    }
+
+    const { amount, reason } = validation.data;
+    
+    // Дополнительная проверка
+    if (!amount || isNaN(amount)) {
+      return res.status(400).json({ error: "Valid amount is required" });
+    }
+
+    if (!reason?.trim()) {
+      return res.status(400).json({ error: "Reason is required" });
+    }
+
+    const user = await storage.updateUserBalance(req.params.id, amount);
+    
+    // Log admin action
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: 'adjust_balance',
+      targetType: 'user',
+      targetId: user.id,
+      details: JSON.stringify({ amount, reason, newBalance: user.balance })
+    });
+
+    res.json(user);
+  } catch (error) {
+    console.error('Update balance error:', error);
+    res.status(500).json({ error: "Failed to update balance" });
+  }
+});
   // Get admin actions log
   app.get("/api/admin/actions", async (req, res) => {
     try {
@@ -690,7 +869,7 @@ app.get("/api/files/:submissionId", async (req, res) => {
   console.log(`📁 File request for submission: ${submissionId}`);
   
   try {
-    // Получаем данные о submission
+    // Get submission data
     const submission = await storage.getSubmission(submissionId);
     if (!submission) {
       console.error(`❌ Submission not found: ${submissionId}`);
@@ -707,7 +886,7 @@ app.get("/api/files/:submissionId", async (req, res) => {
       status: submission.status
     });
 
-    // Проверяем аутентификацию
+    // Check authentication
     const authResult = await authenticateUser(req);
     if ('error' in authResult) {
       console.error(`❌ Authentication failed for submission ${submissionId}:`, authResult.error);
@@ -716,21 +895,21 @@ app.get("/api/files/:submissionId", async (req, res) => {
 
     console.log(`👤 User authenticated: ${authResult.userId}, isAdmin: ${authResult.user.isAdmin}`);
 
-    // Проверяем права доступа
+    // Check access permissions
     if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
       console.error(`❌ Access denied for user ${authResult.userId} to submission ${submissionId} (owner: ${submission.userId})`);
       return res.status(403).json({ error: "Access denied" });
     }
 
-    // Проверяем безопасность пути
+    // Path security validation
     const filePath = path.resolve(submission.filePath);
     const uploadsDir = path.resolve('./uploads');
     
     console.log(`🔍 Path validation:`, {
-      filePath,
+      originalPath: submission.filePath,
+      resolvedPath: filePath,
       uploadsDir,
-      startsWithUploads: filePath.startsWith(uploadsDir),
-      fileExists: false // будет проверено ниже
+      startsWithUploads: filePath.startsWith(uploadsDir)
     });
     
     if (!filePath.startsWith(uploadsDir)) {
@@ -738,12 +917,12 @@ app.get("/api/files/:submissionId", async (req, res) => {
       return res.status(403).json({ error: "Access denied - invalid path" });
     }
     
-    // Проверяем существование файла
+    // Check if file exists
     try {
       await fs.access(filePath, fs.constants.F_OK);
       console.log(`✅ File exists: ${filePath}`);
       
-      // Получаем информацию о файле
+      // Get file stats
       const stats = await fs.stat(filePath);
       console.log(`📊 File stats:`, {
         size: stats.size,
@@ -751,7 +930,7 @@ app.get("/api/files/:submissionId", async (req, res) => {
         modified: stats.mtime
       });
       
-      // Устанавливаем правильные заголовки
+      // Set proper headers
       const ext = path.extname(filePath).toLowerCase();
       const mimeTypes: Record<string, string> = {
         '.jpg': 'image/jpeg',
@@ -767,10 +946,21 @@ app.get("/api/files/:submissionId", async (req, res) => {
       const contentType = mimeTypes[ext] || 'application/octet-stream';
       res.setHeader('Content-Type', contentType);
       res.setHeader('Content-Length', stats.size);
-      res.setHeader('Cache-Control', 'private, max-age=3600'); // Кэшируем на 1 час
+      res.setHeader('Cache-Control', 'private, max-age=3600');
       
       console.log(`📤 Sending file with content-type: ${contentType}`);
-      res.sendFile(filePath);
+      
+      // Use absolute path with res.sendFile
+      res.sendFile(filePath, (err) => {
+        if (err) {
+          console.error(`❌ Error sending file ${filePath}:`, err);
+          if (!res.headersSent) {
+            res.status(500).json({ error: "Failed to send file" });
+          }
+        } else {
+          console.log(`✅ File sent successfully: ${filePath}`);
+        }
+      });
       
     } catch (accessError: any) {
       console.error(`❌ File access error for ${filePath}:`, {
@@ -779,14 +969,13 @@ app.get("/api/files/:submissionId", async (req, res) => {
         errno: accessError.errno
       });
       
-      // Проверим, что файл точно не существует
       if (accessError.code === 'ENOENT') {
         console.error(`❌ File does not exist: ${filePath}`);
         
-        // Попробуем найти файл в папке uploads по имени
+        // List files in uploads directory for debugging
         try {
           const uploadFiles = await fs.readdir('./uploads');
-          console.log(`📂 Files in uploads directory:`, uploadFiles.slice(0, 10)); // Показываем первые 10 файлов
+          console.log(`📂 Files in uploads directory:`, uploadFiles.slice(0, 10));
           
           const matchingFiles = uploadFiles.filter(file => 
             file.includes(submission.filename) || 
@@ -796,7 +985,6 @@ app.get("/api/files/:submissionId", async (req, res) => {
           if (matchingFiles.length > 0) {
             console.log(`🔍 Potentially matching files found:`, matchingFiles);
           }
-          
         } catch (listError) {
           console.error(`❌ Could not list uploads directory:`, listError);
         }
@@ -820,39 +1008,37 @@ app.get("/api/files/:submissionId", async (req, res) => {
     });
   }
 });
-
-  // Serve preview thumbnails securely
-  app.get("/api/preview/:submissionId", async (req, res) => {
-    try {
-      const submission = await storage.getSubmission(req.params.submissionId);
-      if (!submission) {
-        return res.status(404).json({ error: "Preview not found" });
-      }
-
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-
-      // Users can only access their own previews, admins can access any
-      if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      
-      // Generate preview filename
-      const previewFilename = `preview-${submission.filename}.webp`;
-      const previewPath = path.resolve('./uploads', previewFilename);
-      const uploadsDir = path.resolve('./uploads');
-      
-      if (!previewPath.startsWith(uploadsDir)) {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      
-      res.sendFile(previewPath);
-    } catch (error) {
-      res.status(404).json({ error: "Preview not available" });
+// Serve preview image by submission ID
+app.get("/api/preview/:submissionId", async (req, res) => {
+  try {
+    const submission = await storage.getSubmission(req.params.submissionId);
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
     }
-  });
+
+    const authResult = await authenticateUser(req);
+    if ("error" in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+    if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    // previewPath у тебя хранится не в базе — нужно добавлять при сабмите
+    const previewPath = submission.filePath.replace(/file-/, "preview-file-") + ".webp";
+
+    try {
+      await fs.access(previewPath);
+    } catch {
+      return res.status(404).json({ error: "Preview not found" });
+    }
+
+    res.sendFile(path.resolve(previewPath));
+  } catch (error) {
+    console.error("Serve preview error:", error);
+    res.status(500).json({ error: "Failed to serve preview" });
+  }
+});
 
   // ===== HEALTH CHECK ROUTE =====
   

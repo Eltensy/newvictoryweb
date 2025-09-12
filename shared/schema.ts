@@ -113,20 +113,29 @@ export type InsertSubmission = z.infer<typeof insertSubmissionSchema>;
 export type AdminAction = typeof adminActions.$inferSelect;
 export type InsertAdminAction = z.infer<typeof insertAdminActionSchema>;
 
-// Additional validation schemas
 export const updateUserBalanceSchema = z.object({
-  userId: z.string(),
-  amount: z.number(),
-  reason: z.string().optional(),
+  amount: z.number(), // Убрали userId - он берется из URL параметра
+  reason: z.string().min(1, "Reason is required"), // Сделали обязательным
 });
 
 export const reviewSubmissionSchema = z.object({
-  submissionId: z.string(),
-  status: z.enum(['approved', 'rejected']),
-  reward: z.number().optional(),
+  status: z.enum(['approved', 'rejected']), // Убрали submissionId - он берется из URL параметра
+  reward: z.number().positive().optional(),
   rejectionReason: z.string().optional(),
+}).refine((data) => {
+  // If approved, reward is required and must be positive
+  if (data.status === 'approved') {
+    return data.reward !== undefined && data.reward > 0;
+  }
+  // If rejected, rejection reason is required
+  if (data.status === 'rejected') {
+    return data.rejectionReason !== undefined && data.rejectionReason.trim().length > 0;
+  }
+  return true;
+}, {
+  message: "For approved submissions, a positive reward is required. For rejected submissions, a rejection reason is required."
 });
 
 export const linkTelegramSchema = z.object({
-  telegramUsername: z.string().min(1),
+  telegramUsername: z.string().min(1).max(50),
 });

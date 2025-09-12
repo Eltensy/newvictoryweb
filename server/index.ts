@@ -1,11 +1,18 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { registerRoutes } from "./routes.js";
+import { setupVite, serveStatic, log } from "./vite.js";
+import path, { dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
 
+// раздача файлов из uploads
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(express.urlencoded({ extended: false }));
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
