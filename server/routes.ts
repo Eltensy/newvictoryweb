@@ -8,7 +8,9 @@ import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { storage } from "./storage";
 import { promises as fs } from 'fs';
-
+import { cloudStorage } from './fileStorage.js';
+import dotenv from "dotenv";
+dotenv.config();
 import { 
   insertSubmissionSchema, 
   reviewSubmissionSchema, 
@@ -522,17 +524,12 @@ app.delete("/api/user/:id/telegram", async (req, res) => {
  // Замените upload route в routes.ts на этот исправленный вариант:
 
 app.post("/api/upload", upload.single('file'), async (req, res) => {
-  let uploadedFilePath: string | null = null;
-  let previewPath: string | null = null;
-  let fileWritten = false;
-  let previewWritten = false;
-  
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    // Authenticate user BEFORE any disk operations
+    // Authenticate user BEFORE any operations
     const authResult = await authenticateUser(req);
     if ('error' in authResult) {
       return res.status(authResult.status).json({ error: authResult.error });
@@ -556,92 +553,68 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
 
     const detectedFileType = allowedImageTypes.includes(fileType.mime) ? 'image' : 'video';
     
-    // Generate unique filename and write to disk
+    // Generate unique filename
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
-    const filename = `file-${uniqueSuffix}${ext}`;
+    const filename = `${userId}-${uniqueSuffix}${ext}`;
     
-    // ВАЖНО: Ensure uploads directory exists
-    const uploadsDir = path.resolve('./uploads');
-    await fs.mkdir(uploadsDir, { recursive: true });
-    console.log(`📂 Uploads directory ensured: ${uploadsDir}`);
+    console.log(`☁️ Uploading to Cloudinary: ${filename}`);
     
-    uploadedFilePath = path.join(uploadsDir, filename);
-    console.log(`💾 Writing file to: ${uploadedFilePath}`);
+    // Upload to Cloudinary
+    const cloudinaryResult = await cloudStorage.uploadFile(
+      req.file.buffer,
+      filename,
+      detectedFileType
+    );
     
-    // Write file to disk
-    await fs.writeFile(uploadedFilePath, req.file.buffer);
-    fileWritten = true;
-    
-    // Verify file was written
-    const stats = await fs.stat(uploadedFilePath);
-    console.log(`✅ File written successfully:`, {
-      path: uploadedFilePath,
-      size: stats.size,
-      originalSize: req.file.size,
-      exists: stats.isFile()
+    console.log(`✅ Cloudinary upload successful:`, {
+      public_id: cloudinaryResult.public_id,
+      url: cloudinaryResult.secure_url,
+      size: cloudinaryResult.bytes
     });
     
-    // Generate preview/thumbnail for images
-    try {
-      if (detectedFileType === 'image') {
-        const previewFilename = `preview-${filename}.webp`;
-        previewPath = path.join(uploadsDir, previewFilename);
-        
-        await sharp(req.file.buffer)
-          .resize(300, 300, { fit: 'cover' })
-          .webp({ quality: 80 })
-          .toFile(previewPath);
-        
-        previewWritten = true;
-        console.log('✅ Preview created successfully:', previewPath);
-      }
-    } catch (previewError) {
-      console.warn('⚠️ Preview generation failed:', previewError);
-      // Continue without preview - not critical
-    }
-    
-    // Validate submission data - ВАЖНО: сохраняем полный путь к файлу
+    // Validate submission data - сохраняем Cloudinary URLs
     const submissionData = {
       userId: userId,
-      filename: filename,
+      filename: cloudinaryResult.public_id, // Сохраняем public_id для управления
       originalFilename: req.file.originalname,
       fileType: detectedFileType,
       fileSize: req.file.size,
-      filePath: uploadedFilePath, // Сохраняем полный путь
-      category: req.body.category
+      filePath: cloudinaryResult.secure_url, // Сохраняем URL файла
+      category: req.body.category,
+      // Дополнительные поля для Cloudinary
+      cloudinaryPublicId: cloudinaryResult.public_id,
+      cloudinaryUrl: cloudinaryResult.secure_url
     };
 
-    console.log(`📝 Creating submission with data:`, submissionData);
+    console.log(`📝 Creating submission with Cloudinary data:`, submissionData);
 
     const validation = insertSubmissionSchema.safeParse(submissionData);
     if (!validation.success) {
+      // Если валидация не прошла, удаляем файл из Cloudinary
+      await cloudStorage.deleteFile(cloudinaryResult.public_id);
       throw new Error(`Invalid submission data: ${validation.error.errors.map(e => e.message).join(', ')}`);
     }
 
     const submission = await storage.createSubmission(validation.data);
     console.log('✅ Submission created successfully:', {
       id: submission.id,
-      filename: submission.filename,
-      filePath: submission.filePath
+      cloudinaryPublicId: submission.cloudinaryPublicId,
+      url: submission.filePath
     });
+    
+    // Generate thumbnail URL for preview
+    const thumbnailUrl = cloudStorage.generateThumbnail(cloudinaryResult.public_id);
     
     // Success response
     res.json({
       ...submission,
-      previewUrl: previewPath ? `/api/preview/${submission.id}` : null
+      thumbnailUrl,
+      fileUrl: cloudinaryResult.secure_url
     });
     
   } catch (error) {
     console.error('❌ Upload error:', error);
-    
-    // Cleanup only if files were actually written
-    if (fileWritten && uploadedFilePath) {
-      await cleanupFiles(uploadedFilePath, null);
-    }
-    if (previewWritten && previewPath) {
-      await cleanupFiles(null, previewPath);
-    }
     
     const errorMessage = error instanceof Error ? error.message : "Failed to process upload";
     res.status(500).json({ error: errorMessage });
@@ -789,6 +762,47 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
     res.status(500).json({ error: "Failed to process review" });
   }
 });
+app.get("/api/admin/users", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const users = await storage.getAllUsers();
+    
+    // Добавляем статистику для каждого пользователя
+    const usersWithStats = await Promise.all(
+      users.map(async (user) => {
+        try {
+          const stats = await storage.getUserStats(user.id);
+          return {
+            ...user,
+            stats
+          };
+        } catch (error) {
+          console.error(`Failed to get stats for user ${user.id}:`, error);
+          return {
+            ...user,
+            stats: {
+              totalSubmissions: 0,
+              approvedSubmissions: 0,
+              pendingSubmissions: 0,
+              rejectedSubmissions: 0,
+              totalEarnings: 0,
+              isAdmin: user.isAdmin
+            }
+          };
+        }
+      })
+    );
+
+    res.json(usersWithStats);
+  } catch (error) {
+    console.error('Get all users error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
   app.post("/api/admin/user/:id/balance", async (req, res) => {
   try {
     const authResult = await authenticateAdmin(req);
@@ -876,16 +890,6 @@ app.get("/api/files/:submissionId", async (req, res) => {
       return res.status(404).json({ error: "File not found - submission not found" });
     }
 
-    console.log(`📄 Submission found:`, {
-      id: submission.id,
-      filename: submission.filename,
-      originalFilename: submission.originalFilename,
-      fileType: submission.fileType,
-      filePath: submission.filePath,
-      userId: submission.userId,
-      status: submission.status
-    });
-
     // Check authentication
     const authResult = await authenticateUser(req);
     if ('error' in authResult) {
@@ -893,122 +897,40 @@ app.get("/api/files/:submissionId", async (req, res) => {
       return res.status(authResult.status).json({ error: authResult.error });
     }
 
-    console.log(`👤 User authenticated: ${authResult.userId}, isAdmin: ${authResult.user.isAdmin}`);
-
     // Check access permissions
     if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
-      console.error(`❌ Access denied for user ${authResult.userId} to submission ${submissionId} (owner: ${submission.userId})`);
+      console.error(`❌ Access denied for user ${authResult.userId} to submission ${submissionId}`);
       return res.status(403).json({ error: "Access denied" });
     }
 
-    // Path security validation
+    // Для Cloudinary файлов просто редиректим на URL
+    if (submission.filePath.startsWith('https://res.cloudinary.com')) {
+      console.log(`🔗 Redirecting to Cloudinary URL: ${submission.filePath}`);
+      return res.redirect(submission.filePath);
+    }
+
+    // Fallback для старых файлов в файловой системе (если есть)
     const filePath = path.resolve(submission.filePath);
     const uploadsDir = path.resolve('./uploads');
     
-    console.log(`🔍 Path validation:`, {
-      originalPath: submission.filePath,
-      resolvedPath: filePath,
-      uploadsDir,
-      startsWithUploads: filePath.startsWith(uploadsDir)
-    });
-    
     if (!filePath.startsWith(uploadsDir)) {
-      console.error(`❌ Dangerous path detected: ${filePath}`);
       return res.status(403).json({ error: "Access denied - invalid path" });
     }
     
-    // Check if file exists
     try {
       await fs.access(filePath, fs.constants.F_OK);
-      console.log(`✅ File exists: ${filePath}`);
-      
-      // Get file stats
-      const stats = await fs.stat(filePath);
-      console.log(`📊 File stats:`, {
-        size: stats.size,
-        isFile: stats.isFile(),
-        modified: stats.mtime
-      });
-      
-      // Set proper headers
-      const ext = path.extname(filePath).toLowerCase();
-      const mimeTypes: Record<string, string> = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg', 
-        '.png': 'image/png',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp',
-        '.mp4': 'video/mp4',
-        '.webm': 'video/webm',
-        '.mov': 'video/quicktime'
-      };
-      
-      const contentType = mimeTypes[ext] || 'application/octet-stream';
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Length', stats.size);
-      res.setHeader('Cache-Control', 'private, max-age=3600');
-      
-      console.log(`📤 Sending file with content-type: ${contentType}`);
-      
-      // Use absolute path with res.sendFile
-      res.sendFile(filePath, (err) => {
-        if (err) {
-          console.error(`❌ Error sending file ${filePath}:`, err);
-          if (!res.headersSent) {
-            res.status(500).json({ error: "Failed to send file" });
-          }
-        } else {
-          console.log(`✅ File sent successfully: ${filePath}`);
-        }
-      });
-      
+      res.sendFile(filePath);
     } catch (accessError: any) {
-      console.error(`❌ File access error for ${filePath}:`, {
-        error: accessError.message,
-        code: accessError.code,
-        errno: accessError.errno
-      });
-      
-      if (accessError.code === 'ENOENT') {
-        console.error(`❌ File does not exist: ${filePath}`);
-        
-        // List files in uploads directory for debugging
-        try {
-          const uploadFiles = await fs.readdir('./uploads');
-          console.log(`📂 Files in uploads directory:`, uploadFiles.slice(0, 10));
-          
-          const matchingFiles = uploadFiles.filter(file => 
-            file.includes(submission.filename) || 
-            file.includes(submission.originalFilename || '')
-          );
-          
-          if (matchingFiles.length > 0) {
-            console.log(`🔍 Potentially matching files found:`, matchingFiles);
-          }
-        } catch (listError) {
-          console.error(`❌ Could not list uploads directory:`, listError);
-        }
-      }
-      
-      return res.status(404).json({ 
-        error: "File not found on disk",
-        details: {
-          filePath: submission.filePath,
-          filename: submission.filename,
-          code: accessError.code
-        }
-      });
+      return res.status(404).json({ error: "File not found on disk" });
     }
     
   } catch (error) {
     console.error(`❌ Serve file error for submission ${submissionId}:`, error);
-    res.status(500).json({ 
-      error: "Internal server error",
-      message: error instanceof Error ? error.message : "Unknown error"
-    });
+    res.status(500).json({ error: "Internal server error" });
   }
 });
-// Serve preview image by submission ID
+
+// Serve preview/thumbnail
 app.get("/api/preview/:submissionId", async (req, res) => {
   try {
     const submission = await storage.getSubmission(req.params.submissionId);
@@ -1020,26 +942,60 @@ app.get("/api/preview/:submissionId", async (req, res) => {
     if ("error" in authResult) {
       return res.status(authResult.status).json({ error: authResult.error });
     }
+    
     if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    // previewPath у тебя хранится не в базе — нужно добавлять при сабмите
-    const previewPath = submission.filePath.replace(/file-/, "preview-file-") + ".webp";
+    // Для Cloudinary файлов генерируем thumbnail URL
+    if (submission.cloudinaryPublicId) {
+      const thumbnailUrl = cloudStorage.generateThumbnail(submission.cloudinaryPublicId);
+      console.log(`🖼️ Redirecting to Cloudinary thumbnail: ${thumbnailUrl}`);
+      return res.redirect(thumbnailUrl);
+    }
 
+    // Fallback для старых файлов
+    const previewPath = submission.filePath.replace(/file-/, "preview-file-") + ".webp";
     try {
       await fs.access(previewPath);
+      res.sendFile(path.resolve(previewPath));
     } catch {
       return res.status(404).json({ error: "Preview not found" });
     }
-
-    res.sendFile(path.resolve(previewPath));
   } catch (error) {
     console.error("Serve preview error:", error);
     res.status(500).json({ error: "Failed to serve preview" });
   }
 });
 
+// Новый маршрут для получения прямого URL файла (для админки)
+app.get("/api/file-url/:submissionId", async (req, res) => {
+  try {
+    const submission = await storage.getSubmission(req.params.submissionId);
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+
+    const authResult = await authenticateUser(req);
+    if ("error" in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+    
+    if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    res.json({
+      fileUrl: submission.filePath,
+      thumbnailUrl: submission.cloudinaryPublicId 
+        ? cloudStorage.generateThumbnail(submission.cloudinaryPublicId) 
+        : null
+    });
+  } catch (error) {
+    console.error("Get file URL error:", error);
+    res.status(500).json({ error: "Failed to get file URL" });
+  }
+});
   // ===== HEALTH CHECK ROUTE =====
   
   app.get("/api/health", (req, res) => {

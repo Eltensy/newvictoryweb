@@ -56,8 +56,11 @@
     displayName: string;
     balance: number;
     createdAt: string;
+    updatedAt: string;
     telegramUsername: string;
     isAdmin: boolean;
+    email?: string;
+    epicGamesId?: string;
     // Stats from backend
     stats?: {
       totalSubmissions: number;
@@ -174,167 +177,61 @@
   }
 };
     const fetchUsers = async () => {
-      setUsersLoading(true);
-      setError(null);
-      try {
-        const token = getAuthToken();
-        if (!token) throw new Error('No authentication token');
+        setUsersLoading(true);
+        setError(null);
+        try {
+          const token = getAuthToken();
+          if (!token) throw new Error('No authentication token');
 
-        // Since there's no /api/users endpoint, we'll need to get users from submissions
-        // This is a limitation of the current backend - you might want to add a users endpoint
-        const response = await fetch('/api/submissions', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch data: ${response.statusText}`);
-        }
-
-        const submissionsData = await response.json();
-        
-        // Extract unique users from submissions
-        const userMap = new Map<string, User>();
-        
-        for (const submission of submissionsData) {
-          if (!userMap.has(submission.userId)) {
-            // Fetch user stats
-            try {
-              const statsResponse = await fetch(`/api/user/${submission.userId}/stats`, {
-                headers: {
-                  'Authorization': `Bearer ${token}`
-                }
-              });
-              
-              const userResponse = await fetch(`/api/user/${submission.userId}`, {
-                headers: {
-                  'Authorization': `Bearer ${token}`
-                }
-              });
-
-              let stats = null;
-              let userData = null;
-
-              if (statsResponse.ok) {
-                stats = await statsResponse.json();
-              }
-              
-              if (userResponse.ok) {
-                userData = await userResponse.json();
-              }
-
-              if (userData) {
-                userMap.set(submission.userId, {
-                  id: submission.userId,
-                  username: userData.username,
-                  displayName: userData.displayName,
-                  telegramUsername: userData.telegramUsername,
-                  balance: userData.balance,
-                  createdAt: userData.createdAt,
-                  isAdmin: userData.isAdmin,
-                  stats: stats
-                });
-              }
-            } catch (err) {
-              console.error(`Failed to fetch user ${submission.userId}:`, err);
+          const response = await fetch('/api/admin/users', {
+            headers: {
+              'Authorization': `Bearer ${token}`
             }
-          }
-        }
-        
-        setUsers(Array.from(userMap.values()));
-      } catch (error) {
-        console.error('Failed to fetch users:', error);
-        setError(error instanceof Error ? error.message : 'Failed to fetch users');
-        toast({
-          title: "Ошибка",
-          description: "Не удалось загрузить пользователей",
-          variant: "destructive"
-        });
-      } finally {
-        setUsersLoading(false);
-      }
-    };
-    // Замените компонент FilePreview в AdminDashboard.tsx на этот исправленный вариант
+          });
 
-const FilePreview = ({ submission }: { submission: Submission }) => {
+          if (!response.ok) {
+            throw new Error(`Failed to fetch users: ${response.statusText}`);
+          }
+
+          const data = await response.json();
+          setUsers(data);
+        } catch (error) {
+          console.error('Failed to fetch users:', error);
+          setError(error instanceof Error ? error.message : 'Failed to fetch users');
+          toast({
+            title: "Ошибка",
+            description: "Не удалось загрузить пользователей",
+            variant: "destructive"
+          });
+        } finally {
+          setUsersLoading(false);
+        }
+      };
+    const FilePreview = ({ submission }: { submission: Submission }) => {
   const [imageError, setImageError] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [imageBlob, setImageBlob] = useState<string | null>(null);
-  const { getAuthToken } = useAuth(); // Получаем хук для токена
+  const { getAuthToken } = useAuth();
   
-  const [debugInfo, setDebugInfo] = useState<{
-    fileUrl: string;
-    previewUrl: string;
-    responseStatus?: number;
-    errorMessage?: string;
-  }>({
-    fileUrl: `/api/files/${submission.id}`,
-    previewUrl: `/api/preview/${submission.id}`,
-  });
-
-  // Загружаем файл через fetch с авторизацией
-  const loadFileAsBlob = async () => {
-    try {
-      console.log('Loading file for submission:', submission.id);
-      
-      const token = getAuthToken();
-      if (!token) {
-        throw new Error('No auth token available');
-      }
-
-      const response = await fetch(debugInfo.fileUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      setDebugInfo(prev => ({
-        ...prev,
-        responseStatus: response.status,
-        errorMessage: response.ok ? undefined : `HTTP ${response.status}: ${response.statusText}`
-      }));
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      setImageBlob(blobUrl);
-      setLoading(false);
-      console.log('✅ File loaded successfully for submission:', submission.id);
-      
-    } catch (error) {
-      console.error('❌ Failed to load file for submission:', submission.id, error);
-      setDebugInfo(prev => ({
-        ...prev,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error'
-      }));
-      setImageError(true);
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadFileAsBlob();
-    
-    // Cleanup blob URL when component unmounts
-    return () => {
-      if (imageBlob) {
-        URL.revokeObjectURL(imageBlob);
-      }
-    };
-  }, [submission.id]);
-
+  // Для Cloudinary файлов используем прямые URL
+  const isCloudinaryFile = submission.filePath?.startsWith('https://res.cloudinary.com') || 
+                          submission.cloudinaryUrl;
+                          
+  const fileUrl = submission.cloudinaryUrl || submission.filePath || `/api/files/${submission.id}`;
+  
   const retryLoad = () => {
     setImageError(false);
     setLoading(true);
-    if (imageBlob) {
-      URL.revokeObjectURL(imageBlob);
-      setImageBlob(null);
-    }
-    loadFileAsBlob();
+  };
+
+  const handleLoad = () => {
+    setLoading(false);
+    console.log('✅ File loaded successfully for submission:', submission.id);
+  };
+
+  const handleError = () => {
+    console.error('❌ File rendering failed for submission:', submission.id);
+    setImageError(true);
+    setLoading(false);
   };
 
   return (
@@ -348,18 +245,15 @@ const FilePreview = ({ submission }: { submission: Submission }) => {
       
       {submission.fileType === "image" ? (
         <>
-          {!imageError && imageBlob ? (
+          {!imageError ? (
             <img  
-              src={imageBlob}
+              src={fileUrl}
               alt={submission.originalFilename || submission.filename}
               className="object-contain w-full h-full"
-              onLoad={() => setLoading(false)}
-              onError={() => {
-                console.error('❌ Image rendering failed for submission:', submission.id);
-                setImageError(true);
-                setLoading(false);
-              }}
+              onLoad={handleLoad}
+              onError={handleError}
               style={{ display: loading ? 'none' : 'block' }}
+              crossOrigin={isCloudinaryFile ? "anonymous" : undefined}
             />
           ) : (
             <div className="text-center p-4 space-y-3">
@@ -376,13 +270,11 @@ const FilePreview = ({ submission }: { submission: Submission }) => {
                 <div className="mt-3 p-2 bg-muted rounded text-xs text-left">
                   <p><strong>ID:</strong> {submission.id}</p>
                   <p><strong>Файл:</strong> {submission.filename}</p>
-                  <p><strong>URL:</strong> {debugInfo.fileUrl}</p>
-                  {debugInfo.responseStatus && (
-                    <p><strong>Статус:</strong> {debugInfo.responseStatus}</p>
+                  <p><strong>URL:</strong> {fileUrl}</p>
+                  {submission.cloudinaryPublicId && (
+                    <p><strong>Cloudinary ID:</strong> {submission.cloudinaryPublicId}</p>
                   )}
-                  {debugInfo.errorMessage && (
-                    <p className="text-destructive"><strong>Ошибка:</strong> {debugInfo.errorMessage}</p>
-                  )}
+                  <p><strong>Тип:</strong> {isCloudinaryFile ? 'Cloudinary' : 'Local'}</p>
                 </div>
                 
                 <Button
@@ -399,20 +291,17 @@ const FilePreview = ({ submission }: { submission: Submission }) => {
           )}
         </>
       ) : (
-        // For videos, also use blob approach
+        // For videos
         <>
-          {!imageError && imageBlob ? (
+          {!imageError ? (
             <video
-              src={imageBlob}
+              src={fileUrl}
               controls
               className="object-contain w-full h-full"
-              onLoadedMetadata={() => setLoading(false)}
-              onError={() => {
-                console.error('❌ Video rendering failed for submission:', submission.id);
-                setImageError(true);
-                setLoading(false);
-              }}
+              onLoadedMetadata={handleLoad}
+              onError={handleError}
               style={{ display: loading ? 'none' : 'block' }}
+              crossOrigin={isCloudinaryFile ? "anonymous" : undefined}
             />
           ) : (
             <div className="text-center p-4 space-y-3">
@@ -440,16 +329,14 @@ const FilePreview = ({ submission }: { submission: Submission }) => {
         </>
       )}
       
-      {/* Индикатор статуса файла в углу */}
+      {/* Индикатор типа хранилища */}
       <div className="absolute top-2 right-2">
-        {debugInfo.responseStatus && (
-          <Badge 
-            variant={debugInfo.responseStatus === 200 ? "default" : "destructive"}
-            className="text-xs"
-          >
-            {debugInfo.responseStatus}
-          </Badge>
-        )}
+        <Badge 
+          variant={isCloudinaryFile ? "default" : "secondary"}
+          className="text-xs"
+        >
+          {isCloudinaryFile ? "☁️" : "💾"}
+        </Badge>
       </div>
     </div>
   );
@@ -1038,159 +925,380 @@ const handleReject = async (submissionId: string) => {
           )}
 
           {/* Users Table */}
-          {activeTab === 'users' && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="font-gaming flex items-center justify-between">
-                  <span>Управление пользователями</span>
-                  {usersLoading && <Loader2 className="h-5 w-5 animate-spin" />}
-                </CardTitle>
-                <CardDescription>
-                  Всего пользователей: {filteredUsers.length}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {usersLoading ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-8 w-8 animate-spin" />
-                    <span className="ml-2">Загрузка пользователей...</span>
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Пользователь</TableHead>
-                        <TableHead>Баланс</TableHead>
-                        <TableHead>Заявки</TableHead>
-                        <TableHead>Дата регистрации</TableHead>
-                        <TableHead>Действия</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredUsers.map((user) => (
-                        <TableRow key={user.id}>
-                          <TableCell>
-                            <div>
-                              <div className="font-medium">{user.displayName}</div>
-                              <div className="text-sm text-muted-foreground">@{user.telegramUsername}</div>
-                              {user.isAdmin && (
-                                <Badge variant="outline" className="text-xs">Admin</Badge>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="font-gaming">
-                              {user.balance} ₽
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {user.stats ? (
+{activeTab === 'users' && (
+  <Card>
+    <CardHeader>
+      <CardTitle className="font-gaming flex items-center justify-between">
+        <span>Управление пользователями</span>
+        {usersLoading && <Loader2 className="h-5 w-5 animate-spin" />}
+      </CardTitle>
+      <CardDescription>
+        Всего пользователей: {filteredUsers.length}
+      </CardDescription>
+    </CardHeader>
+    <CardContent>
+      {usersLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <span className="ml-2">Загрузка пользователей...</span>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* Краткая статистика */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="p-4">
+              <div className="flex items-center space-x-2">
+                <Users className="h-4 w-4 text-gaming-primary" />
+                <div>
+                  <p className="text-sm font-medium">Всего пользователей</p>
+                  <p className="text-2xl font-bold">{users.length}</p>
+                </div>
+              </div>
+            </Card>
+            <Card className="p-4">
+              <div className="flex items-center space-x-2">
+                <Shield className="h-4 w-4 text-gaming-warning" />
+                <div>
+                  <p className="text-sm font-medium">Администраторы</p>
+                  <p className="text-2xl font-bold">
+                    {users.filter(u => u.isAdmin).length}
+                  </p>
+                </div>
+              </div>
+            </Card>
+            <Card className="p-4">
+              <div className="flex items-center space-x-2">
+                <DollarSign className="h-4 w-4 text-gaming-success" />
+                <div>
+                  <p className="text-sm font-medium">Общий баланс</p>
+                  <p className="text-2xl font-bold">
+                    {users.reduce((sum, u) => sum + u.balance, 0)} ₽
+                  </p>
+                </div>
+              </div>
+            </Card>
+            <Card className="p-4">
+              <div className="flex items-center space-x-2">
+                <Trophy className="h-4 w-4 text-gaming-secondary" />
+                <div>
+                  <p className="text-sm font-medium">Активные пользователи</p>
+                  <p className="text-2xl font-bold">
+                    {users.filter(u => u.stats && u.stats.totalSubmissions > 0).length}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          {/* Таблица пользователей */}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>ID</TableHead>
+                <TableHead>Пользователь</TableHead>
+                <TableHead>Epic Games ID</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Баланс</TableHead>
+                <TableHead>Заявки</TableHead>
+                <TableHead>Доходы</TableHead>
+                <TableHead>Регистрация</TableHead>
+                <TableHead>Действия</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredUsers.map((user) => (
+                <TableRow key={user.id}>
+                  <TableCell>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {user.id.slice(0, 8)}...
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div>
+                      <div className="font-medium">{user.displayName}</div>
+                      <div className="text-sm text-muted-foreground">
+                        @{user.username}
+                      </div>
+                      {user.telegramUsername && (
+                        <div className="text-xs text-muted-foreground">
+                          Telegram: @{user.telegramUsername}
+                        </div>
+                      )}
+                      <div className="flex gap-1 mt-1">
+                        {user.isAdmin && (
+                          <Badge variant="destructive" className="text-xs">
+                            Admin
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {user.epicGamesId?.slice(0, 12)}...
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {user.email ? (
+                      <span className="text-sm">{user.email}</span>
+                    ) : (
+                      <span className="text-muted-foreground text-sm">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge 
+                      variant={user.balance > 0 ? "default" : "secondary"} 
+                      className="font-gaming"
+                    >
+                      {user.balance} ₽
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {user.stats ? (
+                      <div className="text-sm space-y-1">
+                        <div>
+                          <span className="font-medium">Всего: </span>
+                          {user.stats.totalSubmissions}
+                        </div>
+                        <div className="flex gap-4 text-xs text-muted-foreground">
+                          <span className="text-gaming-success">
+                            ✓ {user.stats.approvedSubmissions}
+                          </span>
+                          <span className="text-gaming-warning">
+                            ⏳ {user.stats.pendingSubmissions}
+                          </span>
+                          <span className="text-destructive">
+                            ✗ {user.stats.rejectedSubmissions}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {user.stats?.totalEarnings ? (
+                      <Badge variant="outline" className="text-gaming-success">
+                        {user.stats.totalEarnings} ₽
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">0 ₽</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm">
+                      {new Date(user.createdAt).toLocaleDateString('ru-RU')}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {new Date(user.createdAt).toLocaleTimeString('ru-RU')}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-2">
+                      {/* Управление балансом */}
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => setSelectedUser(user)}
+                            data-testid={`button-manage-${user.id}`}
+                          >
+                            <DollarSign className="h-4 w-4" />
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-md">
+                          <DialogHeader>
+                            <DialogTitle className="font-gaming">Управление балансом</DialogTitle>
+                            <DialogDescription>
+                              Пользователь: {user.displayName} (@{user.username})
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-4">
+                            {/* Полная информация о пользователе */}
+                            <div className="bg-muted/50 p-4 rounded-lg space-y-2">
                               <div className="text-sm">
-                                <div>Всего: {user.stats.totalSubmissions}</div>
-                                <div className="text-muted-foreground">
-                                  Одобрено: {user.stats.approvedSubmissions} | 
-                                  Ожидает: {user.stats.pendingSubmissions}
+                                <strong>ID:</strong> {user.id}
+                              </div>
+                              <div className="text-sm">
+                                <strong>Epic Games ID:</strong> {user.epicGamesId}
+                              </div>
+                              {user.email && (
+                                <div className="text-sm">
+                                  <strong>Email:</strong> {user.email}
+                                </div>
+                              )}
+                              <div className="text-sm">
+                                <strong>Текущий баланс:</strong>
+                                <span className="text-2xl font-bold ml-2">{user.balance} ₽</span>
+                              </div>
+                              {user.stats && (
+                                <div className="text-sm text-muted-foreground mt-2">
+                                  <div>Общий доход: {user.stats.totalEarnings} ₽</div>
+                                  <div>
+                                    Заявки: {user.stats.totalSubmissions} 
+                                    (✓{user.stats.approvedSubmissions} 
+                                    ⏳{user.stats.pendingSubmissions} 
+                                    ✗{user.stats.rejectedSubmissions})
+                                  </div>
+                                </div>
+                              )}
+                              <div className="text-xs text-muted-foreground">
+                                Создан: {new Date(user.createdAt).toLocaleString('ru-RU')}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Обновлен: {new Date(user.updatedAt).toLocaleString('ru-RU')}
+                              </div>
+                            </div>
+                            
+                            <div>
+                              <Label htmlFor="balance-amount">Сумма</Label>
+                              <Input
+                                id="balance-amount"
+                                type="number"
+                                placeholder="Введите сумму"
+                                value={balanceAmount}
+                                onChange={(e) => setBalanceAmount(e.target.value)}
+                                data-testid="input-balance"
+                              />
+                            </div>
+                            
+                            <div>
+                              <Label htmlFor="balance-reason">Причина</Label>
+                              <Input
+                                id="balance-reason"
+                                placeholder="Введите причину изменения баланса"
+                                value={balanceReason}
+                                onChange={(e) => setBalanceReason(e.target.value)}
+                                data-testid="input-balance-reason"
+                              />
+                            </div>
+                            
+                            <div className="flex gap-2">
+                              <Button 
+                                className="flex-1" 
+                                onClick={() => handleUpdateBalance(user.id, true)}
+                                disabled={!balanceAmount || !balanceReason || actionLoading}
+                                data-testid="button-add-balance"
+                              >
+                                {actionLoading ? (
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                  "Добавить"
+                                )}
+                              </Button>
+                              <Button 
+                                variant="outline" 
+                                className="flex-1"
+                                onClick={() => handleUpdateBalance(user.id, false)}
+                                disabled={!balanceAmount || !balanceReason || actionLoading}
+                                data-testid="button-subtract-balance"
+                              >
+                                {actionLoading ? (
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                  "Списать"
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        </DialogContent>
+                      </Dialog>
+
+                      {/* Просмотр подробной информации */}
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-lg">
+                          <DialogHeader>
+                            <DialogTitle className="font-gaming">
+                              Информация о пользователе
+                            </DialogTitle>
+                          </DialogHeader>
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <strong>ID:</strong>
+                                <Badge variant="outline" className="ml-2 font-mono">
+                                  {user.id}
+                                </Badge>
+                              </div>
+                              <div>
+                                <strong>Username:</strong> {user.username}
+                              </div>
+                              <div>
+                                <strong>Отображаемое имя:</strong> {user.displayName}
+                              </div>
+                              <div>
+                                <strong>Epic Games ID:</strong>
+                                <Badge variant="outline" className="ml-2 font-mono text-xs">
+                                  {user.epicGamesId}
+                                </Badge>
+                              </div>
+                              <div>
+                                <strong>Email:</strong> {user.email || '—'}
+                              </div>
+                              <div>
+                                <strong>Telegram:</strong> {user.telegramUsername ? `@${user.telegramUsername}` : '—'}
+                              </div>
+                              <div>
+                                <strong>Баланс:</strong> {user.balance} ₽
+                              </div>
+                              <div>
+                                <strong>Роль:</strong> 
+                                {user.isAdmin ? (
+                                  <Badge variant="destructive" className="ml-2">Admin</Badge>
+                                ) : (
+                                  <Badge variant="secondary" className="ml-2">User</Badge>
+                                )}
+                              </div>
+                            </div>
+                            
+                            {user.stats && (
+                              <div className="bg-muted/50 p-4 rounded-lg">
+                                <h4 className="font-medium mb-2">Статистика</h4>
+                                <div className="grid grid-cols-2 gap-2 text-sm">
+                                  <div>Всего заявок: <strong>{user.stats.totalSubmissions}</strong></div>
+                                  <div className="text-gaming-success">
+                                    Одобрено: <strong>{user.stats.approvedSubmissions}</strong>
+                                  </div>
+                                  <div className="text-gaming-warning">
+                                    На рассмотрении: <strong>{user.stats.pendingSubmissions}</strong>
+                                  </div>
+                                  <div className="text-destructive">
+                                    Отклонено: <strong>{user.stats.rejectedSubmissions}</strong>
+                                  </div>
+                                  <div className="col-span-2 text-gaming-success mt-2">
+                                    Общий доход: <strong>{user.stats.totalEarnings} ₽</strong>
+                                  </div>
                                 </div>
                               </div>
-                            ) : (
-                              '—'
                             )}
-                          </TableCell>
-                          <TableCell>
-                            {new Date(user.createdAt).toLocaleDateString('ru-RU')}
-                          </TableCell>
-                          <TableCell>
-                            <Dialog>
-                              <DialogTrigger asChild>
-                                <Button 
-                                  variant="outline" 
-                                  size="sm"
-                                  onClick={() => setSelectedUser(user)}
-                                  data-testid={`button-manage-${user.id}`}
-                                >
-                                  <DollarSign className="h-4 w-4" />
-                                </Button>
-                              </DialogTrigger>
-                              <DialogContent>
-                                <DialogHeader>
-                                  <DialogTitle className="font-gaming">Управление балансом</DialogTitle>
-                                  <DialogDescription>
-                                    Пользователь: {user.displayName} (@{user.username})
-                                  </DialogDescription>
-                                </DialogHeader>
-                                <div className="space-y-4">
-                                  <div className="bg-muted/50 p-4 rounded-lg">
-                                    <div className="text-sm font-medium">Текущий баланс:</div>
-                                    <div className="text-2xl font-bold">{user.balance} ₽</div>
-                                    {user.stats && (
-                                      <div className="text-sm text-muted-foreground mt-2">
-                                        Общий доход: {user.stats.totalEarnings} ₽
-                                      </div>
-                                    )}
-                                  </div>
-                                  
-                                  <div>
-                                    <Label htmlFor="balance-amount">Сумма</Label>
-                                    <Input
-                                      id="balance-amount"
-                                      type="number"
-                                      placeholder="Введите сумму"
-                                      value={balanceAmount}
-                                      onChange={(e) => setBalanceAmount(e.target.value)}
-                                      data-testid="input-balance"
-                                    />
-                                  </div>
-                                  
-                                  <div>
-                                    <Label htmlFor="balance-reason">Причина</Label>
-                                    <Input
-                                      id="balance-reason"
-                                      placeholder="Введите причину изменения баланса"
-                                      value={balanceReason}
-                                      onChange={(e) => setBalanceReason(e.target.value)}
-                                      data-testid="input-balance-reason"
-                                    />
-                                  </div>
-                                  
-                                  <div className="flex gap-2">
-                                    <Button 
-                                      className="flex-1" 
-                                      onClick={() => handleUpdateBalance(user.id, true)}
-                                      disabled={!balanceAmount || !balanceReason || actionLoading}
-                                      data-testid="button-add-balance"
-                                    >
-                                      {actionLoading ? (
-                                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                      ) : (
-                                        "Добавить"
-                                      )}
-                                    </Button>
-                                    <Button 
-                                      variant="outline" 
-                                      className="flex-1"
-                                      onClick={() => handleUpdateBalance(user.id, false)}
-                                      disabled={!balanceAmount || !balanceReason || actionLoading}
-                                      data-testid="button-subtract-balance"
-                                    >
-                                      {actionLoading ? (
-                                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                      ) : (
-                                        "Списать"
-                                      )}
-                                    </Button>
-                                  </div>
-                                </div>
-                              </DialogContent>
-                            </Dialog>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          )}
+                            
+                            <div className="bg-muted/30 p-3 rounded text-xs text-muted-foreground">
+                              <div>Создан: {new Date(user.createdAt).toLocaleString('ru-RU')}</div>
+                              <div>Обновлен: {new Date(user.updatedAt).toLocaleString('ru-RU')}</div>
+                            </div>
+                          </div>
+                        </DialogContent>
+                      </Dialog>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </CardContent>
+  </Card>
+)}
           {/* Admin Actions Logs */}
 {activeTab === 'logs' && (
   <Card>
