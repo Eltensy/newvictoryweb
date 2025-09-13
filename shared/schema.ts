@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, pgEnum, uuid } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -26,21 +26,25 @@ export const users = pgTable("users", {
 
 // Submissions table
 export const submissions = pgTable("submissions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
-  filename: text("filename").notNull(),
-  originalFilename: text("original_filename").notNull(),
-  fileType: fileTypeEnum("file_type").notNull(),
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  filename: varchar("filename", { length: 255 }).notNull(),
+  originalFilename: varchar("original_filename", { length: 255 }),
+  fileType: varchar("file_type", { length: 20 }).notNull(), // 'image' | 'video'
   fileSize: integer("file_size").notNull(),
-  filePath: text("file_path").notNull(),
-  category: submissionCategoryEnum("category").notNull(),
-  status: submissionStatusEnum("status").notNull().default('pending'),
-  reward: integer("reward"),
-  reviewedBy: varchar("reviewed_by").references(() => users.id),
+  filePath: text("file_path").notNull(), // Теперь здесь Cloudinary URL
+  category: varchar("category", { length: 50 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
   reviewedAt: timestamp("reviewed_at"),
+  reviewedBy: uuid("reviewed_by").references(() => users.id),
+  reward: integer("reward"),
   rejectionReason: text("rejection_reason"),
-  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  
+  // Новые поля для Cloudinary
+  cloudinaryPublicId: varchar("cloudinary_public_id", { length: 255 }),
+  cloudinaryUrl: text("cloudinary_url"), // Дублируем URL для удобства
 });
 
 // Admin actions table (for audit trail)
@@ -87,15 +91,17 @@ export const insertUserSchema = createInsertSchema(users).omit({
   updatedAt: true,
 });
 
-export const insertSubmissionSchema = createInsertSchema(submissions).omit({
+export const insertSubmissionSchema = createInsertSchema(submissions, {
+  fileSize: z.number().min(1).max(50 * 1024 * 1024), // 50MB max
+  category: z.enum(["gold-kill", "silver-kill", "bronze-kill", "victory", "funny"]),
+}).omit({
   id: true,
-  status: true,
-  reward: true,
-  reviewedBy: true,
-  reviewedAt: true,
-  rejectionReason: true,
   createdAt: true,
   updatedAt: true,
+  reviewedAt: true,
+  reviewedBy: true,
+  reward: true,
+  rejectionReason: true,
 });
 
 export const insertAdminActionSchema = createInsertSchema(adminActions).omit({
@@ -107,8 +113,16 @@ export const insertAdminActionSchema = createInsertSchema(adminActions).omit({
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 
-export type Submission = typeof submissions.$inferSelect;
+export type Submission = typeof submissions.$inferSelect & {
+  // Добавляем опциональные поля для joined данных
+  user?: {
+    username: string;
+    displayName: string;
+    telegramUsername?: string;
+  };
+};
 export type InsertSubmission = z.infer<typeof insertSubmissionSchema>;
+
 
 export type AdminAction = typeof adminActions.$inferSelect;
 export type InsertAdminAction = z.infer<typeof insertAdminActionSchema>;

@@ -16,6 +16,7 @@ import { eq, desc } from "drizzle-orm";
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
+  getAllUsers(): Promise<User[]>;
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByEpicGamesId(epicGamesId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -50,6 +51,12 @@ export class DatabaseStorage implements IStorage {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
   }
+  async getAllUsers(): Promise<User[]> {
+  return await db
+    .select()
+    .from(users)
+    .orderBy(desc(users.createdAt));
+}
 
   async getUserByUsername(username: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.username, username));
