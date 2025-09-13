@@ -30,6 +30,9 @@ export default defineConfig({
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
   },
+  css: {
+    transformer: 'postcss'
+  },
   server: {
     fs: {
       strict: true,
