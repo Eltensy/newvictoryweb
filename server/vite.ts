@@ -5,7 +5,6 @@ import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
 import { nanoid } from "nanoid";
-
 const viteLogger = createLogger();
 
 export function log(message: string, source = "express") {
@@ -77,7 +76,8 @@ export function serveStatic(app: Express) {
   }
 
   app.use(express.static(distPath));
-
+  const clientDist = path.join(__dirname, "../dist/public"); // ← путь к Vite build
+  app.use(express.static(clientDist));
   // fall through to index.html if the file doesn't exist
   app.use("*", (_req, res) => {
     res.sendFile(path.resolve(distPath, "index.html"));
