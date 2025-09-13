@@ -5,6 +5,7 @@ import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
 import { nanoid } from "nanoid";
+
 const viteLogger = createLogger();
 
 export function log(message: string, source = "express") {
@@ -67,17 +68,43 @@ export async function setupVite(app: Express, server: Server) {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(import.meta.dirname, "public");
-
+  // Исправленный путь к директории сборки
+  const distPath = path.resolve(import.meta.dirname, "..", "dist", "public");
+  
+  console.log(`Looking for build directory at: ${distPath}`);
+  
   if (!fs.existsSync(distPath)) {
+    // Попробуем альтернативные пути
+    const alternativePaths = [
+      path.resolve(import.meta.dirname, "public"),
+      path.resolve(import.meta.dirname, "..", "public"),
+      path.resolve(process.cwd(), "dist", "public"),
+      path.resolve(process.cwd(), "public"),
+    ];
+    
+    console.log("Checking alternative paths:");
+    for (const altPath of alternativePaths) {
+      console.log(`- ${altPath}: ${fs.existsSync(altPath) ? "EXISTS" : "NOT FOUND"}`);
+      if (fs.existsSync(altPath)) {
+        console.log(`Using alternative path: ${altPath}`);
+        app.use(express.static(altPath));
+        
+        // fall through to index.html if the file doesn't exist
+        app.use("*", (_req, res) => {
+          res.sendFile(path.resolve(altPath, "index.html"));
+        });
+        return;
+      }
+    }
+    
     throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
+      `Could not find the build directory. Tried:\n${[distPath, ...alternativePaths].map(p => `- ${p}`).join('\n')}\n\nMake sure to build the client first with 'npm run build'`,
     );
   }
 
+  console.log(`Serving static files from: ${distPath}`);
   app.use(express.static(distPath));
-  const clientDist = path.join(__dirname, "../dist/public"); // ← путь к Vite build
-  app.use(express.static(clientDist));
+
   // fall through to index.html if the file doesn't exist
   app.use("*", (_req, res) => {
     res.sendFile(path.resolve(distPath, "index.html"));
