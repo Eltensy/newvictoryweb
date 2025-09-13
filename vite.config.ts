@@ -24,9 +24,12 @@ export default defineConfig({
   },
   root: path.resolve(__dirname, "client"),
   build: {
-    outDir: path.resolve(__dirname, "dist/public"),
-    emptyOutDir: true,
+  rollupOptions: {
+    external: ["lightningcss", "lightningcss/*"],
   },
+  outDir: path.resolve(__dirname, "dist/public"),
+  emptyOutDir: true,
+},
   css: {
     transformer: "postcss", // отключаем lightningcss
   },
