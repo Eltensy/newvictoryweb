@@ -4,6 +4,7 @@ import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 import dotenv from 'dotenv';
 dotenv.config();
+
 export default defineConfig({
   plugins: [
     react(),
@@ -28,6 +29,9 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      external: ["lightningcss", "lightningcss/*"]
+    }
   },
   server: {
     fs: {
