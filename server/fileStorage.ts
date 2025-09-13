@@ -1,5 +1,3 @@
-// server/fileStorage.ts - новый файл для работы с облачным хранилищем
-
 import { v2 as cloudinary } from 'cloudinary';
 import { Readable } from 'stream';
 
