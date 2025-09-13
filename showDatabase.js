@@ -45,7 +45,7 @@ async function updateUser() {
     const result = await db
       .update(schema.users)
       .set({ isAdmin: true })
-      .where(eq(schema.users.epicGamesId, '880f141819fc4296aa71145d992312f2'))
+      .where(eq(schema.users.id, '07bf3a42-032c-40c6-9e2d-955f45fd4a87'))
       .returning();
 
     console.log("Updated rows:");
