@@ -10,7 +10,7 @@ import {
   type InsertAdminAction 
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 
 // Updated storage interface to support new functionality
 export interface IStorage {
@@ -125,6 +125,63 @@ export class DatabaseStorage implements IStorage {
       .where(eq(submissions.userId, userId))
       .orderBy(desc(submissions.createdAt));
   }
+  async getAllSubmissionsWithUsers(): Promise<Submission[]> {
+  const rows = await db
+    .select({
+      id: submissions.id,
+      userId: submissions.userId,
+      filename: submissions.filename,
+      originalFilename: submissions.originalFilename,
+      fileType: submissions.fileType,
+      fileSize: submissions.fileSize,
+      filePath: submissions.filePath,
+      category: submissions.category,
+      status: submissions.status,
+      createdAt: submissions.createdAt,
+      updatedAt: submissions.updatedAt,
+      reviewedAt: submissions.reviewedAt,
+      reviewedBy: submissions.reviewedBy,
+      reward: submissions.reward,
+      rejectionReason: submissions.rejectionReason,
+      cloudinaryPublicId: submissions.cloudinaryPublicId,
+      cloudinaryUrl: submissions.cloudinaryUrl,
+      username: users.username,
+      displayName: users.displayName,
+      telegramUsername: users.telegramUsername
+    })
+    .from(submissions)
+    .leftJoin(users, sql`${submissions.userId} = ${users.id}::uuid`)
+    .orderBy(desc(submissions.createdAt));
+
+  return rows.map(row => ({
+      id: row.id,
+      userId: row.userId,
+      filename: row.filename,
+      originalFilename: row.originalFilename,
+      fileType: row.fileType,
+      fileSize: row.fileSize,
+      filePath: row.filePath,
+      category: row.category,
+      status: row.status,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      reviewedAt: row.reviewedAt,
+      reviewedBy: row.reviewedBy,
+      reward: row.reward,
+      rejectionReason: row.rejectionReason,
+      cloudinaryPublicId: row.cloudinaryPublicId,
+      cloudinaryUrl: row.cloudinaryUrl,
+      user: row.userId
+        ? {
+            username: row.username ?? "",
+            displayName: row.displayName ?? "",
+            telegramUsername: row.telegramUsername ?? ""
+          }
+        : undefined
+    }));
+
+}
+
 
   async getAllSubmissions(): Promise<Submission[]> {
     return await db

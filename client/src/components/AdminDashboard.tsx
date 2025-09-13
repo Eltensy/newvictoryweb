@@ -42,6 +42,9 @@
     reviewedBy?: string;
     reward?: number;
     rejectionReason?: string;
+    cloudinaryPublicId?: string;
+    cloudinaryUrl?: string;
+    filePath: string;
     // User data joined from backend
     user?: {
       username: string;
@@ -768,7 +771,7 @@ const handleReject = async (submissionId: string) => {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>ID пользователя</TableHead>
+                        <TableHead>Пользователь</TableHead>
                         <TableHead>Категория</TableHead>
                         <TableHead>Файл</TableHead>
                         <TableHead>Статус</TableHead>
@@ -779,7 +782,7 @@ const handleReject = async (submissionId: string) => {
                     <TableBody>
                       {filteredSubmissions.map((submission) => (
                         <TableRow key={submission.id}>
-                          <TableCell className="font-medium">{submission.userId}</TableCell>
+                          <TableCell className="font-medium">{submission.user?.username || submission.userId}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               {getCategoryIcon(submission.category)}

@@ -630,7 +630,7 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      const submissions = await storage.getAllSubmissions();
+      const submissions = await storage.getAllSubmissionsWithUsers();
       res.json(submissions);
     } catch (error) {
       console.error('Get submissions error:', error);
