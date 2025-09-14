@@ -7,7 +7,13 @@ import {
   type Submission, 
   type InsertSubmission,
   type AdminAction,
-  type InsertAdminAction 
+  type InsertAdminAction,
+  balanceTransactions,
+  type BalanceTransaction,
+  type InsertBalanceTransaction,
+  withdrawalRequests,
+  type WithdrawalRequest,
+  type InsertWithdrawalRequest
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, sql } from "drizzle-orm";
@@ -22,6 +28,8 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User>;
   updateUserBalance(id: string, deltaAmount: number): Promise<User>;
+  createBalanceTransaction(transaction: InsertBalanceTransaction): Promise<BalanceTransaction>;
+  getUserBalanceTransactions(userId: string, limit?: number): Promise<BalanceTransaction[]>;
   
   // Submission operations
   createSubmission(submission: InsertSubmission): Promise<Submission>;
@@ -43,6 +51,12 @@ export interface IStorage {
     totalEarnings: number;
     isAdmin: boolean;
   }>;
+
+  createWithdrawalRequest(request: InsertWithdrawalRequest): Promise<WithdrawalRequest>;
+  getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]>;
+  getAllWithdrawalRequests(): Promise<WithdrawalRequest[]>;
+  updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): Promise<WithdrawalRequest>;
+  getWithdrawalRequest(id: string): Promise<WithdrawalRequest | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -84,25 +98,101 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return user;
   }
+  async createBalanceTransaction(insertTransaction: InsertBalanceTransaction): Promise<BalanceTransaction> {
+  const [transaction] = await db
+    .insert(balanceTransactions)
+    .values(insertTransaction)
+    .returning();
+  return transaction;
+}
 
-  async updateUserBalance(id: string, deltaAmount: number): Promise<User> {
-    // Get current user first
-    const currentUser = await this.getUser(id);
-    if (!currentUser) {
-      throw new Error('User not found');
-    }
-    
-    const newBalance = currentUser.balance + deltaAmount;
-    const [user] = await db
-      .update(users)
-      .set({ 
-        balance: newBalance,
-        updatedAt: new Date()
-      })
-      .where(eq(users.id, id))
-      .returning();
-    return user;
+async getUserBalanceTransactions(userId: string, limit: number = 20): Promise<BalanceTransaction[]> {
+  return await db
+    .select()
+    .from(balanceTransactions)
+    .where(eq(balanceTransactions.userId, userId))
+    .orderBy(desc(balanceTransactions.createdAt))
+    .limit(limit);
+}
+
+// Заявки на вывод
+async createWithdrawalRequest(insertRequest: InsertWithdrawalRequest): Promise<WithdrawalRequest> {
+  const [request] = await db
+    .insert(withdrawalRequests)
+    .values(insertRequest)
+    .returning();
+  return request;
+}
+
+async getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]> {
+  return await db
+    .select()
+    .from(withdrawalRequests)
+    .where(eq(withdrawalRequests.userId, userId))
+    .orderBy(desc(withdrawalRequests.createdAt));
+}
+
+async getAllWithdrawalRequests(): Promise<WithdrawalRequest[]> {
+  return await db
+    .select()
+    .from(withdrawalRequests)
+    .orderBy(desc(withdrawalRequests.createdAt));
+}
+
+async getWithdrawalRequest(id: string): Promise<WithdrawalRequest | undefined> {
+  const [request] = await db
+    .select()
+    .from(withdrawalRequests)
+    .where(eq(withdrawalRequests.id, id));
+  return request || undefined;
+}
+
+async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): Promise<WithdrawalRequest> {
+  const [request] = await db
+    .update(withdrawalRequests)
+    .set({ ...updates, updatedAt: new Date() })
+    .where(eq(withdrawalRequests.id, id))
+    .returning();
+  return request;
+}
+  async updateUserBalance(
+  id: string, 
+  deltaAmount: number, 
+  description: string = 'Изменение баланса',
+  type: 'earning' | 'bonus' | 'withdrawal_request' | 'withdrawal_completed' = 'bonus',
+  sourceType?: string,
+  sourceId?: string
+): Promise<User> {
+  // Получаем текущего пользователя
+  const currentUser = await this.getUser(id);
+  if (!currentUser) {
+    throw new Error('User not found');
   }
+  
+  const newBalance = currentUser.balance + deltaAmount;
+  
+  // Обновляем баланс пользователя
+  const [user] = await db
+    .update(users)
+    .set({ 
+      balance: newBalance,
+      updatedAt: new Date()
+    })
+    .where(eq(users.id, id))
+    .returning();
+  
+  // Создаем запись транзакции
+  await this.createBalanceTransaction({
+    userId: id,
+    type,
+    amount: deltaAmount,
+    description,
+    sourceType,
+    sourceId
+  });
+  
+  return user;
+}
 
   // Submission operations
   async createSubmission(insertSubmission: InsertSubmission): Promise<Submission> {

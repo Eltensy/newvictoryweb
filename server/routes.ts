@@ -17,6 +17,8 @@ import {
   updateUserBalanceSchema,
   linkTelegramSchema,
   insertUserSchema,
+  processWithdrawalSchema,
+  createWithdrawalRequestSchema,
   type InsertUser
 } from "@shared/schema";
 
@@ -994,6 +996,249 @@ app.get("/api/file-url/:submissionId", async (req, res) => {
   } catch (error) {
     console.error("Get file URL error:", error);
     res.status(500).json({ error: "Failed to get file URL" });
+  }
+});
+app.get("/api/user/:id/balance/transactions", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Пользователи могут видеть только свои транзакции, админы - любые
+    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+    const transactions = await storage.getUserBalanceTransactions(req.params.id, limit);
+    
+    res.json(transactions);
+  } catch (error) {
+    console.error('Get balance transactions error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ===== WITHDRAWAL ROUTES =====
+
+// Создать заявку на вывод
+app.post("/api/user/:id/withdrawal", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Пользователь может создать заявку только для себя
+    if (authResult.userId !== req.params.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    console.log('Withdrawal request body:', req.body);
+
+    const validation = createWithdrawalRequestSchema.safeParse(req.body);
+    if (!validation.success) {
+      console.error('Withdrawal validation failed:', validation.error.errors);
+      return res.status(400).json({ 
+        error: "Invalid withdrawal data", 
+        details: validation.error.errors 
+      });
+    }
+
+    const { amount, method, methodData } = validation.data;
+
+    // Проверяем баланс пользователя
+    const user = await storage.getUser(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (user.balance < amount) {
+      return res.status(400).json({ error: "Insufficient balance" });
+    }
+
+    // Проверяем нет ли активных заявок на вывод
+    const activeRequests = await storage.getUserWithdrawalRequests(req.params.id);
+    const pendingRequests = activeRequests.filter(r => r.status === 'pending' || r.status === 'processing');
+    
+    if (pendingRequests.length > 0) {
+      return res.status(400).json({ 
+        error: "You already have a pending withdrawal request" 
+      });
+    }
+
+    // Создаем заявку на вывод
+    const withdrawalRequest = await storage.createWithdrawalRequest({
+      userId: req.params.id,
+      amount,
+      method,
+      methodData: JSON.stringify(methodData),
+      status: 'pending'
+    });
+
+    // Резервируем средства (уменьшаем баланс)
+    await storage.updateUserBalance(
+      req.params.id, 
+      -amount, 
+      `Заявка на вывод #${withdrawalRequest.id}`,
+      'withdrawal_request',
+      'withdrawal',
+      withdrawalRequest.id
+    );
+
+    res.json(withdrawalRequest);
+  } catch (error) {
+    console.error('Create withdrawal error:', error);
+    res.status(500).json({ error: "Failed to create withdrawal request" });
+  }
+});
+
+// Получить заявки на вывод пользователя
+app.get("/api/user/:id/withdrawals", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Пользователи могут видеть только свои заявки, админы - любые
+    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const requests = await storage.getUserWithdrawalRequests(req.params.id);
+    
+    // Парсим methodData для каждой заявки
+    const requestsWithParsedData = requests.map(request => ({
+      ...request,
+      methodData: JSON.parse(request.methodData)
+    }));
+    
+    res.json(requestsWithParsedData);
+  } catch (error) {
+    console.error('Get withdrawal requests error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ===== ADMIN WITHDRAWAL ROUTES =====
+
+// Получить все заявки на вывод (admin only)
+app.get("/api/admin/withdrawals", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const requests = await storage.getAllWithdrawalRequests();
+    
+    // Парсим methodData и добавляем информацию о пользователе
+    const requestsWithDetails = await Promise.all(
+      requests.map(async (request) => {
+        const user = await storage.getUser(request.userId);
+        return {
+          ...request,
+          methodData: JSON.parse(request.methodData),
+          user: user ? {
+            username: user.username,
+            displayName: user.displayName,
+            telegramUsername: user.telegramUsername
+          } : null
+        };
+      })
+    );
+    
+    res.json(requestsWithDetails);
+  } catch (error) {
+    console.error('Get all withdrawal requests error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Обработать заявку на вывод (admin only)
+app.post("/api/admin/withdrawal/:id/process", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const validation = processWithdrawalSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ 
+        error: "Invalid process data", 
+        details: validation.error.errors 
+      });
+    }
+
+    const { status, rejectionReason } = validation.data;
+    const withdrawalId = req.params.id;
+
+    // Получаем заявку на вывод
+    const withdrawal = await storage.getWithdrawalRequest(withdrawalId);
+    if (!withdrawal) {
+      return res.status(404).json({ error: "Withdrawal request not found" });
+    }
+
+    if (withdrawal.status !== 'pending' && withdrawal.status !== 'processing') {
+      return res.status(400).json({ error: "Withdrawal request already processed" });
+    }
+
+    // Обновляем статус заявки
+    const updatedWithdrawal = await storage.updateWithdrawalRequest(withdrawalId, {
+      status,
+      processedBy: authResult.adminId,
+      processedAt: new Date(),
+      rejectionReason
+    });
+
+    // Если заявка отклонена, возвращаем средства пользователю
+    if (status === 'rejected') {
+      await storage.updateUserBalance(
+        withdrawal.userId,
+        withdrawal.amount,
+        `Возврат средств за отклоненную заявку #${withdrawalId}: ${rejectionReason}`,
+        'bonus',
+        'withdrawal',
+        withdrawalId
+      );
+    }
+
+    // Если заявка завершена, создаем транзакцию завершения
+    if (status === 'completed') {
+      await storage.createBalanceTransaction({
+        userId: withdrawal.userId,
+        type: 'withdrawal_completed',
+        amount: -withdrawal.amount,
+        description: `Вывод средств завершен #${withdrawalId}`,
+        sourceType: 'withdrawal',
+        sourceId: withdrawalId
+      });
+    }
+
+    // Логируем действие админа
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: 'process_withdrawal',
+      targetType: 'withdrawal',
+      targetId: withdrawalId,
+      details: JSON.stringify({ 
+        status, 
+        rejectionReason, 
+        amount: withdrawal.amount,
+        userId: withdrawal.userId 
+      })
+    });
+
+    res.json({
+      ...updatedWithdrawal,
+      methodData: JSON.parse(updatedWithdrawal.methodData)
+    });
+  } catch (error) {
+    console.error('Process withdrawal error:', error);
+    res.status(500).json({ error: "Failed to process withdrawal" });
   }
 });
   // ===== HEALTH CHECK ROUTE =====

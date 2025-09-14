@@ -4,11 +4,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle, Crown, X, ExternalLink, RefreshCw } from "lucide-react";
+import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle, Crown, X, ExternalLink, RefreshCw, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import mapBackground from "@assets/generated_images/bg.jpg";
 import epiclogo from "@assets/generated_images/epiclogo.png";
 import UserProfile from "./UserProfile";
+import BalanceModal from "./BalanceModal";
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from "wouter";
 
@@ -23,6 +24,7 @@ interface User {
 export default function LandingPage() {
   const { user: authUser, isLoggedIn, getAuthToken, login, logout, refreshUser } = useAuth();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isBalanceModalOpen, setIsBalanceModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -162,6 +164,8 @@ export default function LandingPage() {
         user={currentUser} 
         profileOpen={isProfileOpen} 
         setProfileOpen={setIsProfileOpen}
+        balanceModalOpen={isBalanceModalOpen}
+        setBalanceModalOpen={setIsBalanceModalOpen}
         onLogout={() => {
           setIsProfileOpen(false);
           logout();
@@ -283,6 +287,8 @@ interface LoggedInSubmissionPageProps {
   user: User;
   profileOpen: boolean;
   setProfileOpen: (open: boolean) => void;
+  balanceModalOpen: boolean;
+  setBalanceModalOpen: (open: boolean) => void;
   onLogout: () => void;
   getAuthToken: () => string | null;
   onRefreshUser: () => Promise<void>;
@@ -293,6 +299,8 @@ function LoggedInSubmissionPage({
   user, 
   profileOpen, 
   setProfileOpen, 
+  balanceModalOpen,
+  setBalanceModalOpen,
   onLogout, 
   getAuthToken,
   onRefreshUser,
@@ -308,7 +316,7 @@ function LoggedInSubmissionPage({
 
   const categories = [
     { id: "gold-kill", label: "Голд килл", icon: Trophy, color: "text-yellow-400", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
-    { id: "silver-kill", label: "Серебряный килл", icon: Trophy, color: "text-white-950", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
+    { id: "silver-kill", label: "Серебрянный килл", icon: Trophy, color: "text-white-950", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
     { id: "bronze-kill", label: "Бронзовый килл", icon: Trophy, color: "text-yellow-700", bgColor: "bg-gaming-success/10 border-gaming-success/20" },
     { id: "victory", label: "Победа", icon: Target, color: "text-gaming-primary", bgColor: "bg-gaming-primary/10 border-gaming-primary/20" },
     { id: "funny", label: "Другое", icon: Zap, color: "text-gaming-warning", bgColor: "bg-gaming-warning/10 border-gaming-warning/20" },
@@ -456,7 +464,7 @@ function LoggedInSubmissionPage({
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
+      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Trophy className="h-8 w-8 text-primary" />
@@ -475,9 +483,19 @@ function LoggedInSubmissionPage({
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="font-gaming">
-                Баланс: {user.balance} ₽
-              </Badge>
+              {/* Кликабельный баланс */}
+              <button
+                onClick={() => setBalanceModalOpen(true)}
+                className="flex items-center gap-2 hover:bg-muted/50 rounded-lg px-3 py-1 transition-colors duration-200 group"
+                title="Открыть баланс"
+                data-testid="button-balance"
+              >
+                <Badge variant="secondary" className="font-gaming group-hover:bg-primary/10 transition-colors">
+                  Баланс: {user.balance} ₽
+                </Badge>
+                <Wallet className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+              </button>
+              
               {/* Кнопка обновления баланса */}
               <Button
                 onClick={onRefreshUser}
@@ -511,6 +529,8 @@ function LoggedInSubmissionPage({
             >
               <span className="sr-only">Открыть профиль</span>
             </button>
+            
+            {/* User Profile Modal */}
             <UserProfile
               isOpen={profileOpen}
               onClose={() => setProfileOpen(false)}
@@ -519,6 +539,8 @@ function LoggedInSubmissionPage({
               getAuthToken={getAuthToken}
               onRefreshUser={onRefreshUser}
             />
+            
+
           </div>
         </div>
       </header>
@@ -670,10 +692,18 @@ function LoggedInSubmissionPage({
           </div>
         </div>
       </main>
+      {/* Balance Modal */}
+            <BalanceModal
+              isOpen={balanceModalOpen}
+              onClose={() => setBalanceModalOpen(false)}
+              user={user}
+              getAuthToken={getAuthToken}
+              onRefreshUser={onRefreshUser}
+            />
 
       {/* Premium Modal */}
       {isPremiumModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-card via-card to-card/90 rounded-2xl border border-border/50 shadow-2xl max-w-md w-full animate-in zoom-in-95 duration-300">
             <div className="flex items-center justify-between p-6 border-b border-border/50">
               <div className="flex items-center gap-3">
