@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle } from "lucide-react";
+import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle, Crown, X, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import mapBackground from "@assets/generated_images/bg.jpg";
 import epiclogo from "@assets/generated_images/epiclogo.png";
@@ -245,6 +245,7 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const categories = [
@@ -397,6 +398,17 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
           <div className="flex items-center gap-3">
             <Trophy className="h-8 w-8 text-primary" />
             <span className="text-xl font-bold font-gaming">ContestGG</span>
+            
+            {/* Premium Button */}
+            <Button
+              onClick={() => setIsPremiumModalOpen(true)}
+              className="ml-6 bg-gradient-to-r from-yellow-400 via-yellow-500 to-yellow-600 hover: text-black font-gaming font-bold shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-0"
+              size="sm"
+              data-testid="button-premium"
+            >
+              <Crown className="h-4 w-4 mr-2" />
+              Премиум
+            </Button>
           </div>
           <div className="flex items-center gap-4">
             <Badge variant="secondary" className="font-gaming">
@@ -581,6 +593,110 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
           </div>
         </div>
       </main>
+
+      {/* Premium Modal */}
+      {isPremiumModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-gradient-to-br from-card via-card to-card/90 rounded-2xl border border-border/50 shadow-2xl max-w-md w-full animate-in zoom-in-95 duration-300">
+            {/* Header with close button */}
+            <div className="flex items-center justify-between p-6 border-b border-border/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-r from-yellow-400 to-yellow-600 flex items-center justify-center">
+                  <Crown className="h-5 w-5 text-black" />
+                </div>
+                <h2 className="text-2xl font-bold font-gaming bg-gradient-to-r from-yellow-400 to-yellow-600 bg-clip-text text-transparent">
+                  Премиум подписка
+                </h2>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsPremiumModalOpen(false)}
+                className="hover:bg-muted rounded-full w-8 h-8 p-0"
+                data-testid="button-close-premium"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-6">
+              {/* Benefits */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-bold font-gaming text-center">Преимущества Премиум:</h3>
+                <ul className="space-y-3 text-sm">
+                  <li className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
+                    <span>Приоритетная модерация контента</span>
+                  </li>
+                  <li className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
+                    <span>Увеличенные награды за контент</span>
+                  </li>
+                  <li className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
+                    <span>Эксклюзивные категории соревнований</span>
+                  </li>
+                  <li className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
+                    <span>Золотой значок в профиле</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Price */}
+              <div className="text-center p-4 bg-gradient-to-r from-yellow-400/10 to-yellow-600/10 rounded-lg border border-yellow-500/20">
+                <div className="text-3xl font-bold font-gaming text-yellow-500 mb-2">399₽</div>
+                <div className="text-sm text-muted-foreground">в месяц</div>
+              </div>
+
+              {/* Platform Buttons */}
+              <div className="space-y-6">
+                <a
+                  href="https://boosty.to/cistournaments"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full"
+                >
+                  <Button 
+                    className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-gaming group transition-all duration-300 hover:scale-[1.02] mb-2"
+                    size="lg"
+                    data-testid="button-boosty"
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span>Подписаться через Boosty</span>
+                      <ExternalLink className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                    </div>
+                  </Button>
+                </a>
+
+                <a
+                  href="https://patreon.com/cistournaments"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full"
+                >
+                  <Button 
+                    className="w-full bg-gradient-to-r from-blue-600 to-red-500 hover:from-blue-700 hover:to-red-600 text-white font-gaming group transition-all duration-300 hover:scale-[1.02]"
+                    size="lg"
+                    data-testid="button-patreon"
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span>Подписаться через Patreon</span>
+                      <ExternalLink className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                    </div>
+                  </Button>
+                </a>
+              </div>
+
+              {/* Footer note */}
+              <p className="text-xs text-muted-foreground text-center">
+                После оплаты Premium статус активируется автоматически в течение 5 минут на соответствующей платформе.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
