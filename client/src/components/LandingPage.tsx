@@ -4,15 +4,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle, Crown, X, ExternalLink } from "lucide-react";
+import { Trophy, Target, Zap, Users, ArrowRight, Play, Upload, FileVideo, FileImage, CheckCircle, Crown, X, ExternalLink, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import mapBackground from "@assets/generated_images/bg.jpg";
 import epiclogo from "@assets/generated_images/epiclogo.png";
 import UserProfile from "./UserProfile";
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from "wouter";
-import { Redirect } from "wouter";
-import { c } from "node_modules/vite/dist/node/types.d-aGj9QkWt";
 
 interface User {
   id: string;
@@ -23,49 +21,100 @@ interface User {
 }
 
 export default function LandingPage() {
-  const { user: authUser, isLoggedIn, getAuthToken, login, logout } = useAuth();
+  const { user: authUser, isLoggedIn, getAuthToken, login, logout, refreshUser } = useAuth();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const currentUser = authUser; 
   
-  const [location, setLocation] = useLocation(); // useLocation из Wouter
-  useEffect(() => {
-  const handleEpicCallback = () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const authStatus = urlParams.get('auth');
-    const token = urlParams.get('token');
-    const userParam = urlParams.get('user');
+  const [location, setLocation] = useLocation();
 
-    if (authStatus === 'success' && token && userParam) {
-      try {
-        const userData = JSON.parse(decodeURIComponent(userParam));
-        console.log('Decoded userData:', userData);
+  // Функция для обновления данных пользователя
+  const handleRefreshUser = async () => {
+    if (!isLoggedIn || !getAuthToken()) return;
+    
+    setIsRefreshing(true);
+    try {
+      const token = getAuthToken();
+      if (!token) return;
 
-        // Используй login из верхнего уровня
-        login(userData, token);
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
 
-        // Очистка URL
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, document.title, newUrl);
-      } catch (err) {
-        console.error('Failed to parse user data:', err);
+      if (response.ok) {
+        const userData = await response.json();
+        // Обновляем данные пользователя через хук
+        await refreshUser();
+        console.log('User data refreshed successfully');
+      } else {
+        console.error('Failed to refresh user data');
       }
+    } catch (error) {
+      console.error('Error refreshing user data:', error);
+    } finally {
+      setIsRefreshing(false);
     }
-    setIsLoading(false);
   };
 
-  handleEpicCallback();
-}, [login]);
+  useEffect(() => {
+    const handleEpicCallback = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const authStatus = urlParams.get('auth');
+      const token = urlParams.get('token');
+      const userParam = urlParams.get('user');
 
+      if (authStatus === 'success' && token && userParam) {
+        try {
+          const userData = JSON.parse(decodeURIComponent(userParam));
+          console.log('Decoded userData:', userData);
 
+          login(userData, token);
+
+          // Очистка URL
+          const newUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, newUrl);
+        } catch (err) {
+          console.error('Failed to parse user data:', err);
+        }
+      }
+      setIsLoading(false);
+    };
+
+    handleEpicCallback();
+  }, [login]);
+
+  // Автоматическое обновление данных пользователя при загрузке страницы
+  useEffect(() => {
+    const initializeUserData = async () => {
+      if (isLoggedIn && getAuthToken() && !isLoading) {
+        await handleRefreshUser();
+      }
+    };
+
+    // Небольшая задержка чтобы дать время на инициализацию
+    const timer = setTimeout(initializeUserData, 100);
+    return () => clearTimeout(timer);
+  }, [isLoggedIn, isLoading]);
+
+  // Автоматическое обновление каждые 30 секунд (опционально)
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const interval = setInterval(async () => {
+      await handleRefreshUser();
+    }, 30000); // 30 секунд
+
+    return () => clearInterval(interval);
+  }, [isLoggedIn]);
 
   const handleAuthError = (message: string) => {
     console.error('Auth error:', message);
-    // You could show a toast notification here
     alert(`Authentication failed: ${message}`);
     
-    // Clean up URL
     const newUrl = window.location.pathname;
     window.history.replaceState({}, document.title, newUrl);
   };
@@ -81,8 +130,6 @@ export default function LandingPage() {
       }
       
       const data = await res.json();
-
-      // Перенаправляем пользователя на Epic Games
       window.location.href = data.authUrl;
     } catch (error) {
       console.error('Epic login error:', error);
@@ -92,8 +139,8 @@ export default function LandingPage() {
   };
   
   const handleLogout = () => {
-    logout(); // хук сам обнуляет user и токен
-    setIsProfileOpen(false); // закрываем профиль
+    logout();
+    setIsProfileOpen(false);
     console.log("User logged out");
   };
 
@@ -109,124 +156,125 @@ export default function LandingPage() {
     );
   }
 
-   if (isLoggedIn && currentUser) {
-  return (
-    <LoggedInSubmissionPage 
-      user={currentUser} 
-      profileOpen={isProfileOpen} 
-      setProfileOpen={setIsProfileOpen}
-      onLogout={() => {
-        setIsProfileOpen(false);
-        logout();
-      }}
-      getAuthToken={getAuthToken} // <-- вот это ключевое
-    />
-  );
-}
-  return (
-      
-      <div className="min-h-screen bg-background">
-        {/* Glassmorphism Hero Section */}
-        <div className="relative min-h-screen flex items-center justify-center overflow-hidden h-screen snap-start flex items-center justify-center">
-          {/* Background Pattern */}
-          <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
-          
-          {/* Content */}
-          <div className="relative z-10 max-w-4xl mx-auto px-4 text-center space-y-8">
-            <div className="space-y-4">
-              <Badge variant="secondary" className="text-sm font-gaming mb-4">
-                UEFN нового поколения
-              </Badge>
-              <h1 className="text-5xl md:text-7xl font-bold font-gaming bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                ContestGG
-              </h1>
-              <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto">
-                Играй на нашей карте и получай награды за свои результаты!
-              </p>
-            </div>
+  if (isLoggedIn && currentUser) {
+    return (
+      <LoggedInSubmissionPage 
+        user={currentUser} 
+        profileOpen={isProfileOpen} 
+        setProfileOpen={setIsProfileOpen}
+        onLogout={() => {
+          setIsProfileOpen(false);
+          logout();
+        }}
+        getAuthToken={getAuthToken}
+        onRefreshUser={handleRefreshUser}
+        isRefreshing={isRefreshing}
+      />
+    );
+  }
 
-            {/* Epic Games Login Button */}
-            <div className="space-y-6">
-              <Button 
-                size="lg" 
-                className="text-lg px-12 py-6 bg-primary hover:bg-primary/90 font-gaming hover-elevate"
-                onClick={handleEpicLogin}
-                disabled={isLoading}
-                data-testid="button-epic-login"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-sm flex items-center justify-center">
-                    <div className="flex items-center"> 
-                      <img src={epiclogo} alt="Logo" className="h-24 w-24 object-contain" />
-                    </div>
-                  </div>
-                  {isLoading ? 'Подключение...' : 'Войти через Epic Games'}
-                  {!isLoading && <ArrowRight className="ml-2 h-5 w-5" />}
-                </div>
-              </Button>
-              <p className="text-sm text-muted-foreground">
-                Безопасная авторизация через Epic Games
-              </p>
-            </div>
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Glassmorphism Hero Section */}
+      <div className="relative min-h-screen flex items-center justify-center overflow-hidden h-screen snap-start flex items-center justify-center">
+        {/* Background Pattern */}
+        <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
+        
+        {/* Content */}
+        <div className="relative z-10 max-w-4xl mx-auto px-4 text-center space-y-8">
+          <div className="space-y-4">
+            <Badge variant="secondary" className="text-sm font-gaming mb-4">
+              UEFN нового поколения
+            </Badge>
+            <h1 className="text-5xl md:text-7xl font-bold font-gaming bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+              ContestGG
+            </h1>
+            <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto">
+              Играй на нашей карте и получай награды за свои результаты!
+            </p>
           </div>
 
-      {/* Map Section */}
-      <section className="min-h-screen flex items-center relative overflow-hidden h-screen snap-start flex items-center justify-center">
-        <div 
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{ backgroundImage: `url(${mapBackground})` }}
-        >
-          {/* Dark overlay for better text readability */}
-          <div className="absolute inset-0 bg-black/70"></div>
+          {/* Epic Games Login Button */}
+          <div className="space-y-6">
+            <Button 
+              size="lg" 
+              className="text-lg px-12 py-6 bg-primary hover:bg-primary/90 font-gaming hover-elevate"
+              onClick={handleEpicLogin}
+              disabled={isLoading}
+              data-testid="button-epic-login"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-sm flex items-center justify-center">
+                  <div className="flex items-center"> 
+                    <img src={epiclogo} alt="Logo" className="h-24 w-24 object-contain" />
+                  </div>
+                </div>
+                {isLoading ? 'Подключение...' : 'Войти через Epic Games'}
+                {!isLoading && <ArrowRight className="ml-2 h-5 w-5" />}
+              </div>
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              Безопасная авторизация через Epic Games
+            </p>
+          </div>
         </div>
-        
-        <div className="container mx-auto px-4 relative z-10">
-          <div className="max-w-4xl mx-auto text-center">
-            <div className="bg-black/40 backdrop-blur-sm rounded-2xl p-12 border border-white/10">
-              <h2 className="text-5xl font-bold font-gaming mb-6 text-white">
-                Играйте на нашей карте
-              </h2>
-              <p className="text-white/80 text-xl mb-12">
-                Заходи в игру, выигрывай, получай достижения и зарабатывай реальные деньги
-              </p>
-              
-              <div className="grid md:grid-cols-3 gap-8 text-white">
-                <div className="space-y-4">
-                  <div className="w-16 h-16 rounded-full bg-primary/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-primary/50">
-                    <Play className="h-8 w-8 text-primary" />
-                  </div>
-                  <h3 className="text-xl font-bold font-gaming">1. Загрузи</h3>
-                  <p className="text-white/70">
-                    Скриншоты или видео твоих результатов
-                  </p>
-                </div>
 
-                <div className="space-y-4">
-                  <div className="w-16 h-16 rounded-full bg-gaming-secondary/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-gaming-secondary/50">
-                    <Users className="h-8 w-8 text-gaming-secondary" />
+        {/* Map Section */}
+        <section className="min-h-screen flex items-center relative overflow-hidden h-screen snap-start flex items-center justify-center">
+          <div 
+            className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+            style={{ backgroundImage: `url(${mapBackground})` }}
+          >
+            <div className="absolute inset-0 bg-black/70"></div>
+          </div>
+          
+          <div className="container mx-auto px-4 relative z-10">
+            <div className="max-w-4xl mx-auto text-center">
+              <div className="bg-black/40 backdrop-blur-sm rounded-2xl p-12 border border-white/10">
+                <h2 className="text-5xl font-bold font-gaming mb-6 text-white">
+                  Играйте на нашей карте
+                </h2>
+                <p className="text-white/80 text-xl mb-12">
+                  Заходи в игру, выигрывай, получай достижения и зарабатывай реальные деньги
+                </p>
+                
+                <div className="grid md:grid-cols-3 gap-8 text-white">
+                  <div className="space-y-4">
+                    <div className="w-16 h-16 rounded-full bg-primary/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-primary/50">
+                      <Play className="h-8 w-8 text-primary" />
+                    </div>
+                    <h3 className="text-xl font-bold font-gaming">1. Загрузи</h3>
+                    <p className="text-white/70">
+                      Скриншоты или видео твоих результатов
+                    </p>
                   </div>
-                  <h3 className="text-xl font-bold font-gaming">2. Модерация</h3>
-                  <p className="text-white/70">
-                    Наша команда оценит достоверность и уникальность контента
-                  </p>
-                </div>
 
-                <div className="space-y-4">
-                  <div className="w-16 h-16 rounded-full bg-gaming-success/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-gaming-success/50">
-                    <Trophy className="h-8 w-8 text-gaming-success" />
+                  <div className="space-y-4">
+                    <div className="w-16 h-16 rounded-full bg-gaming-secondary/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-gaming-secondary/50">
+                      <Users className="h-8 w-8 text-gaming-secondary" />
+                    </div>
+                    <h3 className="text-xl font-bold font-gaming">2. Модерация</h3>
+                    <p className="text-white/70">
+                      Наша команда оценит достоверность и уникальность контента
+                    </p>
                   </div>
-                  <h3 className="text-xl font-bold font-gaming">3. Получи награду</h3>
-                  <p className="text-white/70">
-                    Зарабатывай реальные деньги за свою игру
-                  </p>
+
+                  <div className="space-y-4">
+                    <div className="w-16 h-16 rounded-full bg-gaming-success/30 backdrop-blur-sm flex items-center justify-center mx-auto border border-gaming-success/50">
+                      <Trophy className="h-8 w-8 text-gaming-success" />
+                    </div>
+                    <h3 className="text-xl font-bold font-gaming">3. Получи награду</h3>
+                    <p className="text-white/70">
+                      Зарабатывай реальные деньги за свою игру
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
-    </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -236,10 +284,20 @@ interface LoggedInSubmissionPageProps {
   profileOpen: boolean;
   setProfileOpen: (open: boolean) => void;
   onLogout: () => void;
-  getAuthToken: () => string | null; // <-- добавляем
+  getAuthToken: () => string | null;
+  onRefreshUser: () => Promise<void>;
+  isRefreshing: boolean;
 }
 
-function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, getAuthToken }: LoggedInSubmissionPageProps) {
+function LoggedInSubmissionPage({ 
+  user, 
+  profileOpen, 
+  setProfileOpen, 
+  onLogout, 
+  getAuthToken,
+  onRefreshUser,
+  isRefreshing 
+}: LoggedInSubmissionPageProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -295,7 +353,7 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
       formData.append('file', selectedFile);
       formData.append('category', selectedCategory);
 
-      const token = getAuthToken(); // <-- достаем токен из хука
+      const token = getAuthToken();
       if (!token) {
         alert('Вы не авторизованы');
         return;
@@ -304,7 +362,7 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
       const response = await fetch('/api/upload', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}` // токен корректно вставляем
+          'Authorization': `Bearer ${token}`
         },
         body: formData
       });
@@ -313,6 +371,9 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
         const result = await response.json();
         console.log("Submission successful:", result);
         setIsSubmitted(true);
+        
+        // Обновляем баланс пользователя после успешной отправки
+        await onRefreshUser();
       } else {
         const error = await response.json();
         throw new Error(error.error || 'Upload failed');
@@ -379,6 +440,8 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
               setIsSubmitted(false);
               setSelectedFile(null);
               setSelectedCategory("");
+              // Обновляем баланс при возврате
+              onRefreshUser();
             }}
             className="w-full font-gaming"
             data-testid="button-submit-another"
@@ -411,23 +474,36 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
             </Button>
           </div>
           <div className="flex items-center gap-4">
-            <Badge variant="secondary" className="font-gaming">
-              Баланс: {user.balance} ₽
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="font-gaming">
+                Баланс: {user.balance} ₽
+              </Badge>
+              {/* Кнопка обновления баланса */}
+              <Button
+                onClick={onRefreshUser}
+                disabled={isRefreshing}
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0"
+                title="Обновить баланс"
+              >
+                <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
+              </Button>
+            </div>
             <span className="text-sm text-muted-foreground">
               Привет, {user.displayName}!
             </span>
 
-              {user.isAdmin && (
-                <Button
-                  variant="outline"
-                  onClick={() => window.location.href = "/admin"}
-                  className="font-gaming"
-                  data-testid="button-admin"
-                >
-                  Панель админа
-                </Button>
-              )}
+            {user.isAdmin && (
+              <Button
+                variant="outline"
+                onClick={() => window.location.href = "/admin"}
+                className="font-gaming"
+                data-testid="button-admin"
+              >
+                Панель админа
+              </Button>
+            )}
             <button 
               onClick={() => setProfileOpen(true)}
               className="w-8 h-8 rounded-full bg-primary hover:scale-110 transition-transform duration-200 hover-elevate"
@@ -436,11 +512,12 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
               <span className="sr-only">Открыть профиль</span>
             </button>
             <UserProfile
-              isOpen={profileOpen} // вместо isProfileOpen
+              isOpen={profileOpen}
               onClose={() => setProfileOpen(false)}
               user={user}
               onLogout={onLogout}
               getAuthToken={getAuthToken}
+              onRefreshUser={onRefreshUser}
             />
           </div>
         </div>
@@ -598,7 +675,6 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
       {isPremiumModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-card via-card to-card/90 rounded-2xl border border-border/50 shadow-2xl max-w-md w-full animate-in zoom-in-95 duration-300">
-            {/* Header with close button */}
             <div className="flex items-center justify-between p-6 border-b border-border/50">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-r from-yellow-400 to-yellow-600 flex items-center justify-center">
@@ -619,9 +695,7 @@ function LoggedInSubmissionPage({ user, profileOpen, setProfileOpen, onLogout, g
               </Button>
             </div>
 
-            {/* Content */}
             <div className="p-6 space-y-6">
-              {/* Benefits */}
               <div className="space-y-4">
                 <h3 className="text-lg font-bold font-gaming text-center">Преимущества Премиум:</h3>
                 <ul className="space-y-3 text-sm">
