@@ -41,6 +41,7 @@ export interface IStorage {
   // Admin operations
   createAdminAction(action: InsertAdminAction): Promise<AdminAction>;
   getAdminActions(): Promise<AdminAction[]>;
+  getAdminActionsWithUsers(): Promise<AdminAction[]>;
   
   // Statistics
   getUserStats(userId: string): Promise<{
@@ -317,6 +318,42 @@ async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): 
       .from(adminActions)
       .orderBy(desc(adminActions.createdAt));
   }
+
+  async getAdminActionsWithUsers(): Promise<AdminAction[]> {
+  const rows = await db
+    .select({
+      id: adminActions.id,
+      adminId: adminActions.adminId,
+      action: adminActions.action,
+      targetType: adminActions.targetType,
+      targetId: adminActions.targetId,
+      details: adminActions.details,
+      createdAt: adminActions.createdAt,
+      username: users.username,
+      displayName: users.displayName,
+      telegramUsername: users.telegramUsername
+    })
+    .from(adminActions)
+    .leftJoin(users, sql`${adminActions.adminId} = ${users.id}::uuid`)
+    .orderBy(desc(adminActions.createdAt));
+
+  return rows.map(row => ({
+    id: row.id,
+    adminId: row.adminId,
+    action: row.action,
+    targetType: row.targetType,
+    targetId: row.targetId,
+    details: row.details,
+    createdAt: row.createdAt,
+    admin: row.adminId
+      ? {
+          username: row.username ?? "",
+          displayName: row.displayName ?? "",
+          telegramUsername: row.telegramUsername ?? ""
+        }
+      : undefined
+  }));
+}
 
   // Statistics
   async getUserStats(userId: string): Promise<{
