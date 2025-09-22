@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Trophy, Target, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -62,6 +63,8 @@ export default function CategorySelection({
           </div>
         ))}
       </RadioGroup>
+
+
 
       {/* Submit Button */}
       <div className="pt-4">

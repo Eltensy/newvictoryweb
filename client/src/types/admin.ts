@@ -1,21 +1,25 @@
 // client/src/types/admin.ts
+// client/src/types/admin.ts (или где у вас определены типы)
+
 export interface Submission {
   id: string;
   userId: string;
   filename: string;
   originalFilename: string;
   fileType: 'image' | 'video';
+  fileSize: number;
+  filePath: string;
   category: string;
   status: 'pending' | 'approved' | 'rejected';
+  additionalText?: string;
   createdAt: string;
+  updatedAt: string;
   reviewedAt?: string;
   reviewedBy?: string;
   reward?: number;
   rejectionReason?: string;
   cloudinaryPublicId?: string;
   cloudinaryUrl?: string;
-  filePath: string;
-  // User data joined from backend
   user?: {
     username: string;
     displayName: string;

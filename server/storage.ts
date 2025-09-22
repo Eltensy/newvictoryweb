@@ -17,6 +17,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, sql } from "drizzle-orm";
+import { add } from "date-fns";
 
 // Updated storage interface to support new functionality
 export interface IStorage {
@@ -228,6 +229,7 @@ async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): 
       filePath: submissions.filePath,
       category: submissions.category,
       status: submissions.status,
+      additionalText: submissions.additionalText,
       createdAt: submissions.createdAt,
       updatedAt: submissions.updatedAt,
       reviewedAt: submissions.reviewedAt,
@@ -254,6 +256,7 @@ async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): 
       filePath: row.filePath,
       category: row.category,
       status: row.status,
+      additionalText: row.additionalText,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       reviewedAt: row.reviewedAt,
