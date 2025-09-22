@@ -26,26 +26,28 @@
 
   // Submissions table
   export const submissions = pgTable("submissions", {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id").notNull().references(() => users.id),
-    filename: varchar("filename", { length: 255 }).notNull(),
-    originalFilename: varchar("original_filename", { length: 255 }),
-    fileType: varchar("file_type", { length: 20 }).notNull(), // 'image' | 'video'
-    fileSize: integer("file_size").notNull(),
-    filePath: text("file_path").notNull(), // Теперь здесь Cloudinary URL
-    category: varchar("category", { length: 50 }).notNull(),
-    status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-    reviewedAt: timestamp("reviewed_at"),
-    reviewedBy: uuid("reviewed_by").references(() => users.id),
-    reward: integer("reward"),
-    rejectionReason: text("rejection_reason"),
-    
-    // Новые поля для Cloudinary
-    cloudinaryPublicId: varchar("cloudinary_public_id", { length: 255 }),
-    cloudinaryUrl: text("cloudinary_url"), // Дублируем URL для удобства
-  });
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  filename: varchar("filename", { length: 255 }).notNull(),
+  originalFilename: varchar("original_filename", { length: 255 }),
+  fileType: varchar("file_type", { length: 20 }).notNull(), // 'image' | 'video'
+  fileSize: integer("file_size").notNull(),
+  filePath: text("file_path").notNull(), // Теперь здесь Cloudinary URL
+  category: varchar("category", { length: 50 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
+  additionalText: text("additional_text"), // Дополнительный текст к заявке
+  
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  reviewedAt: timestamp("reviewed_at"),
+  reviewedBy: uuid("reviewed_by").references(() => users.id),
+  reward: integer("reward"),
+  rejectionReason: text("rejection_reason"),
+  
+  // Поля для Cloudinary
+  cloudinaryPublicId: varchar("cloudinary_public_id", { length: 255 }),
+  cloudinaryUrl: text("cloudinary_url"),
+});
 
   export const balanceTransactions = pgTable("balance_transactions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -159,17 +161,18 @@ export const createWithdrawalRequestSchema = z.object({
   });
 
   export const insertSubmissionSchema = createInsertSchema(submissions, {
-    fileSize: z.number().min(1).max(50 * 1024 * 1024), // 50MB max
-    category: z.enum(["gold-kill", "silver-kill", "bronze-kill", "victory", "funny"]),
-  }).omit({
-    id: true,
-    createdAt: true,
-    updatedAt: true,
-    reviewedAt: true,
-    reviewedBy: true,
-    reward: true,
-    rejectionReason: true,
-  });
+  fileSize: z.number().min(1).max(50 * 1024 * 1024), // 50MB max
+  category: z.enum(["gold-kill", "silver-kill", "bronze-kill", "victory", "funny"]),
+  additionalText: z.string().max(500).optional(), // Максимум 500 символов, необязательно
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  reviewedAt: true,
+  reviewedBy: true,
+  reward: true,
+  rejectionReason: true,
+});
 
   export const insertAdminActionSchema = createInsertSchema(adminActions).omit({
     id: true,

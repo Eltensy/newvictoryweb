@@ -575,21 +575,22 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
       size: cloudinaryResult.bytes
     });
     
-    // Validate submission data - сохраняем Cloudinary URLs
+    // Validate submission data - добавляем additional text
     const submissionData = {
       userId: userId,
-      filename: cloudinaryResult.public_id, // Сохраняем public_id для управления
+      filename: cloudinaryResult.public_id,
       originalFilename: req.file.originalname,
       fileType: detectedFileType,
       fileSize: req.file.size,
-      filePath: cloudinaryResult.secure_url, // Сохраняем URL файла
+      filePath: cloudinaryResult.secure_url,
       category: req.body.category,
+      additionalText: req.body.additionalText || null, // НОВОЕ ПОЛЕ
       // Дополнительные поля для Cloudinary
       cloudinaryPublicId: cloudinaryResult.public_id,
       cloudinaryUrl: cloudinaryResult.secure_url
     };
 
-    console.log(`📝 Creating submission with Cloudinary data:`, submissionData);
+    console.log(`📝 Creating submission with data:`, submissionData);
 
     const validation = insertSubmissionSchema.safeParse(submissionData);
     if (!validation.success) {
@@ -602,7 +603,8 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
     console.log('✅ Submission created successfully:', {
       id: submission.id,
       cloudinaryPublicId: submission.cloudinaryPublicId,
-      url: submission.filePath
+      url: submission.filePath,
+      additionalText: submission.additionalText
     });
     
     // Generate thumbnail URL for preview

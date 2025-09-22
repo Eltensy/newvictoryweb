@@ -40,6 +40,7 @@ export default function SubmissionPage({
 }: SubmissionPageProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [additionalText, setAdditionalText] = useState<string>("");
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
@@ -53,6 +54,7 @@ export default function SubmissionPage({
       const formData = new FormData();
       formData.append('file', selectedFile);
       formData.append('category', selectedCategory);
+      formData.append('additionalText', additionalText);
 
       const token = getAuthToken();
       if (!token) {
@@ -91,6 +93,7 @@ export default function SubmissionPage({
     setIsSubmitted(false);
     setSelectedFile(null);
     setSelectedCategory("");
+    setAdditionalText("");
     // Обновляем баланс при возврате
     onRefreshUser();
   };
@@ -125,25 +128,33 @@ export default function SubmissionPage({
           </div>
 
           {/* Main Content Grid */}
-          <div className="grid lg:grid-cols-3 gap-8">
-            {/* File Upload - Takes 2 columns */}
-            <div className="lg:col-span-2">
-              <FileUpload
-                selectedFile={selectedFile}
-                onFileSelect={setSelectedFile}
-                isSubmitting={isSubmitting}
-              />
+          <div className="grid lg:grid-cols-3 gap-6">
+            {/* File Upload Area - Takes 2 columns */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* File Upload Section */}
+              <div className="bg-card/30 backdrop-blur-sm rounded-lg border border-border p-6">
+                <FileUpload
+                  selectedFile={selectedFile}
+                  onFileSelect={setSelectedFile}
+                  additionalText={additionalText}
+                  onAdditionalTextChange={setAdditionalText}
+                  isSubmitting={isSubmitting}
+                />
+              </div>
             </div>
 
             {/* Category Selection Sidebar */}
-            <div className="lg:col-span-1">
-              <CategorySelection
-                selectedCategory={selectedCategory}
-                onCategoryChange={setSelectedCategory}
-                selectedFile={selectedFile}
-                onSubmit={handleSubmit}
-                isSubmitting={isSubmitting}
-              />
+            <div className="lg:col-span-1 space-y-6">
+              {/* Category Selection Section */}
+              <div className="bg-card/30 backdrop-blur-sm rounded-lg border border-border p-6">
+                <CategorySelection
+                  selectedCategory={selectedCategory}
+                  onCategoryChange={setSelectedCategory}
+                  selectedFile={selectedFile}
+                  onSubmit={handleSubmit}
+                  isSubmitting={isSubmitting}
+                />
+              </div>
             </div>
           </div>
         </div>

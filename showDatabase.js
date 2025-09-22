@@ -2,10 +2,10 @@ import 'dotenv/config';
 import pkg from 'pg';
 const { Pool } = pkg;
 import { drizzle } from 'drizzle-orm/node-postgres';
-import * as schema from './shared/schema.ts'; // твой файл с таблицами
+import * as schema from './shared/schema.ts';
 import { eq } from "drizzle-orm";
 
-// Настройка подключения с SSL для Render
+
 const pool = new Pool({
   host: process.env.PG_HOST,
   port: Number(process.env.PG_PORT) || 5432,
@@ -13,7 +13,7 @@ const pool = new Pool({
   user: process.env.PG_USER,
   password: process.env.PG_PASSWORD,
   ssl: {
-    rejectUnauthorized: false, // Render требует SSL, но можно без проверки сертификата
+    rejectUnauthorized: false, 
   },
 });
 
@@ -21,9 +21,9 @@ const db = drizzle(pool);
 
 async function showDatabase() {
   try {
-    console.log('=== USERS ===');
-    const users = await db.select().from(schema.users);
-    console.table(users);
+    //console.log('=== USERS ===');
+    //const users = await db.select().from(schema.users);
+    //console.table(users);
 
     console.log('=== SUBMISSIONS ===');
     const submissions = await db.select().from(schema.submissions);
@@ -57,6 +57,6 @@ async function updateUser() {
   }
 }
 
-updateUser();
+//updateUser();
 
 showDatabase();
