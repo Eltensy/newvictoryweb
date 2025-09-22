@@ -164,10 +164,6 @@ export default function SubmissionPage({
       <UserProfile
         isOpen={profileOpen}
         onClose={() => setProfileOpen(false)}
-        user={user}
-        onLogout={onLogout}
-        getAuthToken={getAuthToken}
-        onRefreshUser={onRefreshUser}
       />
 
       <BalanceModal
