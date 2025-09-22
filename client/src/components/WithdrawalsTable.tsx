@@ -145,12 +145,14 @@ export function WithdrawalsTable({ withdrawals, loading, onProcess, actionLoadin
                       <div>
                         <div className="font-medium">{getMethodLabel(withdrawal.method)}</div>
                         <div className="text-xs text-muted-foreground">
-                          {withdrawal.method === 'telegram' && withdrawal.methodData.telegramUsername && 
-                            `@${withdrawal.methodData.telegramUsername}`}
                           {withdrawal.method === 'card' && withdrawal.methodData.cardNumber && 
                             `**** **** **** ${withdrawal.methodData.cardNumber.slice(-4)}`}
-                          {withdrawal.method === 'paypal' && withdrawal.methodData.paypalEmail && 
-                            withdrawal.methodData.paypalEmail}
+                          {withdrawal.method === 'crypto' && withdrawal.methodData.walletAddress && 
+                            `${withdrawal.methodData.walletAddress.slice(0, 8)}...${withdrawal.methodData.walletAddress.slice(-6)}`}
+                          {withdrawal.method === 'paypal' && withdrawal.methodData.email && 
+                            withdrawal.methodData.email}
+                          {withdrawal.method === 'telegram' && withdrawal.methodData.telegramUsername && 
+                            `@${withdrawal.methodData.telegramUsername}`}
                         </div>
                       </div>
                     </div>
@@ -234,13 +236,31 @@ export function WithdrawalsTable({ withdrawals, loading, onProcess, actionLoadin
                                   </div>
                                 )}
                                 {withdrawal.method === 'card' && (
-                                  <div>
-                                    <strong>Номер карты:</strong> {withdrawal.methodData.cardNumber ? 
-                                      `${formatCardNumber(withdrawal.methodData.cardNumber)}` : 
-                                      'не указан'
-                                    }
-                                  </div>
+                                  <>
+                                    <div>
+                                      <strong>Номер карты:</strong> {withdrawal.methodData.cardNumber ? 
+                                        formatCardNumber(withdrawal.methodData.cardNumber) : 
+                                        'не указан'
+                                      }
+                                    </div>
+                                    <div>
+                                      <strong>Держатель карты:</strong> {withdrawal.methodData.cardHolder || 'не указан'}
+                                    </div>
+                                    <div>
+                                      <strong>Страна:</strong> {withdrawal.methodData.cardCountry || 'не указана'}
+                                    </div>
+                                  </>
                                 )}
+                                 {withdrawal.method === 'crypto' && (
+                                    <>
+                                      <div>
+                                        <strong>Кошелек:</strong> {withdrawal.methodData.walletAddress || 'не указан'}
+                                      </div>
+                                      <div>
+                                        <strong>Валюта:</strong> {withdrawal.methodData.currency || 'USDT'}
+                                      </div>
+                                    </>
+                                  )}
                                 {withdrawal.method === 'paypal' && (
                                   <div>
                                     <strong>PayPal email:</strong> {withdrawal.methodData.paypalEmail || 'не указан'}

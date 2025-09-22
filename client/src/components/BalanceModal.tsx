@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { 
   X, 
   TrendingUp, 
@@ -15,13 +16,15 @@ import {
   XCircle, 
   CreditCard, 
   Bitcoin, 
-  Mail, 
-  Smartphone,
+  Mail,
   ArrowUpRight,
   ArrowDownRight,
   Gift,
   Trophy,
-  Wallet
+  Wallet,
+  MessageSquare,
+  AlertTriangle,
+  Info
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +41,7 @@ interface BalanceTransaction {
 interface WithdrawalRequest {
   id: string;
   amount: number;
-  method: 'card' | 'crypto' | 'paypal' | 'qiwi';
+  method: 'card' | 'crypto' | 'paypal';
   methodData: any;
   status: 'pending' | 'processing' | 'completed' | 'rejected';
   rejectionReason?: string;
@@ -52,6 +55,7 @@ interface User {
   displayName: string;
   balance: number;
   isAdmin: boolean;
+  telegramUsername?: string;
 }
 
 interface BalanceModalProps {
@@ -62,6 +66,67 @@ interface BalanceModalProps {
   onRefreshUser: () => Promise<void>;
 }
 
+// Интерфейс для уведомлений
+interface NotificationProps {
+  isOpen: boolean;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message: string;
+  onClose: () => void;
+}
+
+// Компонент уведомления
+function NotificationModal({ isOpen, type, title, message, onClose }: NotificationProps) {
+  if (!isOpen) return null;
+
+  const getIcon = () => {
+    switch (type) {
+      case 'success':
+        return <CheckCircle className="h-6 w-6 text-green-500" />;
+      case 'error':
+        return <XCircle className="h-6 w-6 text-red-500" />;
+      case 'warning':
+        return <AlertTriangle className="h-6 w-6 text-yellow-500" />;
+      case 'info':
+        return <Info className="h-6 w-6 text-blue-500" />;
+    }
+  };
+
+  const getBorderColor = () => {
+    switch (type) {
+      case 'success':
+        return 'border-green-500/20 bg-green-50/50 dark:bg-green-950/50';
+      case 'error':
+        return 'border-red-500/20 bg-red-50/50 dark:bg-red-950/50';
+      case 'warning':
+        return 'border-yellow-500/20 bg-yellow-50/50 dark:bg-yellow-950/50';
+      case 'info':
+        return 'border-blue-500/20 bg-blue-50/50 dark:bg-blue-950/50';
+    }
+  };
+
+  return (
+    <div className="fixed bg-black/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4" style={{ top: 0, left: 0, right: 0, bottom: 0, position: 'fixed' }}>
+      <div className={cn("bg-card rounded-2xl border shadow-2xl max-w-md w-full", getBorderColor())}>
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            {getIcon()}
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold font-gaming mb-2">{title}</h3>
+              <p className="text-sm text-muted-foreground">{message}</p>
+            </div>
+          </div>
+          <div className="mt-6 flex justify-end">
+            <Button onClick={onClose} className="font-gaming">
+              Понятно
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRefreshUser }: BalanceModalProps) {
   const [activeTab, setActiveTab] = useState<'transactions' | 'withdrawal'>('transactions');
   const [transactions, setTransactions] = useState<BalanceTransaction[]>([]);
@@ -69,18 +134,61 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
   const [isLoading, setIsLoading] = useState(false);
   const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
 
+  // Состояние для уведомлений
+  const [notification, setNotification] = useState<{
+    isOpen: boolean;
+    type: 'success' | 'error' | 'warning' | 'info';
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    type: 'info',
+    title: '',
+    message: ''
+  });
+
+  // Функция для показа уведомлений
+  const showNotification = (type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
+    setNotification({ isOpen: true, type, title, message });
+  };
+
+  const closeNotification = () => {
+    setNotification(prev => ({ ...prev, isOpen: false }));
+  };
+
   // Withdrawal form state
   const [withdrawalForm, setWithdrawalForm] = useState({
     amount: '',
-    method: '' as 'card' | 'crypto' | 'paypal' | 'qiwi' | '',
+    method: '' as 'card' | 'crypto' | 'paypal' | '',
+    telegramUsername: '',
     cardNumber: '',
     cardHolder: '',
+    cardCountry: 'RU',
     walletAddress: '',
-    currency: 'BTC',
-    email: '',
-    phone: ''
+    currency: 'USDT',
+    email: ''
   });
   const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
+
+  // Функция для форматирования номера карты
+  const formatCardNumber = (value: string) => {
+    // Удаляем все не-цифры
+    const cleanValue = value.replace(/\D/g, '');
+    
+    // Ограничиваем длину до 16 цифр
+    const limitedValue = cleanValue.slice(0, 16);
+    
+    // Добавляем пробелы каждые 4 цифры
+    const formattedValue = limitedValue.replace(/(\d{4})(?=\d)/g, '$1 ');
+    
+    return formattedValue;
+  };
+
+  // Функция для валидации номера карты
+  const isValidCardNumber = (cardNumber: string) => {
+    const cleanNumber = cardNumber.replace(/\s/g, '');
+    return cleanNumber.length === 16 && /^\d{16}$/.test(cleanNumber);
+  };
 
   // Load data when modal opens
   useEffect(() => {
@@ -133,17 +241,22 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
     }
   };
 
+  const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formattedValue = formatCardNumber(e.target.value);
+    setWithdrawalForm(prev => ({ ...prev, cardNumber: formattedValue }));
+  };
+
   const handleWithdrawalSubmit = async () => {
     if (!withdrawalForm.amount || !withdrawalForm.method) return;
 
     const amount = parseInt(withdrawalForm.amount);
-    if (amount < 100) {
-      alert('Минимальная сумма вывода 100 рублей');
+    if (amount < 1000) {
+      showNotification('warning', 'Недостаточная сумма', 'Минимальная сумма вывода 1000 рублей');
       return;
     }
 
     if (amount > user.balance) {
-      alert('Недостаточно средств на балансе');
+      showNotification('error', 'Недостаточно средств', 'Недостаточно средств на балансе');
       return;
     }
 
@@ -157,18 +270,26 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
       
       switch (withdrawalForm.method) {
         case 'card':
-          if (!withdrawalForm.cardNumber || !withdrawalForm.cardHolder) {
-            alert('Заполните все поля для банковской карты');
+          if (!withdrawalForm.cardNumber || !withdrawalForm.cardHolder || !withdrawalForm.cardCountry) {
+            showNotification('warning', 'Не все поля заполнены', 'Заполните все поля для банковской карты');
+            setIsSubmittingWithdrawal(false);
+            return;
+          }
+          if (!isValidCardNumber(withdrawalForm.cardNumber)) {
+            showNotification('error', 'Некорректный номер карты', 'Введите корректный номер карты (16 цифр)');
+            setIsSubmittingWithdrawal(false);
             return;
           }
           methodData = {
-            cardNumber: withdrawalForm.cardNumber,
-            cardHolder: withdrawalForm.cardHolder
+            cardNumber: withdrawalForm.cardNumber.replace(/\s/g, ''), // Сохраняем без пробелов
+            cardHolder: withdrawalForm.cardHolder,
+            cardCountry: withdrawalForm.cardCountry
           };
           break;
         case 'crypto':
           if (!withdrawalForm.walletAddress) {
-            alert('Укажите адрес кошелька');
+            showNotification('warning', 'Не указан адрес кошелька', 'Укажите адрес кошелька');
+            setIsSubmittingWithdrawal(false);
             return;
           }
           methodData = {
@@ -178,20 +299,12 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
           break;
         case 'paypal':
           if (!withdrawalForm.email) {
-            alert('Укажите email PayPal');
+            showNotification('warning', 'Не указан email', 'Укажите email PayPal');
+            setIsSubmittingWithdrawal(false);
             return;
           }
           methodData = {
             email: withdrawalForm.email
-          };
-          break;
-        case 'qiwi':
-          if (!withdrawalForm.phone) {
-            alert('Укажите номер телефона QIWI');
-            return;
-          }
-          methodData = {
-            phone: withdrawalForm.phone
           };
           break;
       }
@@ -210,17 +323,18 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
       });
 
       if (response.ok) {
-        alert('Заявка на вывод создана успешно');
+        showNotification('success', 'Заявка создана', 'Заявка на вывод создана успешно');
         setIsWithdrawalModalOpen(false);
         setWithdrawalForm({
           amount: '',
           method: '',
+          telegramUsername: '',
           cardNumber: '',
           cardHolder: '',
+          cardCountry: 'RU',
           walletAddress: '',
-          currency: 'BTC',
-          email: '',
-          phone: ''
+          currency: 'USDT',
+          email: ''
         });
         
         // Refresh data
@@ -231,11 +345,11 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
         ]);
       } else {
         const error = await response.json();
-        alert(`Ошибка: ${error.error}`);
+        showNotification('error', 'Ошибка создания заявки', error.error || 'Произошла ошибка при создании заявки');
       }
     } catch (error) {
       console.error('Withdrawal error:', error);
-      alert('Произошла ошибка при создании заявки');
+      showNotification('error', 'Ошибка сети', 'Произошла ошибка при создании заявки');
     } finally {
       setIsSubmittingWithdrawal(false);
     }
@@ -279,8 +393,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
         return <Bitcoin className="h-4 w-4" />;
       case 'paypal':
         return <Mail className="h-4 w-4" />;
-      case 'qiwi':
-        return <Smartphone className="h-4 w-4" />;
       default:
         return <Wallet className="h-4 w-4" />;
     }
@@ -309,8 +421,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
         return 'Криптовалюта';
       case 'paypal':
         return 'PayPal';
-      case 'qiwi':
-        return 'QIWI';
       default:
         return method;
     }
@@ -333,13 +443,21 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                onClick={() => setIsWithdrawalModalOpen(true)}
-                className="font-gaming"
-                disabled={user.balance < 100}
-              >
-                Вывести
-              </Button>
+              <div className="relative group">
+                <Button
+                  onClick={() => setIsWithdrawalModalOpen(true)}
+                  className="font-gaming"
+                  disabled={user.balance < 1000}
+                >
+                  Вывести
+                </Button>
+                {user.balance < 1000 && (
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
+                    Минимальная сумма вывода: 1000 ₽
+                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                )}
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
@@ -394,10 +512,10 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                 ) : (
                   transactions.map((transaction) => (
                     <div key={transaction.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
                         {getTransactionIcon(transaction)}
-                        <div>
-                          <p className="font-medium">{transaction.description}</p>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{transaction.description}</p>
                           <p className="text-sm text-muted-foreground">
                             {new Date(transaction.createdAt).toLocaleDateString('ru-RU', {
                               day: '2-digit',
@@ -409,9 +527,9 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                           </p>
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right flex-shrink-0 ml-3">
                         <p className={cn(
-                          "font-bold",
+                          "font-bold whitespace-nowrap",
                           transaction.amount > 0 ? "text-green-600" : "text-red-600"
                         )}>
                           {transaction.amount > 0 ? '+' : ''}{transaction.amount} ₽
@@ -434,16 +552,16 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                   withdrawals.map((withdrawal) => (
                     <div key={withdrawal.id} className="p-4 bg-muted/30 rounded-lg">
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
                           {getWithdrawalStatusIcon(withdrawal.status)}
-                          <span className="font-medium">{withdrawal.amount} ₽</span>
+                          <span className="font-medium whitespace-nowrap">{withdrawal.amount} ₽</span>
                           <Badge variant="secondary" className="text-xs">
                             {getStatusText(withdrawal.status)}
                           </Badge>
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground flex-shrink-0 ml-3">
                           {getMethodIcon(withdrawal.method)}
-                          {getMethodText(withdrawal.method)}
+                          <span className="whitespace-nowrap">{getMethodText(withdrawal.method)}</span>
                         </div>
                       </div>
                       <p className="text-sm text-muted-foreground">
@@ -456,9 +574,21 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                         })}
                       </p>
                       {withdrawal.rejectionReason && (
-                        <p className="text-sm text-red-600 mt-2">
-                          Причина отклонения: {withdrawal.rejectionReason}
-                        </p>
+                        <>
+                          {withdrawal.status === 'rejected' ? (
+                            <p className="text-sm text-red-600 mt-2">
+                              Причина отклонения: {withdrawal.rejectionReason}
+                            </p>
+                          ) : withdrawal.status === 'completed' ? (
+                            <p className="text-sm text-green-600 mt-2">
+                              Вывод проведен: {withdrawal.rejectionReason}
+                            </p>
+                          ) : (
+                            <p className="text-sm text-muted-foreground mt-2">
+                              Примечание: {withdrawal.rejectionReason}
+                            </p>
+                          )}
+                        </>
                       )}
                     </div>
                   ))
@@ -493,7 +623,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                   <p className="text-sm text-muted-foreground">Доступно для вывода</p>
                   <p className="text-2xl font-bold text-primary">{user.balance} ₽</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Минимальная сумма вывода: 100 ₽
+                    Минимальная сумма вывода: 1000 ₽
                   </p>
                 </div>
               </div>
@@ -503,15 +633,15 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                 <Label className="text-sm font-medium mb-2 block">Сумма вывода</Label>
                 <Input
                   type="number"
-                  placeholder="100"
-                  min="100"
+                  placeholder="1000"
+                  min="1000"
                   max={user.balance}
                   value={withdrawalForm.amount}
                   onChange={(e) => setWithdrawalForm(prev => ({ ...prev, amount: e.target.value }))}
                   className="w-full"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  От 100 до {user.balance} ₽
+                  От 1000 до {user.balance} ₽
                 </p>
               </div>
 
@@ -544,33 +674,52 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                       PayPal
                     </label>
                   </div>
-                  <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/30">
-                    <RadioGroupItem value="qiwi" id="qiwi" />
-                    <label htmlFor="qiwi" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <Smartphone className="h-4 w-4" />
-                      QIWI
-                    </label>
-                  </div>
                 </RadioGroup>
               </div>
 
               {/* Method-specific fields */}
+
               {withdrawalForm.method === 'card' && (
                 <div className="space-y-4">
+                  <div>
+                    <Label className="text-sm font-medium mb-2 block">Страна карты</Label>
+                    <Select
+                      value={withdrawalForm.cardCountry}
+                      onValueChange={(value) => setWithdrawalForm(prev => ({ ...prev, cardCountry: value }))}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="z-[120]">
+                        <SelectItem value="RU">Россия</SelectItem>
+                        <SelectItem value="UA">Украина</SelectItem>
+                        <SelectItem value="EU">Страны ЕС</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div>
                     <Label className="text-sm font-medium mb-2 block">Номер карты</Label>
                     <Input
                       placeholder="1234 5678 9012 3456"
                       value={withdrawalForm.cardNumber}
-                      onChange={(e) => setWithdrawalForm(prev => ({ ...prev, cardNumber: e.target.value }))}
+                      onChange={handleCardNumberChange}
+                      className={cn(
+                        "font-mono",
+                        withdrawalForm.cardNumber && !isValidCardNumber(withdrawalForm.cardNumber) && "border-red-500"
+                      )}
                     />
+                    {withdrawalForm.cardNumber && !isValidCardNumber(withdrawalForm.cardNumber) && (
+                      <p className="text-xs text-red-500 mt-1">
+                        Введите 16 цифр номера карты
+                      </p>
+                    )}
                   </div>
                   <div>
                     <Label className="text-sm font-medium mb-2 block">Имя держателя</Label>
                     <Input
                       placeholder="IVAN PETROV"
                       value={withdrawalForm.cardHolder}
-                      onChange={(e) => setWithdrawalForm(prev => ({ ...prev, cardHolder: e.target.value }))}
+                      onChange={(e) => setWithdrawalForm(prev => ({ ...prev, cardHolder: e.target.value.toUpperCase() }))}
                     />
                   </div>
                 </div>
@@ -578,30 +727,25 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
 
               {withdrawalForm.method === 'crypto' && (
                 <div className="space-y-4">
-                  <div>
-                    <Label className="text-sm font-medium mb-2 block">Валюта</Label>
-                    <Select
-                      value={withdrawalForm.currency}
-                      onValueChange={(value) => setWithdrawalForm(prev => ({ ...prev, currency: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="BTC">Bitcoin (BTC)</SelectItem>
-                        <SelectItem value="ETH">Ethereum (ETH)</SelectItem>
-                        <SelectItem value="USDT">Tether (USDT)</SelectItem>
-                        <SelectItem value="LTC">Litecoin (LTC)</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="p-3 bg-muted/30 rounded-lg border">
+                    <div className="flex items-center gap-2">
+                      <Bitcoin className="h-4 w-4 text-orange-500" />
+                      <span className="font-medium">Tether USD (USDT TRC20)</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Вывод осуществляется только в USDT через сеть TRC20
+                    </p>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium mb-2 block">Адрес кошелька</Label>
+                    <Label className="text-sm font-medium mb-2 block">USDT TRC20 адрес кошелька</Label>
                     <Input
-                      placeholder="bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+                      placeholder="TRX7n2uyWwaTEtbWDCojkH2ZTCkd (пример)"
                       value={withdrawalForm.walletAddress}
                       onChange={(e) => setWithdrawalForm(prev => ({ ...prev, walletAddress: e.target.value }))}
                     />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Проверьте правильность USDT TRC20 адреса. Неверный адрес может привести к потере средств.
+                    </p>
                   </div>
                 </div>
               )}
@@ -618,17 +762,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                 </div>
               )}
 
-              {withdrawalForm.method === 'qiwi' && (
-                <div>
-                  <Label className="text-sm font-medium mb-2 block">Номер телефона QIWI</Label>
-                  <Input
-                    placeholder="+7 900 123-45-67"
-                    value={withdrawalForm.phone}
-                    onChange={(e) => setWithdrawalForm(prev => ({ ...prev, phone: e.target.value }))}
-                  />
-                </div>
-              )}
-
               {/* Submit */}
               <Button
                 onClick={handleWithdrawalSubmit}
@@ -636,8 +769,9 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                   !withdrawalForm.amount || 
                   !withdrawalForm.method || 
                   isSubmittingWithdrawal ||
-                  parseInt(withdrawalForm.amount || '0') < 100 ||
-                  parseInt(withdrawalForm.amount || '0') > user.balance
+                  parseInt(withdrawalForm.amount || '0') < 1000 ||
+                  parseInt(withdrawalForm.amount || '0') > user.balance ||
+                  (withdrawalForm.method === 'card' && !isValidCardNumber(withdrawalForm.cardNumber))
                 }
                 className="w-full font-gaming"
                 size="lg"
@@ -652,6 +786,15 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
           </div>
         </div>
       )}
+
+      {/* Notification Modal */}
+      <NotificationModal
+        isOpen={notification.isOpen}
+        type={notification.type}
+        title={notification.title}
+        message={notification.message}
+        onClose={closeNotification}
+      />
     </>
   );
 }

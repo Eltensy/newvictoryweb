@@ -1,5 +1,4 @@
 // client/src/types/admin.ts
-// client/src/types/admin.ts (или где у вас определены типы)
 
 export interface Submission {
   id: string;
@@ -67,11 +66,23 @@ export interface WithdrawalRequest {
   id: string;
   userId: string;
   amount: number;
-  method: 'telegram' | 'card' | 'paypal';
+  method: 'telegram' | 'card' | 'crypto' | 'paypal';
   methodData: {
+    // Telegram method
     telegramUsername?: string;
+    
+    // Card method
     cardNumber?: string;
-    paypalEmail?: string;
+    cardHolder?: string;
+    cardCountry?: string;
+    
+    // Crypto method
+    walletAddress?: string;
+    currency?: string;
+    
+    // PayPal method
+    email?: string;
+    paypalEmail?: string; // keeping both for backward compatibility
   };
   status: 'pending' | 'processing' | 'completed' | 'rejected';
   createdAt: string;
