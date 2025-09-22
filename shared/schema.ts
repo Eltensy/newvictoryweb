@@ -1,78 +1,79 @@
-  import { sql } from "drizzle-orm";
-  import { pgTable, text, varchar, integer, timestamp, boolean, pgEnum, uuid } from "drizzle-orm/pg-core";
-  import { relations } from "drizzle-orm";
-  import { createInsertSchema, createSelectSchema } from "drizzle-zod";
-  import { z } from "zod";
+import { sql } from "drizzle-orm";
+import { pgTable, text, varchar, integer, timestamp, boolean, pgEnum, uuid } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { z } from "zod";
 
-  // Enums - ИСПРАВЛЕНО: добавлена запятая между 'gold-kill' и 'silver-kill'
-  export const submissionStatusEnum = pgEnum('submission_status', ['pending', 'approved', 'rejected']);
-  export const submissionCategoryEnum = pgEnum('submission_category', ['gold-kill', 'silver-kill', 'bronze-kill', 'victory', 'funny']);
-  export const fileTypeEnum = pgEnum('file_type', ['image', 'video']);
+// Enums - ИСПРАВЛЕНО: добавлена запятая между 'gold-kill' и 'silver-kill'
+export const submissionStatusEnum = pgEnum('submission_status', ['pending', 'approved', 'rejected']);
+export const submissionCategoryEnum = pgEnum('submission_category', ['gold-kill', 'silver-kill', 'bronze-kill', 'victory', 'funny']);
+export const fileTypeEnum = pgEnum('file_type', ['image', 'video']);
 
-  // Users table
-  export const users = pgTable("users", {
-    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    epicGamesId: text("epic_games_id").unique(),
-    username: text("username").unique(), // Made nullable for OAuth flow
-    displayName: text("display_name"),
-    email: text("email"),
-    balance: integer("balance").notNull().default(0),
-    telegramUsername: text("telegram_username"),
-    telegramChatId: text("telegram_chat_id"),
-    isAdmin: boolean("is_admin").notNull().default(false),
-    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  });
-
-  // Submissions table
-  export const submissions = pgTable("submissions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").notNull().references(() => users.id),
-  filename: varchar("filename", { length: 255 }).notNull(),
-  originalFilename: varchar("original_filename", { length: 255 }),
-  fileType: varchar("file_type", { length: 20 }).notNull(), // 'image' | 'video'
-  fileSize: integer("file_size").notNull(),
-  filePath: text("file_path").notNull(), // Теперь здесь Cloudinary URL
-  category: varchar("category", { length: 50 }).notNull(),
-  status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
-  additionalText: text("additional_text"), // Дополнительный текст к заявке
-  
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  reviewedAt: timestamp("reviewed_at"),
-  reviewedBy: uuid("reviewed_by").references(() => users.id),
-  reward: integer("reward"),
-  rejectionReason: text("rejection_reason"),
-  
-  // Поля для Cloudinary
-  cloudinaryPublicId: varchar("cloudinary_public_id", { length: 255 }),
-  cloudinaryUrl: text("cloudinary_url"),
+// Users table
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  epicGamesId: text("epic_games_id").unique(),
+  username: text("username").unique(), // Made nullable for OAuth flow
+  displayName: text("display_name"),
+  email: text("email"),
+  balance: integer("balance").notNull().default(0),
+  telegramUsername: text("telegram_username"),
+  telegramChatId: text("telegram_chat_id"),
+  isAdmin: boolean("is_admin").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
-  export const balanceTransactions = pgTable("balance_transactions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").notNull(),
-  type: varchar("type", { length: 50 }).notNull(), // 'earning', 'bonus', 'withdrawal_request', 'withdrawal_completed'
-  amount: integer("amount").notNull(), // В копейках
-  description: text("description").notNull(),
-  sourceType: varchar("source_type", { length: 50 }), // 'submission', 'admin_bonus', 'withdrawal'
-  sourceId: uuid("source_id"), // ID связанной записи (submission, admin_action, withdrawal)
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+// Submissions table
+export const submissions = pgTable("submissions", {
+id: uuid("id").primaryKey().defaultRandom(),
+userId: uuid("user_id").notNull().references(() => users.id),
+filename: varchar("filename", { length: 255 }).notNull(),
+originalFilename: varchar("original_filename", { length: 255 }),
+fileType: varchar("file_type", { length: 20 }).notNull(), // 'image' | 'video'
+fileSize: integer("file_size").notNull(),
+filePath: text("file_path").notNull(), // Теперь здесь Cloudinary URL
+category: varchar("category", { length: 50 }).notNull(),
+status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
+additionalText: text("additional_text"), // Дополнительный текст к заявке
+
+createdAt: timestamp("created_at").defaultNow().notNull(),
+updatedAt: timestamp("updated_at").defaultNow().notNull(),
+reviewedAt: timestamp("reviewed_at"),
+reviewedBy: uuid("reviewed_by").references(() => users.id),
+reward: integer("reward"),
+rejectionReason: text("rejection_reason"),
+
+// Поля для Cloudinary
+cloudinaryPublicId: varchar("cloudinary_public_id", { length: 255 }),
+cloudinaryUrl: text("cloudinary_url"),
 });
 
-  export const withdrawalRequests = pgTable("withdrawal_requests", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").notNull(),
-  amount: integer("amount").notNull(), // В копейках
-  method: varchar("method", { length: 50 }).notNull(), // 'card', 'crypto', 'paypal', 'qiwi'
-  methodData: text("method_data").notNull(), // JSON с данными способа вывода
-  status: varchar("status", { length: 20 }).default("pending").notNull(), // 'pending', 'processing', 'completed', 'rejected'
-  processedBy: uuid("processed_by"), // ID админа
-  processedAt: timestamp("processed_at"),
-  rejectionReason: text("rejection_reason"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+export const balanceTransactions = pgTable("balance_transactions", {
+id: uuid("id").primaryKey().defaultRandom(),
+userId: uuid("user_id").notNull(),
+type: varchar("type", { length: 50 }).notNull(), // 'earning', 'bonus', 'withdrawal_request', 'withdrawal_completed'
+amount: integer("amount").notNull(), // В копейках
+description: text("description").notNull(),
+sourceType: varchar("source_type", { length: 50 }), // 'submission', 'admin_bonus', 'withdrawal'
+sourceId: uuid("source_id"), // ID связанной записи (submission, admin_action, withdrawal)
+createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const withdrawalRequests = pgTable("withdrawal_requests", {
+id: uuid("id").primaryKey().defaultRandom(),
+userId: uuid("user_id").notNull(),
+amount: integer("amount").notNull(), // В копейках
+method: varchar("method", { length: 50 }).notNull(), // 'telegram', 'card', 'crypto', 'paypal'
+methodData: text("method_data").notNull(), // JSON с данными способа вывода
+status: varchar("status", { length: 20 }).default("pending").notNull(), // 'pending', 'processing', 'completed', 'rejected'
+processedBy: uuid("processed_by"), // ID админа
+processedAt: timestamp("processed_at"),
+rejectionReason: text("rejection_reason"),
+createdAt: timestamp("created_at").defaultNow().notNull(),
+updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export type BalanceTransaction = typeof balanceTransactions.$inferSelect;
 export type InsertBalanceTransaction = typeof balanceTransactions.$inferInsert;
 
@@ -83,8 +84,8 @@ export const insertBalanceTransactionSchema = createInsertSchema(balanceTransact
 export const selectBalanceTransactionSchema = createSelectSchema(balanceTransactions);
 
 export const insertWithdrawalRequestSchema = createInsertSchema(withdrawalRequests, {
-  amount: z.number().min(100, "Минимальная сумма вывода 100 рублей").max(1000000, "Максимальная сумма вывода 10,000 рублей"),
-  method: z.enum(['card', 'crypto', 'paypal', 'qiwi'], {
+  amount: z.number().min(1000, "Минимальная сумма вывода 1000 рублей").max(1000000, "Максимальная сумма вывода 1,000,000 рублей"),
+  method: z.enum(['telegram', 'card', 'crypto', 'paypal'], {
     errorMap: () => ({ message: "Выберите способ вывода" })
   }),
   methodData: z.string().min(1, "Укажите данные для вывода")
@@ -97,129 +98,184 @@ export const processWithdrawalSchema = z.object({
 
 // Схема для создания заявки на вывод
 export const createWithdrawalRequestSchema = z.object({
-  amount: z.number().min(100, "Минимальная сумма вывода 100 рублей"),
-  method: z.enum(['card', 'crypto', 'paypal', 'qiwi']),
+  amount: z.number().min(1000, "Минимальная сумма вывода 1000 рублей"),
+  method: z.enum(['telegram', 'card', 'crypto', 'paypal']),
   methodData: z.object({
-    // Для карты
+    // Для Telegram
+    telegramUsername: z.string().optional(),
+    
+    // Для банковской карты
     cardNumber: z.string().optional(),
     cardHolder: z.string().optional(),
-    // Для крипты
+    cardCountry: z.string().optional(),
+    
+    // Для криптовалюты
     walletAddress: z.string().optional(),
     currency: z.string().optional(),
+    
     // Для PayPal
     email: z.string().optional(),
-    // Для QIWI
-    phone: z.string().optional(),
+    paypalEmail: z.string().optional(), // keeping for backward compatibility
   }).refine(data => {
-    // Валидация в зависимости от метода будет на фронтенде
     return Object.values(data).some(value => value !== undefined && value !== '');
   }, "Заполните данные для выбранного способа вывода")
 });
 
-  // Admin actions table (for audit trail)
-  export const adminActions = pgTable("admin_actions", {
-    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    adminId: varchar("admin_id").notNull().references(() => users.id),
-    action: text("action").notNull(), // 'approve_submission', 'reject_submission', 'adjust_balance', etc.
-    targetType: text("target_type").notNull(), // 'submission', 'user', etc.
-    targetId: varchar("target_id").notNull(),
-    details: text("details"), // JSON string with action details
-    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  });
+// Refined validation schema for withdrawal methods
+export const validateWithdrawalMethodData = z.discriminatedUnion("method", [
+  z.object({
+    method: z.literal("telegram"),
+    methodData: z.object({
+      telegramUsername: z.string().min(1, "Укажите Telegram username"),
+    })
+  }),
+  z.object({
+    method: z.literal("card"),
+    methodData: z.object({
+      cardNumber: z.string().min(16, "Номер карты должен содержать минимум 16 цифр"),
+      cardHolder: z.string().min(1, "Укажите имя держателя карты"),
+      cardCountry: z.string().min(1, "Выберите страну карты"),
+    })
+  }),
+  z.object({
+    method: z.literal("crypto"),
+    methodData: z.object({
+      walletAddress: z.string().min(26, "Укажите корректный адрес кошелька"),
+      currency: z.string().default("USDT"),
+    })
+  }),
+  z.object({
+    method: z.literal("paypal"),
+    methodData: z.object({
+      email: z.string().email("Укажите корректный email PayPal"),
+    })
+  }),
+]);
 
-  // Relations
-  export const usersRelations = relations(users, ({ many }) => ({
-    submissions: many(submissions),
-    adminActions: many(adminActions),
-    reviewedSubmissions: many(submissions, { relationName: "reviewer" }),
-  }));
+// Admin actions table (for audit trail)
+export const adminActions = pgTable("admin_actions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  adminId: varchar("admin_id").notNull().references(() => users.id),
+  action: text("action").notNull(), // 'approve_submission', 'reject_submission', 'adjust_balance', etc.
+  targetType: text("target_type").notNull(), // 'submission', 'user', etc.
+  targetId: varchar("target_id").notNull(),
+  details: text("details"), // JSON string with action details
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
 
-  export const submissionsRelations = relations(submissions, ({ one }) => ({
-    user: one(users, {
-      fields: [submissions.userId],
-      references: [users.id],
-    }),
-    reviewer: one(users, {
-      fields: [submissions.reviewedBy],
-      references: [users.id],
-      relationName: "reviewer",
-    }),
-  }));
+// Relations
+export const usersRelations = relations(users, ({ many }) => ({
+  submissions: many(submissions),
+  adminActions: many(adminActions),
+  reviewedSubmissions: many(submissions, { relationName: "reviewer" }),
+  balanceTransactions: many(balanceTransactions),
+  withdrawalRequests: many(withdrawalRequests),
+}));
 
-  export const adminActionsRelations = relations(adminActions, ({ one }) => ({
-    admin: one(users, {
-      fields: [adminActions.adminId],
-      references: [users.id],
-    }),
-  }));
+export const submissionsRelations = relations(submissions, ({ one }) => ({
+  user: one(users, {
+    fields: [submissions.userId],
+    references: [users.id],
+  }),
+  reviewer: one(users, {
+    fields: [submissions.reviewedBy],
+    references: [users.id],
+    relationName: "reviewer",
+  }),
+}));
 
-  // Zod schemas for validation
-  export const insertUserSchema = createInsertSchema(users).omit({
-    id: true,
-    createdAt: true,
-    updatedAt: true,
-  });
+export const adminActionsRelations = relations(adminActions, ({ one }) => ({
+  admin: one(users, {
+    fields: [adminActions.adminId],
+    references: [users.id],
+  }),
+}));
 
-  export const insertSubmissionSchema = createInsertSchema(submissions, {
-  fileSize: z.number().min(1).max(50 * 1024 * 1024), // 50MB max
-  category: z.enum(["gold-kill", "silver-kill", "bronze-kill", "victory", "funny"]),
-  additionalText: z.string().max(500).optional(), // Максимум 500 символов, необязательно
-}).omit({
+export const balanceTransactionsRelations = relations(balanceTransactions, ({ one }) => ({
+  user: one(users, {
+    fields: [balanceTransactions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const withdrawalRequestsRelations = relations(withdrawalRequests, ({ one }) => ({
+  user: one(users, {
+    fields: [withdrawalRequests.userId],
+    references: [users.id],
+  }),
+  processedByAdmin: one(users, {
+    fields: [withdrawalRequests.processedBy],
+    references: [users.id],
+    relationName: "processedBy",
+  }),
+}));
+
+// Zod schemas for validation
+export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
-  reviewedAt: true,
-  reviewedBy: true,
-  reward: true,
-  rejectionReason: true,
 });
 
-  export const insertAdminActionSchema = createInsertSchema(adminActions).omit({
-    id: true,
-    createdAt: true,
-  });
+export const insertSubmissionSchema = createInsertSchema(submissions, {
+fileSize: z.number().min(1).max(50 * 1024 * 1024), // 50MB max
+category: z.enum(["gold-kill", "silver-kill", "bronze-kill", "victory", "funny"]),
+additionalText: z.string().max(500).optional(), // Максимум 500 символов, необязательно
+}).omit({
+id: true,
+createdAt: true,
+updatedAt: true,
+reviewedAt: true,
+reviewedBy: true,
+reward: true,
+rejectionReason: true,
+});
 
-  // TypeScript types
-  export type User = typeof users.$inferSelect;
-  export type InsertUser = z.infer<typeof insertUserSchema>;
+export const insertAdminActionSchema = createInsertSchema(adminActions).omit({
+  id: true,
+  createdAt: true,
+});
 
-  export type Submission = typeof submissions.$inferSelect & {
-    // Добавляем опциональные поля для joined данных
-    user?: {
-      username: string;
-      displayName: string;
-      telegramUsername?: string;
-    };
+// TypeScript types
+export type User = typeof users.$inferSelect;
+export type InsertUser = z.infer<typeof insertUserSchema>;
+
+export type Submission = typeof submissions.$inferSelect & {
+  // Добавляем опциональные поля для joined данных
+  user?: {
+    username: string;
+    displayName: string;
+    telegramUsername?: string;
   };
-  export type InsertSubmission = z.infer<typeof insertSubmissionSchema>;
+};
+export type InsertSubmission = z.infer<typeof insertSubmissionSchema>;
 
+export type AdminAction = typeof adminActions.$inferSelect;
+export type InsertAdminAction = z.infer<typeof insertAdminActionSchema>;
 
-  export type AdminAction = typeof adminActions.$inferSelect;
-  export type InsertAdminAction = z.infer<typeof insertAdminActionSchema>;
+export const updateUserBalanceSchema = z.object({
+  amount: z.number(), // Убрали userId - он берется из URL параметра
+  reason: z.string().min(1, "Reason is required"), // Сделали обязательным
+});
 
-  export const updateUserBalanceSchema = z.object({
-    amount: z.number(), // Убрали userId - он берется из URL параметра
-    reason: z.string().min(1, "Reason is required"), // Сделали обязательным
-  });
+export const reviewSubmissionSchema = z.object({
+  status: z.enum(['approved', 'rejected']), // Убрали submissionId - он берется из URL параметра
+  reward: z.number().positive().optional(),
+  rejectionReason: z.string().optional(),
+}).refine((data) => {
+  // If approved, reward is required and must be positive
+  if (data.status === 'approved') {
+    return data.reward !== undefined && data.reward > 0;
+  }
+  // If rejected, rejection reason is required
+  if (data.status === 'rejected') {
+    return data.rejectionReason !== undefined && data.rejectionReason.trim().length > 0;
+  }
+  return true;
+}, {
+  message: "For approved submissions, a positive reward is required. For rejected submissions, a rejection reason is required."
+});
 
-  export const reviewSubmissionSchema = z.object({
-    status: z.enum(['approved', 'rejected']), // Убрали submissionId - он берется из URL параметра
-    reward: z.number().positive().optional(),
-    rejectionReason: z.string().optional(),
-  }).refine((data) => {
-    // If approved, reward is required and must be positive
-    if (data.status === 'approved') {
-      return data.reward !== undefined && data.reward > 0;
-    }
-    // If rejected, rejection reason is required
-    if (data.status === 'rejected') {
-      return data.rejectionReason !== undefined && data.rejectionReason.trim().length > 0;
-    }
-    return true;
-  }, {
-    message: "For approved submissions, a positive reward is required. For rejected submissions, a rejection reason is required."
-  });
-
-  export const linkTelegramSchema = z.object({
-    telegramUsername: z.string().min(1).max(50),
-  });
+export const linkTelegramSchema = z.object({
+  telegramUsername: z.string().min(1).max(50),
+});

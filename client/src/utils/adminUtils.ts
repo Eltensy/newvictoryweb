@@ -90,19 +90,31 @@ export function getActionIcon(action: string) {
 
 export function getMethodIcon(method: string) {
   switch (method) {
-    case 'telegram': return '📱';
-    case 'card': return '💳';
-    case 'paypal': return '🏦';
-    default: return '💰';
+    case 'card':
+      return '💳';
+    case 'crypto':
+      return '₿';
+    case 'paypal':
+      return '💌';
+    case 'telegram':
+      return '✈️';
+    default:
+      return '💰';
   }
 }
 
 export function getMethodLabel(method: string) {
   switch (method) {
-    case 'telegram': return 'Telegram';
-    case 'card': return 'Банковская карта';
-    case 'paypal': return 'PayPal';
-    default: return method;
+    case 'card':
+      return 'Банковская карта';
+    case 'crypto':
+      return 'Криптовалюта (USDT TRC20)';
+    case 'paypal':
+      return 'PayPal';
+    case 'telegram':
+      return 'Telegram';
+    default:
+      return method;
   }
 }
 
