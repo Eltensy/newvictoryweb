@@ -7,6 +7,11 @@ interface User {
   displayName: string;
   balance: number;
   isAdmin: boolean;
+  subscriptionScreenshotStatus?: string;
+  subscriptionScreenshotUrl?: string;
+  subscriptionScreenshotUploadedAt?: Date;
+  subscriptionScreenshotReviewedAt?: Date;
+  subscriptionScreenshotRejectionReason?: string;
 }
 
 export function useAuth() {

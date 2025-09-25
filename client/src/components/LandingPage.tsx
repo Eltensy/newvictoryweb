@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from "wouter";
 import HeroSection from './HeroSection';
 import SubmissionPage from './SubmissionPage';
+import SubscriptionScreenshotModal from './SubscriptionScreenshotModal';
 
 interface User {
   id: string;
@@ -10,6 +11,11 @@ interface User {
   displayName: string;
   balance: number;
   isAdmin: boolean;
+  subscriptionScreenshotStatus?: string;
+  subscriptionScreenshotUrl?: string;
+  subscriptionScreenshotUploadedAt?: Date;
+  subscriptionScreenshotReviewedAt?: Date;
+  subscriptionScreenshotRejectionReason?: string;
 }
 
 export default function LandingPage() {
@@ -18,34 +24,68 @@ export default function LandingPage() {
   const [isBalanceModalOpen, setIsBalanceModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isUploadingScreenshot, setIsUploadingScreenshot] = useState(false);
 
   const currentUser = authUser; 
   
   const [location, setLocation] = useLocation();
 
-  // Функция для обновления данных пользователя
+  // Function to upload subscription screenshot
+  const handleUploadSubscriptionScreenshot = async (file: File) => {
+    if (!getAuthToken()) {
+      throw new Error('Not authenticated');
+    }
+
+    setIsUploadingScreenshot(true);
+    
+    try {
+      const formData = new FormData();
+      formData.append('screenshot', file);
+
+      const response = await fetch('/api/user/subscription-screenshot', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${getAuthToken()}`
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to upload screenshot');
+      }
+
+      const result = await response.json();
+      
+      // Force refresh user profile multiple times to ensure update
+      await refreshProfile();
+      
+      // Small delay and refresh again to make sure data is updated
+      setTimeout(async () => {
+        await refreshProfile();
+        
+        // Force re-render by updating location
+        setTimeout(() => {
+          window.location.href = window.location.pathname;
+        }, 500);
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Screenshot upload failed:', error);
+      throw error;
+    } finally {
+      setIsUploadingScreenshot(false);
+    }
+  };
+
+  // Function to refresh user data
   const handleRefreshUser = async () => {
     if (!isLoggedIn || !getAuthToken()) return;
     
     setIsRefreshing(true);
     try {
-      const token = getAuthToken();
-      if (!token) return;
-
-      const response = await fetch('/api/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const userData = await response.json();
-        // Обновляем данные пользователя через хук
-        await refreshProfile();
-        console.log('User data refreshed successfully');
-      } else {
-        console.error('Failed to refresh user data');
-      }
+      await refreshProfile();
+      console.log('User data refreshed successfully');
     } catch (error) {
       console.error('Error refreshing user data:', error);
     } finally {
@@ -63,11 +103,10 @@ export default function LandingPage() {
       if (authStatus === 'success' && token && userParam) {
         try {
           const userData = JSON.parse(decodeURIComponent(userParam));
-          console.log('Decoded userData:', userData);
 
           login(userData, token);
 
-          // Очистка URL
+          // Clean up URL
           const newUrl = window.location.pathname;
           window.history.replaceState({}, document.title, newUrl);
         } catch (err) {
@@ -80,7 +119,7 @@ export default function LandingPage() {
     handleEpicCallback();
   }, [login]);
 
-  // Автоматическое обновление данных пользователя при загрузке страницы
+  // Auto-refresh user data when logged in
   useEffect(() => {
     const initializeUserData = async () => {
       if (isLoggedIn && getAuthToken() && !isLoading) {
@@ -88,18 +127,18 @@ export default function LandingPage() {
       }
     };
 
-    // Небольшая задержка чтобы дать время на инициализацию
+    // Small delay to allow initialization
     const timer = setTimeout(initializeUserData, 100);
     return () => clearTimeout(timer);
   }, [isLoggedIn, isLoading]);
 
-  // Автоматическое обновление каждые 30 секунд (опционально)
+  // Periodic refresh every 30 seconds (optional)
   useEffect(() => {
     if (!isLoggedIn) return;
 
     const interval = setInterval(async () => {
       await handleRefreshUser();
-    }, 30000); // 30 секунд
+    }, 30000); // 30 seconds
 
     return () => clearInterval(interval);
   }, [isLoggedIn]);
@@ -113,7 +152,6 @@ export default function LandingPage() {
   };
 
   const handleEpicLogin = async () => {
-    console.log("Epic Games login triggered");
     setIsLoading(true);
 
     try {
@@ -149,24 +187,78 @@ export default function LandingPage() {
     );
   }
 
-  // Show submission page if user is logged in
+  // If user is logged in, check subscription screenshot status
   if (isLoggedIn && currentUser) {
-    return (
-      <SubmissionPage 
-        user={currentUser} 
-        profileOpen={isProfileOpen} 
-        setProfileOpen={setIsProfileOpen}
-        balanceModalOpen={isBalanceModalOpen}
-        setBalanceModalOpen={setIsBalanceModalOpen}
-        onLogout={() => {
-          setIsProfileOpen(false);
-          logout();
-        }}
-        getAuthToken={getAuthToken}
-        onRefreshUser={handleRefreshUser}
-        isRefreshing={isRefreshing}
-      />
-    );
+    const subscriptionStatus = currentUser.subscriptionScreenshotStatus || 'none';
+    
+    console.log('Current user data:', {
+      id: currentUser.id,
+      username: currentUser.username,
+      subscriptionScreenshotStatus: currentUser.subscriptionScreenshotStatus,
+      subscriptionScreenshotUrl: currentUser.subscriptionScreenshotUrl
+    });
+    
+    // Show subscription screenshot modal if not approved
+    if (subscriptionStatus === 'none' || subscriptionStatus === 'rejected') {
+      return (
+        <SubscriptionScreenshotModal
+          onUpload={handleUploadSubscriptionScreenshot}
+          isUploading={isUploadingScreenshot}
+          user={currentUser}
+        />
+      );
+    }
+    
+    // Show pending status if screenshot is under review
+    if (subscriptionStatus === 'pending') {
+      console.log('Showing pending status');
+      return (
+        <div className="fixed inset-0 bg-background z-50 flex items-center justify-center p-4">
+          {/* Background Pattern */}
+          <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
+          
+          <div className="relative max-w-md mx-auto text-center p-8 bg-card/50 backdrop-blur-sm rounded-lg border border-border">
+            <div className="w-16 h-16 rounded-full bg-gaming-warning/20 flex items-center justify-center mx-auto mb-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gaming-warning"></div>
+            </div>
+            <h1 className="text-2xl font-bold font-gaming mb-4">Проверяем подписку</h1>
+            <p className="text-muted-foreground mb-6">
+              Мы рассматриваем твой скриншот подписки. Это займет несколько минут.
+            </p>
+            <button
+              onClick={handleRefreshUser}
+              disabled={isRefreshing}
+              className="text-primary hover:text-primary/80 font-gaming text-sm transition-colors disabled:opacity-50"
+            >
+              {isRefreshing ? 'Обновление...' : 'Обновить статус'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    
+    // Show submission page if subscription is approved
+    if (subscriptionStatus === 'approved') {
+      console.log('Showing main platform - subscription approved');
+      return (
+        <SubmissionPage 
+          user={currentUser} 
+          profileOpen={isProfileOpen} 
+          setProfileOpen={setIsProfileOpen}
+          balanceModalOpen={isBalanceModalOpen}
+          setBalanceModalOpen={setIsBalanceModalOpen}
+          onLogout={() => {
+            setIsProfileOpen(false);
+            logout();
+          }}
+          getAuthToken={getAuthToken}
+          onRefreshUser={handleRefreshUser}
+          isRefreshing={isRefreshing}
+        />
+      );
+    }
+
   }
 
   // Show hero section for unauthenticated users

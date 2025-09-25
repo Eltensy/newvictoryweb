@@ -32,6 +32,46 @@ export class AdminApiService {
 
     return response.json();
   }
+  async fetchSubscriptionScreenshots(token: string) {
+    const response = await fetch('/api/admin/subscription-screenshots', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  async reviewSubscriptionScreenshot(
+    token: string, 
+    userId: string, 
+    status: 'approved' | 'rejected', 
+    rejectionReason?: string
+  ) {
+    const response = await fetch(`/api/admin/subscription-screenshot/${userId}/review`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        status,
+        rejectionReason
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
 
   async fetchWithdrawals(token: string): Promise<WithdrawalRequest[]> {
     const response = await fetch('/api/admin/withdrawals', {

@@ -389,26 +389,181 @@ app.get("/api/debug/submission/:id", async (req, res) => {
 
   // Verify current authentication
   app.get("/api/auth/me", async (req, res) => {
-    try {
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-
-      const { user } = authResult;
-      res.json({
-        id: user.id,
-        username: user.username,
-        displayName: user.displayName,
-        balance: user.balance,
-        isAdmin: user.isAdmin
-      });
-    } catch (error) {
-      console.error('Auth check error:', error);
-      res.status(500).json({ error: "Authentication verification failed" });
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
     }
-  });
 
+    const { user } = authResult;
+    
+    // Return user data INCLUDING subscription screenshot fields
+    res.json({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      balance: user.balance,
+      isAdmin: user.isAdmin,
+      // ADD subscription screenshot fields
+      subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
+      subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
+      subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
+      subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
+      subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason
+    });
+  } catch (error) {
+    console.error('Auth check error:', error);
+    res.status(500).json({ error: "Authentication verification failed" });
+  }
+});
+// ADD to your routes.ts file after existing admin routes:
+
+// ===== ADMIN SUBSCRIPTION SCREENSHOT ROUTES =====
+
+// Get all subscription screenshots with user details (admin only)
+app.get("/api/admin/subscription-screenshots", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Get all users (not just pending ones)
+    const users = await storage.getAllUsers();
+    
+    // Filter and format users with subscription data
+    const subscriptionScreenshots = await Promise.all(
+      users
+        .filter(user => user.subscriptionScreenshotStatus && user.subscriptionScreenshotStatus !== 'none')
+        .map(async (user) => {
+          try {
+            const stats = await storage.getUserStats(user.id);
+            return {
+              id: user.id,
+              username: user.username,
+              displayName: user.displayName,
+              subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
+              subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
+              subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
+              subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
+              subscriptionScreenshotReviewedBy: user.subscriptionScreenshotReviewedBy,
+              subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason,
+              balance: user.balance,
+              stats: {
+                totalSubmissions: stats.totalSubmissions,
+                approvedSubmissions: stats.approvedSubmissions,
+                totalEarnings: stats.totalEarnings
+              }
+            };
+          } catch (error) {
+            console.error(`Failed to get stats for user ${user.id}:`, error);
+            return {
+              id: user.id,
+              username: user.username,
+              displayName: user.displayName,
+              subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
+              subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
+              subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
+              subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
+              subscriptionScreenshotReviewedBy: user.subscriptionScreenshotReviewedBy,
+              subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason,
+              balance: user.balance,
+              stats: {
+                totalSubmissions: 0,
+                approvedSubmissions: 0,
+                totalEarnings: 0
+              }
+            };
+          }
+        })
+    );
+
+    // Sort by status priority: pending first, then by date
+    subscriptionScreenshots.sort((a, b) => {
+      if (a.subscriptionScreenshotStatus === 'pending' && b.subscriptionScreenshotStatus !== 'pending') return -1;
+      if (b.subscriptionScreenshotStatus === 'pending' && a.subscriptionScreenshotStatus !== 'pending') return 1;
+      
+      const dateA = new Date(a.subscriptionScreenshotUploadedAt || 0).getTime();
+      const dateB = new Date(b.subscriptionScreenshotUploadedAt || 0).getTime();
+      return dateB - dateA; // Most recent first
+    });
+
+    res.json(subscriptionScreenshots);
+  } catch (error) {
+    console.error('Get subscription screenshots error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Review subscription screenshot (admin only) - UPDATED to allow re-review
+app.post("/api/admin/subscription-screenshot/:userId/review", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { status, rejectionReason } = req.body;
+    
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: "Invalid status. Must be 'approved' or 'rejected'" });
+    }
+
+    if (status === 'rejected' && !rejectionReason?.trim()) {
+      return res.status(400).json({ error: "Rejection reason is required when rejecting screenshot" });
+    }
+
+    const user = await storage.getUser(req.params.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (!user.subscriptionScreenshotUrl) {
+      return res.status(400).json({ error: "User has no subscription screenshot to review" });
+    }
+
+    // Update user subscription screenshot status (allow re-review)
+    const updatedUser = await storage.updateUser(req.params.userId, {
+      subscriptionScreenshotStatus: status,
+      subscriptionScreenshotReviewedAt: new Date(),
+      subscriptionScreenshotReviewedBy: authResult.adminId,
+      subscriptionScreenshotRejectionReason: status === 'rejected' ? rejectionReason : null
+    });
+
+    // Log admin action
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: `${status}_subscription_screenshot`,
+      targetType: 'user',
+      targetId: req.params.userId,
+      details: JSON.stringify({ 
+        status, 
+        rejectionReason: status === 'rejected' ? rejectionReason : null,
+        screenshotUrl: user.subscriptionScreenshotUrl,
+        previousStatus: user.subscriptionScreenshotStatus,
+        isReReview: user.subscriptionScreenshotReviewedBy !== null && user.subscriptionScreenshotReviewedBy !== 'system'
+      })
+    });
+
+    console.log(`✅ Subscription screenshot ${status} for user ${req.params.userId} by admin ${authResult.adminId}`);
+
+    res.json({
+      message: `Subscription screenshot ${status} successfully`,
+      user: {
+        id: updatedUser.id,
+        username: updatedUser.username,
+        displayName: updatedUser.displayName,
+        subscriptionScreenshotStatus: updatedUser.subscriptionScreenshotStatus,
+        subscriptionScreenshotReviewedAt: updatedUser.subscriptionScreenshotReviewedAt,
+        subscriptionScreenshotRejectionReason: updatedUser.subscriptionScreenshotRejectionReason
+      }
+    });
+
+  } catch (error) {
+    console.error('Review subscription screenshot error:', error);
+    res.status(500).json({ error: "Failed to review subscription screenshot" });
+  }
+});
   // Logout
   app.post("/api/auth/logout", async (req, res) => {
     // For token-based auth, just return success
@@ -1241,6 +1396,243 @@ app.post("/api/admin/withdrawal/:id/process", async (req, res) => {
   } catch (error) {
     console.error('Process withdrawal error:', error);
     res.status(500).json({ error: "Failed to process withdrawal" });
+  }
+});
+// Upload subscription screenshot with AUTO-APPROVAL
+app.post("/api/user/subscription-screenshot", upload.single('screenshot'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No screenshot uploaded" });
+    }
+
+    // Authenticate user
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+    
+    const { userId, user } = authResult;
+
+    // Validate file type
+    const fileType = await fileTypeFromBuffer(req.file.buffer);
+    if (!fileType || !['image/jpeg', 'image/png', 'image/webp'].includes(fileType.mime)) {
+      return res.status(400).json({ error: "Invalid file type. Only JPEG, PNG, and WebP images are allowed." });
+    }
+
+    // Get current user status
+    const currentUser = await storage.getUser(userId);
+    
+    // If already approved, just overwrite (log this action)
+    if (currentUser?.subscriptionScreenshotStatus === 'approved') {
+      console.log(`📝 User ${userId} (${currentUser.username}) is re-uploading subscription screenshot - overwriting existing approved screenshot`);
+    }
+
+    // Generate unique filename
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
+    const filename = `subscription-${userId}-${uniqueSuffix}${ext}`;
+    
+    console.log(`☁️ Uploading subscription screenshot to Cloudinary: ${filename}`);
+    
+    // Upload to Cloudinary
+    const cloudinaryResult = await cloudStorage.uploadFile(
+      req.file.buffer,
+      filename,
+      'image'
+    );
+    
+    console.log(`✅ Cloudinary upload successful:`, {
+      public_id: cloudinaryResult.public_id,
+      url: cloudinaryResult.secure_url
+    });
+    
+    // AUTO-APPROVE the screenshot (always overwrite)
+    const updatedUser = await storage.updateUser(userId, {
+      subscriptionScreenshotUrl: cloudinaryResult.secure_url,
+      subscriptionScreenshotStatus: 'approved', // AUTO-APPROVED
+      subscriptionScreenshotUploadedAt: new Date(),
+      subscriptionScreenshotReviewedAt: new Date(), // Mark as reviewed
+      subscriptionScreenshotReviewedBy: 'system', // System auto-approval
+      subscriptionScreenshotRejectionReason: null,
+      updatedAt: new Date()
+    });
+
+    // Create admin action log for tracking
+    await storage.createAdminAction({
+      adminId: 'system', // System action
+      action: currentUser?.subscriptionScreenshotStatus === 'approved' ? 'reupload_subscription_screenshot' : 'auto_approve_subscription_screenshot',
+      targetType: 'user',
+      targetId: userId,
+      details: JSON.stringify({ 
+        screenshotUrl: cloudinaryResult.secure_url,
+        autoApproved: true,
+        previousStatus: currentUser?.subscriptionScreenshotStatus || 'none',
+        note: currentUser?.subscriptionScreenshotStatus === 'approved' ? 'User re-uploaded screenshot - overwriting approved one' : 'Auto-approved for immediate access. Admin review required for payouts.'
+      })
+    });
+
+    console.log(`✅ Subscription screenshot ${currentUser?.subscriptionScreenshotStatus === 'approved' ? 'overwritten' : 'auto-approved'} successfully:`, {
+      userId,
+      username: currentUser?.username,
+      url: cloudinaryResult.secure_url,
+      status: 'approved',
+      previousStatus: currentUser?.subscriptionScreenshotStatus
+    });
+    
+    res.json({
+      message: "Screenshot uploaded and approved successfully",
+      status: updatedUser.subscriptionScreenshotStatus,
+      uploadedAt: updatedUser.subscriptionScreenshotUploadedAt,
+      autoApproved: true,
+      overwritten: currentUser?.subscriptionScreenshotStatus === 'approved'
+    });
+    
+  } catch (error) {
+    console.error('❌ Subscription screenshot upload error:', error);
+    
+    const errorMessage = error instanceof Error ? error.message : "Failed to upload subscription screenshot";
+    res.status(500).json({ error: errorMessage });
+  }
+});
+
+// Get subscription screenshot status
+app.get("/api/user/:id/subscription-screenshot", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Users can only check their own status, admins can check any
+    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const user = await storage.getUser(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      status: user.subscriptionScreenshotStatus || 'none',
+      uploadedAt: user.subscriptionScreenshotUploadedAt,
+      reviewedAt: user.subscriptionScreenshotReviewedAt,
+      rejectionReason: user.subscriptionScreenshotRejectionReason
+    });
+  } catch (error) {
+    console.error('Get subscription screenshot status error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ===== ADMIN SUBSCRIPTION SCREENSHOT ROUTES =====
+
+// Get all pending subscription screenshots (admin only)
+app.get("/api/admin/subscription-screenshots", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const users = await storage.getUsersWithPendingSubscriptionScreenshots();
+    res.json(users);
+  } catch (error) {
+    console.error('Get pending subscription screenshots error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Review subscription screenshot (admin only)
+app.post("/api/admin/subscription-screenshot/:userId/review", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { status, rejectionReason } = req.body;
+    
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: "Invalid status. Must be 'approved' or 'rejected'" });
+    }
+
+    if (status === 'rejected' && !rejectionReason?.trim()) {
+      return res.status(400).json({ error: "Rejection reason is required when rejecting screenshot" });
+    }
+
+    const user = await storage.getUser(req.params.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (user.subscriptionScreenshotStatus !== 'pending') {
+      return res.status(400).json({ error: "No pending screenshot to review" });
+    }
+
+    // Update user subscription screenshot status
+    const updatedUser = await storage.updateUser(req.params.userId, {
+      subscriptionScreenshotStatus: status,
+      subscriptionScreenshotReviewedAt: new Date(),
+      subscriptionScreenshotReviewedBy: authResult.adminId,
+      subscriptionScreenshotRejectionReason: status === 'rejected' ? rejectionReason : null
+    });
+
+    // Log admin action
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: `${status}_subscription_screenshot`,
+      targetType: 'user',
+      targetId: req.params.userId,
+      details: JSON.stringify({ 
+        status, 
+        rejectionReason: status === 'rejected' ? rejectionReason : null,
+        screenshotUrl: user.subscriptionScreenshotUrl
+      })
+    });
+
+    console.log(`✅ Subscription screenshot ${status} for user ${req.params.userId} by admin ${authResult.adminId}`);
+
+    res.json({
+      message: `Subscription screenshot ${status} successfully`,
+      user: {
+        id: updatedUser.id,
+        username: updatedUser.username,
+        displayName: updatedUser.displayName,
+        subscriptionScreenshotStatus: updatedUser.subscriptionScreenshotStatus,
+        subscriptionScreenshotReviewedAt: updatedUser.subscriptionScreenshotReviewedAt,
+        subscriptionScreenshotRejectionReason: updatedUser.subscriptionScreenshotRejectionReason
+      }
+    });
+
+  } catch (error) {
+    console.error('Review subscription screenshot error:', error);
+    res.status(500).json({ error: "Failed to review subscription screenshot" });
+  }
+});
+
+// Get subscription screenshot file (admin only)
+app.get("/api/admin/subscription-screenshot/:userId/file", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const user = await storage.getUser(req.params.userId);
+    if (!user || !user.subscriptionScreenshotUrl) {
+      return res.status(404).json({ error: "Screenshot not found" });
+    }
+
+    // For Cloudinary URLs, just redirect
+    if (user.subscriptionScreenshotUrl.startsWith('https://res.cloudinary.com')) {
+      return res.redirect(user.subscriptionScreenshotUrl);
+    }
+
+    res.status(404).json({ error: "Screenshot file not accessible" });
+  } catch (error) {
+    console.error('Get subscription screenshot file error:', error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
   // ===== HEALTH CHECK ROUTE =====
