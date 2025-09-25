@@ -1,6 +1,3 @@
-// client/src/components/AdminTabs.tsx
-"use client";
-
 import { useState } from "react";
 import { TabType } from "@/types/admin";
 import { Menu, X } from "lucide-react";
