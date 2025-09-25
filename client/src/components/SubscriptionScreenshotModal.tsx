@@ -111,13 +111,14 @@ export default function SubscriptionScreenshotModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-background z-50">
-      {/* Background Pattern */}
-      <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
-      
-      <div className="relative min-h-screen flex items-center justify-center p-4">
-        <div className="max-w-6xl mx-auto w-full">
+    <div className="fixed inset-0 bg-background z-50 overflow-y-auto">
+  {/* Background Pattern */}
+  <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
+  <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
+  
+  <div className="relative min-h-screen flex items-center justify-center p-4">
+    <div className="max-w-6xl mx-auto w-full">
+
           {/* Header */}
           <div className="text-center mb-6">
             <h1 className="text-3xl md:text-4xl font-bold font-gaming mb-3 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">

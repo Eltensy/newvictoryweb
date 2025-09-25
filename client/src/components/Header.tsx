@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Trophy, Crown, Wallet, RefreshCw } from "lucide-react";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Trophy, Crown, Wallet, RefreshCw, Menu, User, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface User {
@@ -30,26 +32,29 @@ export default function Header({
 }: HeaderProps) {
   return (
     <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40">
-      <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+      <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+        
+        {/* Левая часть */}
         <div className="flex items-center gap-3">
-          <Trophy className="h-8 w-8 text-primary" />
-          <span className="text-xl font-bold font-gaming">ContestGG</span>
-          
-          {/* Premium Button */}
+          <Trophy className="h-7 w-7 sm:h-8 sm:w-8 text-primary" />
+          <span className="text-lg sm:text-xl font-bold font-gaming">ContestGG</span>
+
+          {/* Premium Button — всегда видна */}
           <Button
             onClick={onPremiumClick}
-            className="ml-6 bg-gradient-to-r from-yellow-400 via-yellow-500 to-yellow-600 hover: text-black font-gaming font-bold shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-0"
+            className="ml-2 sm:ml-6 bg-gradient-to-r from-yellow-400 via-yellow-500 to-yellow-600 text-black font-gaming font-bold shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-0 px-2 sm:px-4"
             size="sm"
             data-testid="button-premium"
           >
-            <Crown className="h-4 w-4 mr-2" />
-            Премиум
+            <Crown className="h-4 w-4 mr-0 sm:mr-2" />
+            <span className="hidden sm:inline">Премиум</span>
           </Button>
         </div>
-        
-        <div className="flex items-center gap-4">
+
+        {/* Десктоп */}
+        <div className="hidden sm:flex items-center gap-4">
           <div className="flex items-center gap-2">
-            {/* Clickable Balance */}
+            {/* Баланс */}
             <button
               onClick={onBalanceClick}
               className="flex items-center gap-2 hover:bg-muted/50 rounded-lg px-3 py-1 transition-colors duration-200 group"
@@ -61,8 +66,8 @@ export default function Header({
               </Badge>
               <Wallet className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
             </button>
-            
-            {/* Refresh Balance Button */}
+
+            {/* Обновление */}
             <Button
               onClick={onRefreshUser}
               disabled={isRefreshing}
@@ -74,7 +79,7 @@ export default function Header({
               <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
             </Button>
           </div>
-          
+
           <span className="text-sm text-muted-foreground">
             Привет, {user.displayName}!
           </span>
@@ -82,14 +87,14 @@ export default function Header({
           {user.isAdmin && (
             <Button
               variant="outline"
-              onClick={() => window.location.href = "/admin"}
+              onClick={() => (window.location.href = "/admin")}
               className="font-gaming"
               data-testid="button-admin"
             >
               Панель админа
             </Button>
           )}
-          
+
           <button 
             onClick={onProfileClick}
             className="w-8 h-8 rounded-full bg-primary hover:scale-110 transition-transform duration-200 hover-elevate"
@@ -97,6 +102,62 @@ export default function Header({
           >
             <span className="sr-only">Открыть профиль</span>
           </button>
+        </div>
+
+        {/* Мобилка */}
+        <div className="sm:hidden">
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <Menu className="h-6 w-6" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-64 p-4 flex flex-col gap-4">
+              <div className="font-gaming text-lg mb-2">Меню</div>
+              
+              {/* Баланс */}
+              <button
+                onClick={onBalanceClick}
+                className="flex items-center justify-between w-full px-3 py-2 bg-muted/50 rounded-lg hover:bg-muted transition"
+              >
+                <span className="font-gaming">Баланс</span>
+                <span className="flex items-center gap-1">
+                  {user.balance} ₽
+                  <Wallet className="h-4 w-4" />
+                </span>
+              </button>
+
+              {/* Обновление */}
+              <Button
+                onClick={onRefreshUser}
+                disabled={isRefreshing}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+                Обновить
+              </Button>
+
+              {user.isAdmin && (
+                <Button
+                  variant="outline"
+                  onClick={() => (window.location.href = "/admin")}
+                  className="font-gaming"
+                >
+                  Панель админа
+                </Button>
+              )}
+
+              {/* Профиль */}
+              <Button
+                onClick={onProfileClick}
+                className="flex items-center gap-2 bg-primary text-white font-gaming"
+              >
+                <User className="h-4 w-4" />
+                Профиль
+              </Button>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
     </header>
