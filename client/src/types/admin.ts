@@ -96,7 +96,7 @@ export interface WithdrawalRequest {
   };
 }
 
-export type TabType = 'submissions' | 'users' | 'withdrawals' | 'logs';
+export type TabType = 'submissions' | 'users' | 'withdrawals' | 'subscriptions' | 'logs';
 
 export interface AdminDashboardState {
   activeTab: TabType;
@@ -104,19 +104,44 @@ export interface AdminDashboardState {
   statusFilter: string;
   selectedSubmission: Submission | null;
   selectedWithdrawal: WithdrawalRequest | null;
+  selectedUser: User | null;
   rewardAmount: string;
   rejectionReason: string;
   balanceAmount: string;
   balanceReason: string;
-  selectedUser: User | null;
-  adminActions: AdminAction[];
+  
+  // Data arrays
+  submissions: Submission[];
+  users: User[];
   withdrawalRequests: WithdrawalRequest[];
-  logsLoading: boolean;
+  subscriptionScreenshots: SubscriptionScreenshot[];  // NEW
+  adminActions: AdminAction[];
+
+  // Loading states
   submissionsLoading: boolean;
   usersLoading: boolean;
   withdrawalsLoading: boolean;
+  subscriptionsLoading: boolean;  // NEW
+  logsLoading: boolean;
   actionLoading: boolean;
-  submissions: Submission[];
-  users: User[];
+  
   error: string | null;
+}
+
+export interface SubscriptionScreenshot {
+  id: string;
+  username: string;
+  displayName: string;
+  subscriptionScreenshotUrl?: string;
+  subscriptionScreenshotStatus: 'none' | 'pending' | 'approved' | 'rejected';
+  subscriptionScreenshotUploadedAt?: Date;
+  subscriptionScreenshotReviewedAt?: Date;
+  subscriptionScreenshotReviewedBy?: string;
+  subscriptionScreenshotRejectionReason?: string;
+  balance: number;
+  stats?: {
+    totalSubmissions: number;
+    approvedSubmissions: number;
+    totalEarnings: number;
+  };
 }

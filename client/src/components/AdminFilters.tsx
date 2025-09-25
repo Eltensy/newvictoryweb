@@ -30,7 +30,7 @@ export function AdminFilters({
     }
   };
 
-  const showStatusFilter = activeTab === 'submissions' || activeTab === 'withdrawals';
+  const showStatusFilter = activeTab === 'submissions' || activeTab === 'withdrawals' || activeTab === 'subscriptions';
 
   const getStatusOptions = () => {
     if (activeTab === 'submissions') {
@@ -50,7 +50,15 @@ export function AdminFilters({
         { value: 'rejected', label: 'Отклонен' },
       ];
     }
-    return [];
+    if (activeTab === 'subscriptions') {
+      return [
+          { value: 'all', label: 'Все статусы' },
+          { value: 'pending', label: 'Ожидает' },
+          { value: 'approved', label: 'Одобрено' },
+          { value: 'rejected', label: 'Отклонено' }
+        ]; 
+    }   
+    return [];  
   };
 
   return (

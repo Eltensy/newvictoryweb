@@ -17,7 +17,6 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, sql } from "drizzle-orm";
-import { add } from "date-fns";
 
 // Updated storage interface to support new functionality
 export interface IStorage {
@@ -28,7 +27,7 @@ export interface IStorage {
   getUserByEpicGamesId(epicGamesId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User>;
-  updateUserBalance(id: string, deltaAmount: number): Promise<User>;
+  updateUserBalance(id: string, deltaAmount: number, description?: string, type?: 'earning' | 'bonus' | 'withdrawal_request' | 'withdrawal_completed', sourceType?: string, sourceId?: string): Promise<User>;
   createBalanceTransaction(transaction: InsertBalanceTransaction): Promise<BalanceTransaction>;
   getUserBalanceTransactions(userId: string, limit?: number): Promise<BalanceTransaction[]>;
   
@@ -37,12 +36,32 @@ export interface IStorage {
   getSubmission(id: string): Promise<Submission | undefined>;
   getSubmissionsByUserId(userId: string): Promise<Submission[]>;
   getAllSubmissions(): Promise<Submission[]>;
+  getAllSubmissionsWithUsers(): Promise<Submission[]>;
   updateSubmissionStatus(id: string, status: 'approved' | 'rejected', reviewerId: string, reward?: number, rejectionReason?: string): Promise<Submission>;
   
   // Admin operations
   createAdminAction(action: InsertAdminAction): Promise<AdminAction>;
   getAdminActions(): Promise<AdminAction[]>;
   getAdminActionsWithUsers(): Promise<AdminAction[]>;
+
+  // Subscription screenshot operations
+  getUsersWithPendingSubscriptionScreenshots(): Promise<User[]>;
+  updateUserSubscriptionScreenshot(id: string, updates: {
+    subscriptionScreenshotUrl?: string;
+    subscriptionScreenshotStatus?: string;
+    subscriptionScreenshotUploadedAt?: Date;
+    subscriptionScreenshotReviewedAt?: Date;
+    subscriptionScreenshotReviewedBy?: string;
+    subscriptionScreenshotRejectionReason?: string;
+    subscriptionScreenshotCloudinaryPublicId?: string;
+  }): Promise<User>;
+
+  // Withdrawal operations
+  createWithdrawalRequest(request: InsertWithdrawalRequest): Promise<WithdrawalRequest>;
+  getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]>;
+  getAllWithdrawalRequests(): Promise<WithdrawalRequest[]>;
+  updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): Promise<WithdrawalRequest>;
+  getWithdrawalRequest(id: string): Promise<WithdrawalRequest | undefined>;
   
   // Statistics
   getUserStats(userId: string): Promise<{
@@ -53,12 +72,6 @@ export interface IStorage {
     totalEarnings: number;
     isAdmin: boolean;
   }>;
-
-  createWithdrawalRequest(request: InsertWithdrawalRequest): Promise<WithdrawalRequest>;
-  getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]>;
-  getAllWithdrawalRequests(): Promise<WithdrawalRequest[]>;
-  updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): Promise<WithdrawalRequest>;
-  getWithdrawalRequest(id: string): Promise<WithdrawalRequest | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -67,12 +80,13 @@ export class DatabaseStorage implements IStorage {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
   }
+
   async getAllUsers(): Promise<User[]> {
-  return await db
-    .select()
-    .from(users)
-    .orderBy(desc(users.createdAt));
-}
+    return await db
+      .select()
+      .from(users)
+      .orderBy(desc(users.createdAt));
+  }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.username, username));
@@ -92,6 +106,20 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async createSystemAdminAction(action: Omit<InsertAdminAction, 'adminId'> & { adminId?: string }): Promise<AdminAction> {
+  const adminAction: InsertAdminAction = {
+    ...action,
+    adminId: action.adminId || 'system'
+  };
+  
+  const [actionRecord] = await db
+    .insert(adminActions)
+    .values(adminAction)
+    .returning();
+  return actionRecord;
+}
+
+
   async updateUser(id: string, updates: Partial<User>): Promise<User> {
     const [user] = await db
       .update(users)
@@ -100,101 +128,104 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return user;
   }
+
+  // Balance operations
   async createBalanceTransaction(insertTransaction: InsertBalanceTransaction): Promise<BalanceTransaction> {
-  const [transaction] = await db
-    .insert(balanceTransactions)
-    .values(insertTransaction)
-    .returning();
-  return transaction;
-}
-
-async getUserBalanceTransactions(userId: string, limit: number = 20): Promise<BalanceTransaction[]> {
-  return await db
-    .select()
-    .from(balanceTransactions)
-    .where(eq(balanceTransactions.userId, userId))
-    .orderBy(desc(balanceTransactions.createdAt))
-    .limit(limit);
-}
-
-// Заявки на вывод
-async createWithdrawalRequest(insertRequest: InsertWithdrawalRequest): Promise<WithdrawalRequest> {
-  const [request] = await db
-    .insert(withdrawalRequests)
-    .values(insertRequest)
-    .returning();
-  return request;
-}
-
-async getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]> {
-  return await db
-    .select()
-    .from(withdrawalRequests)
-    .where(eq(withdrawalRequests.userId, userId))
-    .orderBy(desc(withdrawalRequests.createdAt));
-}
-
-async getAllWithdrawalRequests(): Promise<WithdrawalRequest[]> {
-  return await db
-    .select()
-    .from(withdrawalRequests)
-    .orderBy(desc(withdrawalRequests.createdAt));
-}
-
-async getWithdrawalRequest(id: string): Promise<WithdrawalRequest | undefined> {
-  const [request] = await db
-    .select()
-    .from(withdrawalRequests)
-    .where(eq(withdrawalRequests.id, id));
-  return request || undefined;
-}
-
-async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): Promise<WithdrawalRequest> {
-  const [request] = await db
-    .update(withdrawalRequests)
-    .set({ ...updates, updatedAt: new Date() })
-    .where(eq(withdrawalRequests.id, id))
-    .returning();
-  return request;
-}
-  async updateUserBalance(
-  id: string, 
-  deltaAmount: number, 
-  description: string = 'Изменение баланса',
-  type: 'earning' | 'bonus' | 'withdrawal_request' | 'withdrawal_completed' = 'bonus',
-  sourceType?: string,
-  sourceId?: string
-): Promise<User> {
-  // Получаем текущего пользователя
-  const currentUser = await this.getUser(id);
-  if (!currentUser) {
-    throw new Error('User not found');
+    const [transaction] = await db
+      .insert(balanceTransactions)
+      .values(insertTransaction)
+      .returning();
+    return transaction;
   }
-  
-  const newBalance = currentUser.balance + deltaAmount;
-  
-  // Обновляем баланс пользователя
-  const [user] = await db
-    .update(users)
-    .set({ 
-      balance: newBalance,
-      updatedAt: new Date()
-    })
-    .where(eq(users.id, id))
-    .returning();
-  
-  // Создаем запись транзакции
-  await this.createBalanceTransaction({
-    userId: id,
-    type,
-    amount: deltaAmount,
-    description,
-    sourceType,
-    sourceId
-  });
-  
-  return user;
-}
+
+  async getUserBalanceTransactions(userId: string, limit: number = 20): Promise<BalanceTransaction[]> {
+    return await db
+      .select()
+      .from(balanceTransactions)
+      .where(eq(balanceTransactions.userId, userId))
+      .orderBy(desc(balanceTransactions.createdAt))
+      .limit(limit);
+  }
+
+  async updateUserBalance(
+    id: string, 
+    deltaAmount: number, 
+    description: string = 'Balance change',
+    type: 'earning' | 'bonus' | 'withdrawal_request' | 'withdrawal_completed' = 'bonus',
+    sourceType?: string,
+    sourceId?: string
+  ): Promise<User> {
+    // Get current user
+    const currentUser = await this.getUser(id);
+    if (!currentUser) {
+      throw new Error('User not found');
+    }
+    
+    const newBalance = currentUser.balance + deltaAmount;
+    
+    // Update user balance
+    const [user] = await db
+      .update(users)
+      .set({ 
+        balance: newBalance,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, id))
+      .returning();
+    
+    // Create transaction record
+    await this.createBalanceTransaction({
+      userId: id,
+      type,
+      amount: deltaAmount,
+      description,
+      sourceType,
+      sourceId
+    });
+    
+    return user;
+  }
+
+  // Withdrawal operations
+  async createWithdrawalRequest(insertRequest: InsertWithdrawalRequest): Promise<WithdrawalRequest> {
+    const [request] = await db
+      .insert(withdrawalRequests)
+      .values(insertRequest)
+      .returning();
+    return request;
+  }
+
+  async getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]> {
+    return await db
+      .select()
+      .from(withdrawalRequests)
+      .where(eq(withdrawalRequests.userId, userId))
+      .orderBy(desc(withdrawalRequests.createdAt));
+  }
+
+  async getAllWithdrawalRequests(): Promise<WithdrawalRequest[]> {
+    return await db
+      .select()
+      .from(withdrawalRequests)
+      .orderBy(desc(withdrawalRequests.createdAt));
+  }
+
+  async getWithdrawalRequest(id: string): Promise<WithdrawalRequest | undefined> {
+    const [request] = await db
+      .select()
+      .from(withdrawalRequests)
+      .where(eq(withdrawalRequests.id, id));
+    return request || undefined;
+  }
+
+  async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): Promise<WithdrawalRequest> {
+    const [request] = await db
+      .update(withdrawalRequests)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(withdrawalRequests.id, id))
+      .returning();
+    return request;
+  }
 
   // Submission operations
   async createSubmission(insertSubmission: InsertSubmission): Promise<Submission> {
@@ -217,36 +248,37 @@ async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): 
       .where(eq(submissions.userId, userId))
       .orderBy(desc(submissions.createdAt));
   }
-  async getAllSubmissionsWithUsers(): Promise<Submission[]> {
-  const rows = await db
-    .select({
-      id: submissions.id,
-      userId: submissions.userId,
-      filename: submissions.filename,
-      originalFilename: submissions.originalFilename,
-      fileType: submissions.fileType,
-      fileSize: submissions.fileSize,
-      filePath: submissions.filePath,
-      category: submissions.category,
-      status: submissions.status,
-      additionalText: submissions.additionalText,
-      createdAt: submissions.createdAt,
-      updatedAt: submissions.updatedAt,
-      reviewedAt: submissions.reviewedAt,
-      reviewedBy: submissions.reviewedBy,
-      reward: submissions.reward,
-      rejectionReason: submissions.rejectionReason,
-      cloudinaryPublicId: submissions.cloudinaryPublicId,
-      cloudinaryUrl: submissions.cloudinaryUrl,
-      username: users.username,
-      displayName: users.displayName,
-      telegramUsername: users.telegramUsername
-    })
-    .from(submissions)
-    .leftJoin(users, sql`${submissions.userId} = ${users.id}::uuid`)
-    .orderBy(desc(submissions.createdAt));
 
-  return rows.map(row => ({
+  async getAllSubmissionsWithUsers(): Promise<Submission[]> {
+    const rows = await db
+      .select({
+        id: submissions.id,
+        userId: submissions.userId,
+        filename: submissions.filename,
+        originalFilename: submissions.originalFilename,
+        fileType: submissions.fileType,
+        fileSize: submissions.fileSize,
+        filePath: submissions.filePath,
+        category: submissions.category,
+        status: submissions.status,
+        additionalText: submissions.additionalText,
+        createdAt: submissions.createdAt,
+        updatedAt: submissions.updatedAt,
+        reviewedAt: submissions.reviewedAt,
+        reviewedBy: submissions.reviewedBy,
+        reward: submissions.reward,
+        rejectionReason: submissions.rejectionReason,
+        cloudinaryPublicId: submissions.cloudinaryPublicId,
+        cloudinaryUrl: submissions.cloudinaryUrl,
+        username: users.username,
+        displayName: users.displayName,
+        telegramUsername: users.telegramUsername
+      })
+      .from(submissions)
+      .leftJoin(users, sql`${submissions.userId} = ${users.id}::uuid`)
+      .orderBy(desc(submissions.createdAt));
+
+    return rows.map(row => ({
       id: row.id,
       userId: row.userId,
       filename: row.filename,
@@ -273,9 +305,7 @@ async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): 
           }
         : undefined
     }));
-
-}
-
+  }
 
   async getAllSubmissions(): Promise<Submission[]> {
     return await db
@@ -307,13 +337,19 @@ async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): 
   }
 
   // Admin operations
-  async createAdminAction(insertAction: InsertAdminAction): Promise<AdminAction> {
-    const [action] = await db
-      .insert(adminActions)
-      .values(insertAction)
-      .returning();
-    return action;
-  }
+  async createAdminAction(insertAction: InsertAdminAction | (Omit<InsertAdminAction, 'adminId'> & { adminId: string | 'system' })): Promise<AdminAction> {
+  // Handle both regular admin actions and system actions
+  const actionData: InsertAdminAction = {
+    ...insertAction,
+    adminId: insertAction.adminId || 'system'
+  };
+
+  const [action] = await db
+    .insert(adminActions)
+    .values(actionData)
+    .returning();
+  return action;
+}
 
   async getAdminActions(): Promise<AdminAction[]> {
     return await db
@@ -323,40 +359,66 @@ async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): 
   }
 
   async getAdminActionsWithUsers(): Promise<AdminAction[]> {
-  const rows = await db
-    .select({
-      id: adminActions.id,
-      adminId: adminActions.adminId,
-      action: adminActions.action,
-      targetType: adminActions.targetType,
-      targetId: adminActions.targetId,
-      details: adminActions.details,
-      createdAt: adminActions.createdAt,
-      username: users.username,
-      displayName: users.displayName,
-      telegramUsername: users.telegramUsername
-    })
-    .from(adminActions)
-    .leftJoin(users, sql`${adminActions.adminId} = ${users.id}::uuid`)
-    .orderBy(desc(adminActions.createdAt));
+    const rows = await db
+      .select({
+        id: adminActions.id,
+        adminId: adminActions.adminId,
+        action: adminActions.action,
+        targetType: adminActions.targetType,
+        targetId: adminActions.targetId,
+        details: adminActions.details,
+        createdAt: adminActions.createdAt,
+        username: users.username,
+        displayName: users.displayName,
+        telegramUsername: users.telegramUsername
+      })
+      .from(adminActions)
+      .leftJoin(users, sql`${adminActions.adminId} = ${users.id}::uuid`)
+      .orderBy(desc(adminActions.createdAt));
 
-  return rows.map(row => ({
-    id: row.id,
-    adminId: row.adminId,
-    action: row.action,
-    targetType: row.targetType,
-    targetId: row.targetId,
-    details: row.details,
-    createdAt: row.createdAt,
-    admin: row.adminId
-      ? {
-          username: row.username ?? "",
-          displayName: row.displayName ?? "",
-          telegramUsername: row.telegramUsername ?? ""
-        }
-      : undefined
-  }));
-}
+    return rows.map(row => ({
+      id: row.id,
+      adminId: row.adminId,
+      action: row.action,
+      targetType: row.targetType,
+      targetId: row.targetId,
+      details: row.details,
+      createdAt: row.createdAt,
+      admin: row.adminId
+        ? {
+            username: row.username ?? "",
+            displayName: row.displayName ?? "",
+            telegramUsername: row.telegramUsername ?? ""
+          }
+        : undefined
+    }));
+  }
+
+  // Subscription screenshot operations
+  async getUsersWithPendingSubscriptionScreenshots(): Promise<User[]> {
+    return await db
+      .select()
+      .from(users)
+      .where(eq(users.subscriptionScreenshotStatus, 'pending'))
+      .orderBy(desc(users.subscriptionScreenshotUploadedAt));
+  }
+
+  async updateUserSubscriptionScreenshot(id: string, updates: {
+    subscriptionScreenshotUrl?: string;
+    subscriptionScreenshotStatus?: string;
+    subscriptionScreenshotUploadedAt?: Date;
+    subscriptionScreenshotReviewedAt?: Date;
+    subscriptionScreenshotReviewedBy?: string;
+    subscriptionScreenshotRejectionReason?: string;
+    subscriptionScreenshotCloudinaryPublicId?: string;
+  }): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
 
   // Statistics
   async getUserStats(userId: string): Promise<{

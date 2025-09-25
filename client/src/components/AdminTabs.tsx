@@ -10,6 +10,7 @@ export function AdminTabs({ activeTab, onTabChange }: AdminTabsProps) {
   const tabs = [
     { id: 'submissions' as const, label: 'Заявки', testId: 'tab-submissions' },
     { id: 'users' as const, label: 'Пользователи', testId: 'tab-users' },
+    { id: 'subscriptions' as const, label: 'Скриншоты', testId: 'tab-subscriptions' },
     { id: 'withdrawals' as const, label: 'Выводы', testId: 'tab-withdrawals' },
     { id: 'logs' as const, label: 'Логи', testId: 'tab-logs' },
   ];

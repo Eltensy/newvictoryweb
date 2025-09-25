@@ -4,13 +4,14 @@ import { AlertCircle } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { AdminApiService } from "../services/adminApiService";
-import { AdminDashboardState, TabType, Submission, User, WithdrawalRequest } from "../types/admin";
+import { AdminDashboardState, TabType, Submission, User, WithdrawalRequest, SubscriptionScreenshot } from "../types/admin";
 import { AdminHeader } from "./AdminHeader";
 import { AdminTabs } from "./AdminTabs";
 import { AdminFilters } from "./AdminFilters";
 import { SubmissionsTable } from "./SubmissionsTable";
 import { UsersTable } from "./UsersTable";
 import { WithdrawalsTable } from "./WithdrawalsTable";
+import { SubscriptionScreenshotsTable } from "./SubscriptionScreenshotsTable";
 import { AdminLogsTable } from "./AdminLogsTable";
 
 export default function AdminDashboard() {
@@ -32,10 +33,12 @@ export default function AdminDashboard() {
     selectedUser: null,
     adminActions: [],
     withdrawalRequests: [],
+    subscriptionScreenshots: [], // NEW
     logsLoading: false,
     submissionsLoading: false,
     usersLoading: false,
     withdrawalsLoading: false,
+    subscriptionsLoading: false, // NEW
     actionLoading: false,
     submissions: [],
     users: [],
@@ -99,6 +102,23 @@ export default function AdminDashboard() {
       showError(error, 'Failed to fetch withdrawals');
     } finally {
       setState(prev => ({ ...prev, withdrawalsLoading: false }));
+    }
+  };
+
+  // NEW: Fetch subscription screenshots
+  const fetchSubscriptionScreenshots = async () => {
+    setState(prev => ({ ...prev, subscriptionsLoading: true, error: null }));
+    try {
+      const token = getAuthToken();
+      if (!token) throw new Error('No authentication token');
+      
+      const data = await apiService.fetchSubscriptionScreenshots(token);
+      setState(prev => ({ ...prev, subscriptionScreenshots: data }));
+    } catch (error) {
+      console.error('Failed to fetch subscription screenshots:', error);
+      showError(error, 'Failed to fetch subscription screenshots');
+    } finally {
+      setState(prev => ({ ...prev, subscriptionsLoading: false }));
     }
   };
 
@@ -187,6 +207,24 @@ export default function AdminDashboard() {
     }
   };
 
+  // NEW: Handle subscription screenshot review
+  const handleReviewSubscriptionScreenshot = async (userId: string, status: 'approved' | 'rejected', rejectionReason?: string) => {
+    setState(prev => ({ ...prev, actionLoading: true }));
+    try {
+      const token = getAuthToken();
+      if (!token) throw new Error('No authentication token');
+
+      await apiService.reviewSubscriptionScreenshot(token, userId, status, rejectionReason);
+      showToast("Успешно", status === 'approved' ? "Подписка одобрена" : "Подписка отклонена");
+      await fetchSubscriptionScreenshots();
+    } catch (error) {
+      console.error('Failed to review subscription screenshot:', error);
+      showError(error, "Не удалось рассмотреть подписку");
+    } finally {
+      setState(prev => ({ ...prev, actionLoading: false }));
+    }
+  };
+
   // Handlers
   const handleTabChange = (tab: TabType) => {
     setState(prev => ({ ...prev, activeTab: tab, searchTerm: "", statusFilter: "all" }));
@@ -202,6 +240,9 @@ export default function AdminDashboard() {
         break;
       case 'withdrawals':
         fetchWithdrawals();
+        break;
+      case 'subscriptions':
+        fetchSubscriptionScreenshots();
         break;
       case 'logs':
         fetchAdminActions();
@@ -231,6 +272,14 @@ export default function AdminDashboard() {
     return matchesSearch && matchesStatus;
   });
 
+  // NEW: Filter subscription screenshots
+  const filteredSubscriptions = state.subscriptionScreenshots.filter(subscription => {
+    const matchesSearch = subscription.username.toLowerCase().includes(state.searchTerm.toLowerCase()) ||
+                         subscription.displayName.toLowerCase().includes(state.searchTerm.toLowerCase());
+    const matchesStatus = state.statusFilter === 'all' || subscription.subscriptionScreenshotStatus === state.statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
   // Effects
   useEffect(() => {
     switch (state.activeTab) {
@@ -243,13 +292,16 @@ export default function AdminDashboard() {
       case 'withdrawals':
         fetchWithdrawals();
         break;
+      case 'subscriptions':
+        fetchSubscriptionScreenshots();
+        break;
       case 'logs':
         fetchAdminActions();
         break;
     }
   }, [state.activeTab]);
 
-  const isLoading = state.submissionsLoading || state.usersLoading || state.withdrawalsLoading || state.logsLoading;
+  const isLoading = state.submissionsLoading || state.usersLoading || state.withdrawalsLoading || state.subscriptionsLoading || state.logsLoading;
 
   return (
     <div className="min-h-screen bg-background">
@@ -308,6 +360,16 @@ export default function AdminDashboard() {
             withdrawals={filteredWithdrawals}
             loading={state.withdrawalsLoading}
             onProcess={handleProcessWithdrawal}
+            actionLoading={state.actionLoading}
+          />
+        )}
+
+        {/* NEW: Subscription Screenshots Tab */}
+        {state.activeTab === 'subscriptions' && (
+          <SubscriptionScreenshotsTable
+            screenshots={filteredSubscriptions}
+            loading={state.subscriptionsLoading}
+            onReview={handleReviewSubscriptionScreenshot}
             actionLoading={state.actionLoading}
           />
         )}
