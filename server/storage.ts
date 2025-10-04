@@ -1,3 +1,4 @@
+// server/storage.ts - Complete storage implementation with Telegram verification
 import { 
   users, 
   submissions, 
@@ -7,6 +8,7 @@ import {
   tournaments,
   tournamentRegistrations,
   premiumHistory,
+  telegramVerifications,
   type User, 
   type InsertUser, 
   type Submission, 
@@ -23,12 +25,13 @@ import {
   type InsertTournamentRegistration,
   type TournamentWithDetails,
   type PremiumHistory,
-  type InsertPremiumHistory
+  type InsertPremiumHistory,
+  type TelegramVerification,
+  type InsertTelegramVerification
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, sql, and } from "drizzle-orm";
+import { eq, desc, sql, and, lt } from "drizzle-orm";
 
-// Storage interface with OAuth methods
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
@@ -58,6 +61,16 @@ export interface IStorage {
     telegramPhotoUrl?: string;
   }): Promise<User>;
   unlinkTelegramAccount(userId: string): Promise<User>;
+  
+  // Telegram verification operations
+  createTelegramVerification(data: { 
+    userId: string; 
+    code: string; 
+    expiresAt: Date 
+  }): Promise<TelegramVerification>;
+  getTelegramVerification(code: string): Promise<TelegramVerification | undefined>;
+  deleteTelegramVerification(code: string): Promise<void>;
+  cleanupExpiredTelegramVerifications(): Promise<number>;
   
   // Balance operations
   updateUserBalance(
@@ -280,6 +293,70 @@ export class DatabaseStorage implements IStorage {
     
     console.log(`Telegram unlinked for user ${userId}`);
     return user;
+  }
+
+  // ===== TELEGRAM VERIFICATION OPERATIONS =====
+  
+  async createTelegramVerification(data: {
+    userId: string;
+    code: string;
+    expiresAt: Date;
+  }): Promise<TelegramVerification> {
+    // Delete any existing verifications for this user
+    await db
+      .delete(telegramVerifications)
+      .where(eq(telegramVerifications.userId, data.userId));
+
+    const [verification] = await db
+      .insert(telegramVerifications)
+      .values(data)
+      .returning();
+    
+    console.log(`Created Telegram verification code ${data.code} for user ${data.userId} (expires: ${data.expiresAt.toISOString()})`);
+    return verification;
+  }
+
+  async getTelegramVerification(code: string): Promise<TelegramVerification | undefined> {
+    const [verification] = await db
+      .select()
+      .from(telegramVerifications)
+      .where(
+        and(
+          eq(telegramVerifications.code, code.toUpperCase()),
+          sql`${telegramVerifications.expiresAt} > NOW()`
+        )
+      );
+    
+    if (verification) {
+      console.log(`Found valid verification code ${code} for user ${verification.userId}`);
+    } else {
+      console.log(`Verification code ${code} not found or expired`);
+    }
+    
+    return verification || undefined;
+  }
+
+  async deleteTelegramVerification(code: string): Promise<void> {
+    const result = await db
+      .delete(telegramVerifications)
+      .where(eq(telegramVerifications.code, code.toUpperCase()))
+      .returning();
+    
+    if (result.length > 0) {
+      console.log(`Deleted Telegram verification code ${code}`);
+    }
+  }
+
+  async cleanupExpiredTelegramVerifications(): Promise<number> {
+    const result = await db
+      .delete(telegramVerifications)
+      .where(lt(telegramVerifications.expiresAt, new Date()));
+    
+    const count = result.rowCount || 0;
+    if (count > 0) {
+      console.log(`Cleaned up ${count} expired Telegram verification codes`);
+    }
+    return count;
   }
 
   // ===== BALANCE OPERATIONS =====

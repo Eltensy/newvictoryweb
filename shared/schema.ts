@@ -112,6 +112,24 @@ export const premiumHistory = pgTable("premium_history", {
   autoRenewed: boolean("auto_renewed").default(false).notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+
+export const telegramVerifications = pgTable("telegram_verifications", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  code: varchar("code", { length: 10 }).notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Добавить в секцию RELATIONS
+export const telegramVerificationsRelations = relations(telegramVerifications, ({ one }) => ({
+  user: one(users, {
+    fields: [telegramVerifications.userId],
+    references: [users.id],
+  }),
+}));
+
 // Tournaments table (после users)
 export const tournaments = pgTable("tournaments", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -767,6 +785,9 @@ export const reviewTerritoryQueueSchema = z.object({
 });
 
 // ===== TYPES =====
+export type TelegramVerification = typeof telegramVerifications.$inferSelect;
+export type InsertTelegramVerification = typeof telegramVerifications.$inferInsert;
+
 export type TerritoryShape = typeof territoryShapes.$inferSelect;
 export type InsertTerritoryShape = typeof territoryShapes.$inferInsert;
 

@@ -74,7 +74,14 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '3000', 10);
-  server.listen(port, () => {
+  server.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);
+  
+  // Запуск бота если есть токен
+  if (process.env.TELEGRAM_BOT_TOKEN) {
+    import('../server/telegram-bot.js').catch(err => {
+      console.error('Failed to start Telegram bot:', err);
+    });
+  }
 });
 })();
