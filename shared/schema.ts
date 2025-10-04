@@ -578,7 +578,7 @@ export const insertUserSchema = createInsertSchema(users).omit({
 export const insertSubmissionSchema = createInsertSchema(submissions, {
   fileSize: z.number().min(1).max(50 * 1024 * 1024),
   category: z.enum(["gold-kill", "silver-kill", "bronze-kill", "victory", "funny"]),
-  additionalText: z.string().max(500).optional(),
+  additionalText: z.string(),
 }).omit({
   id: true,
   createdAt: true,

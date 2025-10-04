@@ -623,79 +623,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ===== FILE UPLOAD =====
   
   app.post("/api/upload", upload.single('file'), async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-      
-      const { userId } = authResult;
-
-      const fileType = await fileTypeFromBuffer(req.file.buffer);
-      if (!fileType) {
-        return res.status(400).json({ error: "Unable to determine file type" });
-      }
-
-      const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-      const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
-      const allAllowedTypes = [...allowedImageTypes, ...allowedVideoTypes];
-
-      if (!allAllowedTypes.includes(fileType.mime)) {
-        return res.status(400).json({ error: "Invalid file type detected. Only images and videos are allowed." });
-      }
-
-      const detectedFileType = allowedImageTypes.includes(fileType.mime) ? 'image' : 'video';
-      
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
-      const filename = `${userId}-${uniqueSuffix}${ext}`;
-      
-      const cloudinaryResult = await cloudStorage.uploadFile(
-        req.file.buffer,
-        filename,
-        detectedFileType
-      );
-      
-      const submissionData = {
-        userId: userId,
-        filename: cloudinaryResult.public_id,
-        originalFilename: req.file.originalname,
-        fileType: detectedFileType,
-        fileSize: req.file.size,
-        filePath: cloudinaryResult.secure_url,
-        category: req.body.category,
-        additionalText: req.body.additionalText || null,
-        cloudinaryPublicId: cloudinaryResult.public_id,
-        cloudinaryUrl: cloudinaryResult.secure_url
-      };
-
-      const validation = insertSubmissionSchema.safeParse(submissionData);
-      if (!validation.success) {
-        await cloudStorage.deleteFile(cloudinaryResult.public_id);
-        throw new Error(`Invalid submission data: ${validation.error.errors.map(e => e.message).join(', ')}`);
-      }
-
-      const submission = await storage.createSubmission(validation.data);
-      
-      const thumbnailUrl = cloudStorage.generateThumbnail(cloudinaryResult.public_id);
-      
-      res.json({
-        ...submission,
-        thumbnailUrl,
-        fileUrl: cloudinaryResult.secure_url
-      });
-      
-    } catch (error) {
-      console.error('Upload error:', error);
-      
-      const errorMessage = error instanceof Error ? error.message : "Failed to process upload";
-      res.status(500).json({ error: errorMessage });
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
     }
-  });
+
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+    
+    const { userId } = authResult;
+
+    const fileType = await fileTypeFromBuffer(req.file.buffer);
+    if (!fileType) {
+      return res.status(400).json({ error: "Unable to determine file type" });
+    }
+
+    const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
+    const allAllowedTypes = [...allowedImageTypes, ...allowedVideoTypes];
+
+    if (!allAllowedTypes.includes(fileType.mime)) {
+      return res.status(400).json({ error: "Invalid file type detected. Only images and videos are allowed." });
+    }
+
+    const detectedFileType = allowedImageTypes.includes(fileType.mime) ? 'image' : 'video';
+    
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
+    const filename = `${userId}-${uniqueSuffix}${ext}`;
+    
+    const cloudinaryResult = await cloudStorage.uploadFile(
+      req.file.buffer,
+      filename,
+      detectedFileType
+    );
+    
+    // ИСПРАВЛЕНИЕ: обрабатываем additionalText правильно
+    const additionalText = req.body.additionalText;
+    const processedAdditionalText = (!additionalText || additionalText === '-') 
+      ? null 
+      : additionalText.trim();
+    
+    const submissionData = {
+      userId: userId,
+      filename: cloudinaryResult.public_id,
+      originalFilename: req.file.originalname,
+      fileType: detectedFileType,
+      fileSize: req.file.size,
+      filePath: cloudinaryResult.secure_url,
+      category: req.body.category,
+      additionalText: processedAdditionalText || "-",
+      cloudinaryPublicId: cloudinaryResult.public_id,
+      cloudinaryUrl: cloudinaryResult.secure_url
+    };
+
+    const validation = insertSubmissionSchema.safeParse(submissionData);
+    if (!validation.success) {
+      await cloudStorage.deleteFile(cloudinaryResult.public_id);
+
+      throw new Error(`Invalid submission data: ${validation.error.errors.map(e => e.message).join(', ')}`);
+    }
+
+    const submission = await storage.createSubmission(validation.data);
+    
+    const thumbnailUrl = cloudStorage.generateThumbnail(cloudinaryResult.public_id);
+    
+    res.json({
+      ...submission,
+      thumbnailUrl,
+      fileUrl: cloudinaryResult.secure_url
+    });
+    
+  } catch (error) {
+    console.error('Upload error:', error);
+    
+    const errorMessage = error instanceof Error ? error.message : "Failed to process upload";
+    res.status(500).json({ error: errorMessage });
+  }
+});
 
   // ===== SUBMISSION ROUTES =====
   
