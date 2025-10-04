@@ -222,58 +222,58 @@ export default function LandingPage() {
 
   // Теперь все проверки статуса происходят только после полной инициализации
   if (isLoggedIn && currentUser) {
-    const subscriptionStatus = currentUser.subscriptionScreenshotStatus || 'none';
+    // const subscriptionStatus = currentUser.subscriptionScreenshotStatus || 'none';
     
-    console.log('Current user data:', {
-      id: currentUser.id,
-      username: currentUser.username,
-      subscriptionScreenshotStatus: currentUser.subscriptionScreenshotStatus,
-      subscriptionScreenshotUrl: currentUser.subscriptionScreenshotUrl
-    });
+    // console.log('Current user data:', {
+    //   id: currentUser.id,
+    //   username: currentUser.username,
+    //   subscriptionScreenshotStatus: currentUser.subscriptionScreenshotStatus,
+    //   subscriptionScreenshotUrl: currentUser.subscriptionScreenshotUrl
+    // });
     
-    // Show subscription screenshot modal if not approved
-    if (subscriptionStatus === 'none' || subscriptionStatus === 'rejected') {
-      return (
-        <SubscriptionScreenshotModal
-          onUpload={handleUploadSubscriptionScreenshot}
-          isUploading={isUploadingScreenshot}
-          user={currentUser}
-        />
-      );
-    }
+    // // Show subscription screenshot modal if not approved
+    // if (subscriptionStatus === 'none' || subscriptionStatus === 'rejected') {
+    //   return (
+    //     <SubscriptionScreenshotModal
+    //       onUpload={handleUploadSubscriptionScreenshot}
+    //       isUploading={isUploadingScreenshot}
+    //       user={currentUser}
+    //     />
+    //   );
+    // }
     
-    // Show pending status if screenshot is under review
-    if (subscriptionStatus === 'pending') {
-      console.log('Showing pending status');
-      return (
-        <div className="fixed inset-0 bg-background z-50 flex items-center justify-center p-4">
-          {/* Background Pattern */}
-          <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
+    // // Show pending status if screenshot is under review
+    // if (subscriptionStatus === 'pending') {
+    //   console.log('Showing pending status');
+    //   return (
+    //     <div className="fixed inset-0 bg-background z-50 flex items-center justify-center p-4">
+    //       {/* Background Pattern */}
+    //       <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-accent/5"></div>
+    //       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(120,119,198,0.1),transparent)]"></div>
           
-          <div className="relative max-w-md mx-auto text-center p-8 bg-card/50 backdrop-blur-sm rounded-lg border border-border">
-            <div className="w-16 h-16 rounded-full bg-gaming-warning/20 flex items-center justify-center mx-auto mb-6">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gaming-warning"></div>
-            </div>
-            <h1 className="text-2xl font-bold font-gaming mb-4">Проверяем подписку</h1>
-            <p className="text-muted-foreground mb-6">
-              Мы рассматриваем твой скриншот подписки. Это займет несколько минут.
-            </p>
-            <button
-              onClick={handleRefreshUser}
-              disabled={isRefreshing}
-              className="text-primary hover:text-primary/80 font-gaming text-sm transition-colors disabled:opacity-50"
-            >
-              {isRefreshing ? 'Обновление...' : 'Обновить статус'}
-            </button>
-          </div>
-        </div>
-      );
-    }
+    //       <div className="relative max-w-md mx-auto text-center p-8 bg-card/50 backdrop-blur-sm rounded-lg border border-border">
+    //         <div className="w-16 h-16 rounded-full bg-gaming-warning/20 flex items-center justify-center mx-auto mb-6">
+    //           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gaming-warning"></div>
+    //         </div>
+    //         <h1 className="text-2xl font-bold font-gaming mb-4">Проверяем подписку</h1>
+    //         <p className="text-muted-foreground mb-6">
+    //           Мы рассматриваем твой скриншот подписки. Это займет несколько минут.
+    //         </p>
+    //         <button
+    //           onClick={handleRefreshUser}
+    //           disabled={isRefreshing}
+    //           className="text-primary hover:text-primary/80 font-gaming text-sm transition-colors disabled:opacity-50"
+    //         >
+    //           {isRefreshing ? 'Обновление...' : 'Обновить статус'}
+    //         </button>
+    //       </div>
+    //     </div>
+    //   );
+    // }
     
-    // Show submission page if subscription is approved
-    if (subscriptionStatus === 'approved') {
-      console.log('Showing main platform - subscription approved');
+    // Show submission page (subscription check temporarily disabled)
+    // if (subscriptionStatus === 'approved') {
+      console.log('Showing main platform - subscription check disabled');
       return (
         <SubmissionPage 
           user={currentUser} 
@@ -290,7 +290,7 @@ export default function LandingPage() {
           isRefreshing={isRefreshing}
         />
       );
-    }
+    // }
   }
 
   // Show hero section for unauthenticated users

@@ -24,7 +24,8 @@ import {
   Wallet,
   MessageSquare,
   AlertTriangle,
-  Info
+  Info,
+  Zap
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +57,7 @@ interface User {
   balance: number;
   isAdmin: boolean;
   telegramUsername?: string;
+  discordUsername?: string;
 }
 
 interface BalanceModalProps {
@@ -159,7 +161,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
   // Withdrawal form state
   const [withdrawalForm, setWithdrawalForm] = useState({
     amount: '',
-    method: '' as 'card' | 'crypto' | 'paypal' | '',
+    method: 'crypto' as 'card' | 'crypto' | 'paypal' | '',
     telegramUsername: '',
     cardNumber: '',
     cardHolder: '',
@@ -169,6 +171,9 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
     email: ''
   });
   const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
+
+  // Проверка привязки Telegram или Discord
+  const hasContactMethod = user.telegramUsername || user.discordUsername;
 
   // Функция для форматирования номера карты
   const formatCardNumber = (value: string) => {
@@ -247,6 +252,16 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
   };
 
   const handleWithdrawalSubmit = async () => {
+    // Проверка привязки Telegram или Discord
+    if (!hasContactMethod) {
+      showNotification(
+        'warning', 
+        'Требуется привязка контакта', 
+        'Для вывода средств необходимо привязать Telegram или Discord аккаунт в настройках профиля'
+      );
+      return;
+    }
+
     if (!withdrawalForm.amount || !withdrawalForm.method) return;
 
     const amount = parseInt(withdrawalForm.amount);
@@ -281,7 +296,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
             return;
           }
           methodData = {
-            cardNumber: withdrawalForm.cardNumber.replace(/\s/g, ''), // Сохраняем без пробелов
+            cardNumber: withdrawalForm.cardNumber.replace(/\s/g, ''),
             cardHolder: withdrawalForm.cardHolder,
             cardCountry: withdrawalForm.cardCountry
           };
@@ -602,7 +617,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
       {/* Withdrawal Modal */}
       {isWithdrawalModalOpen && (
         <div className="fixed bg-black/90 backdrop-blur-sm z-[110] flex items-center justify-center p-4" style={{ top: 0, left: 0, right: 0, bottom: 0, position: 'fixed' }}>
-          <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-border">
               <h3 className="text-xl font-bold font-gaming">Вывод средств</h3>
@@ -617,6 +632,21 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
             </div>
 
             <div className="p-6 space-y-6">
+              {/* Contact Warning */}
+              {!hasContactMethod && (
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm">
+                      <p className="font-medium text-yellow-600 mb-1">Требуется привязка контакта</p>
+                      <p className="text-yellow-600/80">
+                        Для вывода средств необходимо привязать Telegram или Discord в настройках профиля
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Balance Info */}
               <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
                 <div className="text-center">
@@ -653,25 +683,44 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                   onValueChange={(value) => setWithdrawalForm(prev => ({ ...prev, method: value as any }))}
                   className="space-y-3"
                 >
+                  <div className="flex items-center space-x-3 p-3 border-2 border-green-500/30 rounded-lg hover:bg-green-500/5 bg-green-500/5">
+                    <RadioGroupItem value="crypto" id="crypto" />
+                    <label htmlFor="crypto" className="flex items-center gap-2 cursor-pointer flex-1">
+                      <Bitcoin className="h-5 w-5 text-green-500" />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">Криптовалюта (USDT)</span>
+                          <Badge variant="default" className="bg-green-500 hover:bg-green-600 text-white text-xs">
+                            <Zap className="h-3 w-3 mr-1" />
+                            Быстро
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-green-600 font-medium mt-0.5">
+                          💰 Без комиссии
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                  
                   <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/30">
                     <RadioGroupItem value="card" id="card" />
                     <label htmlFor="card" className="flex items-center gap-2 cursor-pointer flex-1">
                       <CreditCard className="h-4 w-4" />
-                      Банковская карта
+                      <div>
+                        <div>Банковская карта</div>
+                        <div className="text-xs text-muted-foreground">Возможны задержки</div>
+                      </div>
                     </label>
                   </div>
-                  <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/30">
-                    <RadioGroupItem value="crypto" id="crypto" />
-                    <label htmlFor="crypto" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <Bitcoin className="h-4 w-4" />
-                      Криптовалюта
-                    </label>
-                  </div>
+                  
                   <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/30">
                     <RadioGroupItem value="paypal" id="paypal" />
                     <label htmlFor="paypal" className="flex items-center gap-2 cursor-pointer flex-1">
                       <Mail className="h-4 w-4" />
-                      PayPal
+                      <div>
+                        <div>PayPal</div>
+                        <div className="text-xs text-muted-foreground">Возможны задержки</div>
+                      </div>
                     </label>
                   </div>
                 </RadioGroup>
@@ -727,14 +776,16 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
 
               {withdrawalForm.method === 'crypto' && (
                 <div className="space-y-4">
-                  <div className="p-3 bg-muted/30 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <Bitcoin className="h-4 w-4 text-orange-500" />
-                      <span className="font-medium">Tether USD (USDT TRC20)</span>
+                  <div className="p-3 bg-green-500/10 rounded-lg border border-green-500/20">
+                    <div className="flex items-start gap-3">
+                      <Bitcoin className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                      <div className="text-sm">
+                        <p className="font-medium text-green-600 mb-1">Tether USD (USDT TRC20)</p>
+                        <p className="text-green-600/80">
+                          Вывод осуществляется только в USDT через сеть TRC20. Обработка занимает от 5 до 30 минут.
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Вывод осуществляется только в USDT через сеть TRC20
-                    </p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium mb-2 block">USDT TRC20 адрес кошелька</Label>
@@ -766,6 +817,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
               <Button
                 onClick={handleWithdrawalSubmit}
                 disabled={
+                  !hasContactMethod ||
                   !withdrawalForm.amount || 
                   !withdrawalForm.method || 
                   isSubmittingWithdrawal ||
