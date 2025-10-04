@@ -1,4 +1,3 @@
-// server/routes.ts - Complete fixed version with OAuth integration
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
@@ -8,8 +7,6 @@ import { fileTypeFromBuffer } from "file-type";
 import { storage } from "./storage";
 import { promises as fs } from 'fs';
 import { cloudStorage } from './fileStorage.js';
-import { db } from "./db";
-import { users } from "@shared/schema";
 import dotenv from "dotenv";
 dotenv.config();
 import { 
@@ -22,20 +19,15 @@ import {
   updateTournamentSchema,
   registerForTournamentSchema,
   grantPremiumSchema,
-  updatePremiumSchema,
-  type InsertUser,
-  type InsertPremiumHistory
+  type InsertUser
 } from "@shared/schema";
 
 // File upload configuration
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
-  },
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime'];
-    
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
@@ -48,13 +40,11 @@ const upload = multer({
 const authenticateUser = async (req: any): Promise<{ userId: string, user: any } | { error: string, status: number }> => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return { error: "Authentication required. Please provide Bearer token.", status: 401 };
+    return { error: "Authentication required", status: 401 };
   }
   
   const token = authHeader.substring(7);
-  if (!token) {
-    return { error: "Invalid authentication token", status: 401 };
-  }
+  if (!token) return { error: "Invalid token", status: 401 };
 
   try {
     const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
@@ -64,9 +54,7 @@ const authenticateUser = async (req: any): Promise<{ userId: string, user: any }
     }
 
     const user = await storage.getUser(decoded.userId);
-    if (!user) {
-      return { error: "User not found", status: 404 };
-    }
+    if (!user) return { error: "User not found", status: 404 };
     
     return { userId: decoded.userId, user };
   } catch (error) {
@@ -77,16 +65,24 @@ const authenticateUser = async (req: any): Promise<{ userId: string, user: any }
 // Admin authentication middleware
 const authenticateAdmin = async (req: any): Promise<{ adminId: string, admin: any } | { error: string, status: number }> => {
   const authResult = await authenticateUser(req);
-  if ('error' in authResult) {
-    return authResult;
-  }
+  if ('error' in authResult) return authResult;
 
-  const { user } = authResult;
-  if (!user.isAdmin) {
+  if (!authResult.user.isAdmin) {
     return { error: "Admin access required", status: 403 };
   }
 
-  return { adminId: user.id, admin: user };
+  return { adminId: authResult.user.id, admin: authResult.user };
+};
+
+// Helper function to generate session token
+const generateSessionToken = (user: any) => {
+  const tokenPayload = {
+    userId: user.id,
+    epicGamesId: user.epicGamesId,
+    sessionToken: crypto.randomBytes(32).toString('hex'),
+    exp: Date.now() + (7 * 24 * 60 * 60 * 1000)
+  };
+  return Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -96,25 +92,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/epic/login", async (req, res) => {
     try {
       if (!process.env.EPIC_CLIENT_ID || !process.env.EPIC_REDIRECT_URI) {
-        return res.status(500).json({ 
-          error: "Epic Games authentication is not configured. Please contact support." 
-        });
+        return res.status(500).json({ error: "Epic Games authentication not configured" });
       }
 
       const state = crypto.randomBytes(32).toString('hex');
-      const nonce = crypto.randomBytes(32).toString('hex');
-      
       const params = new URLSearchParams({
         client_id: process.env.EPIC_CLIENT_ID,
         redirect_uri: process.env.EPIC_REDIRECT_URI,
         response_type: 'code',
         scope: 'basic_profile',
         state: state,
-        nonce: nonce
+        nonce: crypto.randomBytes(32).toString('hex')
       });
       
-      const authUrl = `https://www.epicgames.com/id/authorize?${params}`;
-      res.json({ authUrl, state });
+      res.json({ 
+        authUrl: `https://www.epicgames.com/id/authorize?${params}`, 
+        state 
+      });
     } catch (error) {
       console.error('Epic login error:', error);
       res.status(500).json({ error: "Failed to initialize Epic Games login" });
@@ -123,10 +117,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   app.get("/api/auth/epic/callback", async (req, res) => {
     try {
-      const { code, state, error } = req.query;
+      const { code, error } = req.query;
       
       if (error) {
-        console.error('Epic OAuth error:', error);
         return res.redirect(`/?error=epic_oauth_error&message=${encodeURIComponent(error as string)}`);
       }
       
@@ -134,6 +127,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.redirect('/?error=missing_authorization_code');
       }
       
+      // Exchange code for token
       const tokenParams = new URLSearchParams({
         grant_type: 'authorization_code',
         code: code as string,
@@ -154,27 +148,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       if (!tokenResponse.ok) {
-        const errorText = await tokenResponse.text();
-        console.error('Token exchange failed:', errorText);
+        console.error('Token exchange failed:', await tokenResponse.text());
         return res.redirect('/?error=token_exchange_failed');
       }
       
       const tokenData = await tokenResponse.json();
       
+      // Get user profile
       const profileResponse = await fetch('https://api.epicgames.dev/epic/oauth/v2/userInfo', {
-        headers: {
-          'Authorization': `Bearer ${tokenData.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
       });
       
       if (!profileResponse.ok) {
-        const errorText = await profileResponse.text();
-        console.error('Profile fetch failed:', errorText);
+        console.error('Profile fetch failed:', await profileResponse.text());
         return res.redirect('/?error=profile_fetch_failed');
       }
       
       const profile = await profileResponse.json();
       
+      // Find or create user
       let user = await storage.getUserByEpicGamesId(profile.sub);
       
       if (!user) {
@@ -186,19 +178,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           balance: 0,
           isAdmin: false
         };
-        
         user = await storage.createUser(newUser);
       }
       
-      const sessionToken = crypto.randomBytes(32).toString('hex');
-      const tokenPayload = {
-        userId: user.id,
-        epicGamesId: user.epicGamesId,
-        sessionToken,
-        exp: Date.now() + (7 * 24 * 60 * 60 * 1000)
-      };
-      
-      const userToken = Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
+      const userToken = generateSessionToken(user);
       
       const redirectUrl = new URL('/', `${req.protocol}://${req.get('host')}`);
       redirectUrl.searchParams.set('auth', 'success');
@@ -224,9 +207,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/discord/login", async (req, res) => {
     try {
       if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_REDIRECT_URI) {
-        return res.status(500).json({ 
-          error: "Discord authentication is not configured" 
-        });
+        return res.status(500).json({ error: "Discord authentication not configured" });
       }
 
       const authResult = await authenticateUser(req);
@@ -234,23 +215,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      const state = crypto.randomBytes(32).toString('hex');
-      const stateData = JSON.stringify({
-        state,
+      const state = Buffer.from(JSON.stringify({
+        state: crypto.randomBytes(32).toString('hex'),
         userId: authResult.userId,
         timestamp: Date.now()
-      });
+      })).toString('base64');
       
       const params = new URLSearchParams({
         client_id: process.env.DISCORD_CLIENT_ID,
         redirect_uri: process.env.DISCORD_REDIRECT_URI,
         response_type: 'code',
         scope: 'identify email',
-        state: Buffer.from(stateData).toString('base64')
+        state
       });
       
-      const authUrl = `https://discord.com/api/oauth2/authorize?${params}`;
-      res.json({ authUrl, state });
+      res.json({ 
+        authUrl: `https://discord.com/api/oauth2/authorize?${params}`, 
+        state 
+      });
     } catch (error) {
       console.error('Discord OAuth init error:', error);
       res.status(500).json({ error: "Failed to initialize Discord OAuth" });
@@ -262,7 +244,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { code, state, error } = req.query;
       
       if (error) {
-        console.error('Discord OAuth error:', error);
         return res.redirect(`/?error=discord_oauth_error&message=${encodeURIComponent(error as string)}`);
       }
       
@@ -270,6 +251,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.redirect('/?error=missing_oauth_data');
       }
 
+      // Decode and validate state
       let stateData;
       try {
         stateData = JSON.parse(Buffer.from(state as string, 'base64').toString());
@@ -281,6 +263,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.redirect('/?error=state_expired');
       }
       
+      // Exchange code for token
       const tokenParams = new URLSearchParams({
         client_id: process.env.DISCORD_CLIENT_ID!,
         client_secret: process.env.DISCORD_CLIENT_SECRET!,
@@ -291,40 +274,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: tokenParams
       });
       
       if (!tokenResponse.ok) {
-        const errorText = await tokenResponse.text();
-        console.error('Discord token exchange failed:', errorText);
+        console.error('Discord token exchange failed:', await tokenResponse.text());
         return res.redirect('/?error=token_exchange_failed');
       }
       
       const tokenData = await tokenResponse.json();
       
+      // Get Discord user
       const userResponse = await fetch('https://discord.com/api/users/@me', {
-        headers: {
-          'Authorization': `Bearer ${tokenData.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
       });
       
       if (!userResponse.ok) {
-        const errorText = await userResponse.text();
-        console.error('Discord user fetch failed:', errorText);
+        console.error('Discord user fetch failed:', await userResponse.text());
         return res.redirect('/?error=user_fetch_failed');
       }
       
       const discordUser = await userResponse.json();
       
+      // Check if Discord account already linked to different user
       const existingUser = await storage.getUserByDiscordId(discordUser.id);
-      
       if (existingUser && existingUser.id !== stateData.userId) {
         return res.redirect('/?error=discord_already_linked');
       }
       
+      // Link Discord account
       await storage.linkDiscordAccount(stateData.userId, {
         discordId: discordUser.id,
         discordUsername: discordUser.username,
@@ -334,8 +313,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : undefined
       });
       
-      console.log(`Discord linked for user ${stateData.userId}: ${discordUser.username}`);
-      
+      console.log(`✅ Discord linked for user ${stateData.userId}: ${discordUser.username}`);
       res.redirect('/?success=discord_linked');
       
     } catch (error) {
@@ -344,129 +322,165 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ===== TELEGRAM OAUTH =====
+  // ===== TELEGRAM BOT INTEGRATION =====
   
-  app.get("/api/auth/telegram/login", async (req, res) => {
+  /**
+   * Generate Telegram login link for user
+   * User clicks this link, opens Telegram bot, bot sends verification code
+   */
+  app.get("/api/auth/telegram/init", async (req, res) => {
     try {
-      if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_BOT_USERNAME) {
-        return res.status(500).json({ 
-          error: "Telegram authentication is not configured" 
-        });
-      }
-
       const authResult = await authenticateUser(req);
       if ('error' in authResult) {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
       const botUsername = process.env.TELEGRAM_BOT_USERNAME;
-      const redirectUrl = `${req.protocol}://${req.get('host')}/api/auth/telegram/callback`;
-      
+      if (!botUsername) {
+        return res.status(500).json({ error: "Telegram bot not configured" });
+      }
+
+      // Generate verification code
+      const verificationCode = crypto.randomBytes(3).toString('hex').toUpperCase(); // 6 chars
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+      // Store verification code temporarily (you'll need to add this to storage)
+      await storage.createTelegramVerification({
+        userId: authResult.userId,
+        code: verificationCode,
+        expiresAt
+      });
+
+      // Return bot link with start parameter
+      const botLink = `https://t.me/${botUsername}?start=${verificationCode}`;
+
       res.json({ 
+        botLink,
         botUsername,
-        redirectUrl,
-        userId: authResult.userId
+        verificationCode,
+        expiresAt,
+        instructions: "Click the link to open Telegram bot and send the verification code"
       });
     } catch (error) {
-      console.error('Telegram OAuth init error:', error);
-      res.status(500).json({ error: "Failed to initialize Telegram OAuth" });
+      console.error('Telegram init error:', error);
+      res.status(500).json({ error: "Failed to initialize Telegram linking" });
     }
   });
 
-  app.post("/api/auth/telegram/callback", async (req, res) => {
+  /**
+   * Webhook endpoint for Telegram bot to send user data after verification
+   * This should be called by your Telegram bot when user sends verification code
+   */
+  app.post("/api/auth/telegram/webhook", async (req, res) => {
     try {
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
+      // Verify webhook secret to ensure it's from your bot
+      const webhookSecret = req.headers['x-telegram-bot-token'];
+      if (webhookSecret !== process.env.TELEGRAM_BOT_TOKEN) {
+        return res.status(401).json({ error: "Invalid webhook secret" });
       }
 
-      const { id, first_name, last_name, username, photo_url, auth_date, hash } = req.body;
-      
-      if (!id || !hash || !auth_date) {
-        return res.status(400).json({ error: "Invalid Telegram data" });
+      const { 
+        verificationCode, 
+        telegramId, 
+        username, 
+        firstName, 
+        lastName, 
+        photoUrl 
+      } = req.body;
+
+      if (!verificationCode || !telegramId) {
+        return res.status(400).json({ error: "Missing required fields" });
       }
 
-      const botToken = process.env.TELEGRAM_BOT_TOKEN!;
-      const secretKey = crypto.createHash('sha256').update(botToken).digest();
-      
-      const dataCheckArr = [];
-      if (auth_date) dataCheckArr.push(`auth_date=${auth_date}`);
-      if (first_name) dataCheckArr.push(`first_name=${first_name}`);
-      if (id) dataCheckArr.push(`id=${id}`);
-      if (last_name) dataCheckArr.push(`last_name=${last_name}`);
-      if (photo_url) dataCheckArr.push(`photo_url=${photo_url}`);
-      if (username) dataCheckArr.push(`username=${username}`);
-      
-      const dataCheckString = dataCheckArr.sort().join('\n');
-      
-      const hmac = crypto
-        .createHmac('sha256', secretKey)
-        .update(dataCheckString)
-        .digest('hex');
-      
-      if (hmac !== hash) {
-        return res.status(401).json({ error: "Invalid Telegram authentication" });
+      // Find verification record
+      const verification = await storage.getTelegramVerification(verificationCode);
+      if (!verification) {
+        return res.status(404).json({ error: "Invalid or expired verification code" });
       }
 
-      const authTimestamp = parseInt(auth_date);
-      const now = Math.floor(Date.now() / 1000);
-      if (now - authTimestamp > 86400) {
-        return res.status(401).json({ error: "Telegram authentication expired" });
+      if (new Date() > new Date(verification.expiresAt)) {
+        await storage.deleteTelegramVerification(verificationCode);
+        return res.status(400).json({ error: "Verification code expired" });
       }
 
-      const existingUser = await storage.getUserByTelegramId(id.toString());
-      
-      if (existingUser && existingUser.id !== authResult.userId) {
+      // Check if Telegram account already linked
+      const existingUser = await storage.getUserByTelegramId(telegramId.toString());
+      if (existingUser && existingUser.id !== verification.userId) {
         return res.status(400).json({ error: "Telegram account already linked to another user" });
       }
 
-      await storage.linkTelegramAccount(authResult.userId, {
-        telegramChatId: id.toString(),
-        telegramUsername: username || `telegram_${id}`,
-        telegramFirstName: first_name || undefined,
-        telegramLastName: last_name || undefined,
-        telegramPhotoUrl: photo_url || undefined
+      // Link Telegram account
+      await storage.linkTelegramAccount(verification.userId, {
+        telegramChatId: telegramId.toString(),
+        telegramUsername: username || `tg_${telegramId}`,
+        telegramFirstName: firstName || undefined,
+        telegramLastName: lastName || undefined,
+        telegramPhotoUrl: photoUrl || undefined
       });
-      
-      console.log(`Telegram linked for user ${authResult.userId}: ${username || id}`);
-      
+
+      // Delete verification record
+      await storage.deleteTelegramVerification(verificationCode);
+
+      console.log(`✅ Telegram linked for user ${verification.userId}: ${username || telegramId}`);
+
       res.json({ 
-        message: "Telegram linked successfully",
-        telegramUsername: username || `telegram_${id}`,
-        displayName: [first_name, last_name].filter(Boolean).join(' ') || `Telegram User ${id}`
+        success: true,
+        message: "Telegram account linked successfully"
       });
-      
+
     } catch (error) {
-      console.error('Telegram callback error:', error);
-      res.status(500).json({ error: "Failed to link Telegram account" });
+      console.error('Telegram webhook error:', error);
+      res.status(500).json({ error: "Failed to process Telegram linking" });
     }
   });
 
-  // ===== DISCORD/TELEGRAM STATUS & UNLINK =====
-  
-  app.get("/api/user/:id/discord", async (req, res) => {
+  /**
+   * Check Telegram linking status
+   */
+  app.get("/api/auth/telegram/status", async (req, res) => {
     try {
       const authResult = await authenticateUser(req);
       if ('error' in authResult) {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      if (authResult.userId !== req.params.id) {
-        return res.status(403).json({ error: "Access denied" });
+      const { verificationCode } = req.query;
+      
+      if (verificationCode) {
+        // Check if verification was completed
+        const verification = await storage.getTelegramVerification(verificationCode as string);
+        if (!verification) {
+          // Verification completed or expired
+          const user = await storage.getUser(authResult.userId);
+          if (user?.telegramChatId) {
+            return res.json({ 
+              status: 'completed',
+              telegramUsername: user.telegramUsername,
+              telegramChatId: user.telegramChatId
+            });
+          }
+          return res.json({ status: 'expired' });
+        }
+        return res.json({ status: 'pending' });
       }
 
-      const user = await storage.getUser(req.params.id);
+      // Return current Telegram link status
+      const user = await storage.getUser(authResult.userId);
       res.json({ 
-        discordUsername: user?.discordUsername || null,
-        discordId: user?.discordId || null,
-        discordAvatar: user?.discordAvatar || null
+        linked: !!user?.telegramChatId,
+        telegramUsername: user?.telegramUsername || null,
+        telegramChatId: user?.telegramChatId || null,
+        telegramPhotoUrl: user?.telegramPhotoUrl || null
       });
+
     } catch (error) {
-      console.error('Check Discord error:', error);
-      res.status(500).json({ error: "Internal server error" });
+      console.error('Telegram status error:', error);
+      res.status(500).json({ error: "Failed to check Telegram status" });
     }
   });
 
+  // ===== UNLINK SOCIAL ACCOUNTS =====
+  
   app.delete("/api/user/:id/discord", async (req, res) => {
     try {
       const authResult = await authenticateUser(req);
@@ -479,33 +493,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       await storage.unlinkDiscordAccount(req.params.id);
-      
       res.json({ message: "Discord unlinked successfully" });
     } catch (error) {
       console.error('Unlink Discord error:', error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.get("/api/user/:id/telegram", async (req, res) => {
-    try {
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-
-      if (authResult.userId !== req.params.id) {
-        return res.status(403).json({ error: "Access denied" });
-      }
-
-      const user = await storage.getUser(req.params.id);
-      res.json({ 
-        telegramUsername: user?.telegramUsername || null,
-        telegramChatId: user?.telegramChatId || null,
-        telegramPhotoUrl: user?.telegramPhotoUrl || null
-      });
-    } catch (error) {
-      console.error('Check Telegram error:', error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -522,7 +512,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       await storage.unlinkTelegramAccount(req.params.id);
-      
       res.json({ message: "Telegram unlinked successfully" });
     } catch (error) {
       console.error('Unlink Telegram error:', error);
@@ -553,6 +542,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
         subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason,
         telegramUsername: user.telegramUsername,
+        telegramChatId: user.telegramChatId,
         discordUsername: user.discordUsername,
       });
     } catch (error) {

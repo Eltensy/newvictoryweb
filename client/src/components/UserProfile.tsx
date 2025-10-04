@@ -11,7 +11,10 @@ import {
   MessageSquare,
   CheckCircle2,
   TrendingUp,
-  Loader2
+  Loader2,
+  Copy,
+  ExternalLink,
+  X
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { PremiumStatusCard } from './PremiumBadge';
@@ -42,6 +45,13 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
   
   const [isLinkingTelegram, setIsLinkingTelegram] = useState(false);
   const [isLinkingDiscord, setIsLinkingDiscord] = useState(false);
+  
+  const [telegramLinkData, setTelegramLinkData] = useState<{
+    botLink: string;
+    verificationCode: string;
+    expiresAt: string;
+  } | null>(null);
+  const [isCheckingTelegramStatus, setIsCheckingTelegramStatus] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -60,22 +70,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
         const statsData = await statsRes.json();
         setStats(statsData);
         setLoadingStats(false);
-
-        const telegramRes = await fetch(`/api/user/${user.id}/telegram`, {
-          headers: { Authorization: `Bearer ${t}` },
-        });
-        const telegramData = await telegramRes.json();
-        if (!telegramData.error) {
-          setLinkedTelegram(telegramData.telegramUsername || null);
-        }
-
-        const discordRes = await fetch(`/api/user/${user.id}/discord`, {
-          headers: { Authorization: `Bearer ${t}` },
-        });
-        const discordData = await discordRes.json();
-        if (!discordData.error) {
-          setLinkedDiscord(discordData.discordUsername || null);
-        }
       } catch (err) {
         console.error(err);
         setLoadingStats(false);
@@ -84,151 +78,109 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     fetchData();
   }, [user?.id, user?.telegramUsername, user?.discordUsername, getAuthToken]);
 
-  // Handle Telegram OAuth linking
+  // Telegram bot authorization flow
   const handleLinkTelegram = async () => {
     if (!user) return;
     setIsLinkingTelegram(true);
     
     try {
       const t = getAuthToken();
-      if (!t) throw new Error("No auth token");
+      if (!t) throw new Error("Нет токена авторизации");
 
-      // Open Telegram Widget in popup
-      const width = 600;
-      const height = 600;
-      const left = (window.innerWidth - width) / 2;
-      const top = (window.innerHeight - height) / 2;
-      
-      const popup = window.open(
-        '',
-        'telegram_oauth',
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
-      
-      if (!popup) {
-        throw new Error("Popup blocked. Please allow popups for this site.");
-      }
-
-      // Get bot info for Login Widget
-      const initRes = await fetch('/api/auth/telegram/login', {
+      // Get verification code from server
+      const initRes = await fetch('/api/auth/telegram/init', {
         headers: { Authorization: `Bearer ${t}` }
       });
       
-      if (!initRes.ok) throw new Error("Failed to initialize Telegram login");
+      if (!initRes.ok) {
+        const error = await initRes.json();
+        throw new Error(error.error || "Не удалось инициализировать привязку");
+      }
       
-      const { botUsername } = await initRes.json();
+      const data = await initRes.json();
+      setTelegramLinkData(data);
       
-      // Create Telegram Login Widget HTML
-      popup.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Link Telegram Account</title>
-          <style>
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              height: 100vh;
-              margin: 0;
-              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-              color: white;
-            }
-            .container {
-              text-align: center;
-              background: rgba(255,255,255,0.1);
-              padding: 2rem;
-              border-radius: 1rem;
-              backdrop-filter: blur(10px);
-            }
-            h1 { margin-bottom: 1rem; }
-            p { margin-bottom: 2rem; opacity: 0.9; }
-          </style>
-          <script async src="https://telegram.org/js/telegram-widget.js?22"></script>
-        </head>
-        <body>
-          <div class="container">
-            <h1>🔗 Link Telegram Account</h1>
-            <p>Click the button below to authenticate with Telegram</p>
-            <script>
-              function onTelegramAuth(user) {
-                window.opener.postMessage({ type: 'telegram_auth', data: user }, '*');
-                window.close();
-              }
-            </script>
-            <script async
-              src="https://telegram.org/js/telegram-widget.js?22"
-              data-telegram-login="${botUsername}"
-              data-size="large"
-              data-onauth="onTelegramAuth(user)"
-              data-request-access="write">
-            </script>
-          </div>
-        </body>
-        </html>
-      `);
-
-      // Listen for message from popup
-      const handleMessage = async (event: MessageEvent) => {
-        if (event.data.type === 'telegram_auth') {
-          try {
-            const res = await fetch('/api/auth/telegram/callback', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${t}`
-              },
-              body: JSON.stringify(event.data.data)
-            });
-            
-            if (!res.ok) {
-              const error = await res.json();
-              throw new Error(error.error || "Failed to link Telegram");
-            }
-            
-            const data = await res.json();
-            setLinkedTelegram(data.telegramUsername);
+      // Start polling for verification status
+      setIsCheckingTelegramStatus(true);
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(
+            `/api/auth/telegram/status?verificationCode=${data.verificationCode}`,
+            { headers: { Authorization: `Bearer ${t}` } }
+          );
+          
+          if (!statusRes.ok) {
+            clearInterval(pollInterval);
+            setIsCheckingTelegramStatus(false);
+            return;
+          }
+          
+          const status = await statusRes.json();
+          
+          if (status.status === 'completed') {
+            clearInterval(pollInterval);
+            setIsCheckingTelegramStatus(false);
+            setIsLinkingTelegram(false);
+            setTelegramLinkData(null);
+            setLinkedTelegram(status.telegramUsername);
             await refreshProfile();
             
             toast({
-              title: "✅ Success",
-              description: "Telegram account linked successfully",
+              title: "Успешно",
+              description: "Telegram аккаунт привязан",
             });
-          } catch (err: any) {
-            console.error(err);
+          } else if (status.status === 'expired') {
+            clearInterval(pollInterval);
+            setIsCheckingTelegramStatus(false);
+            setIsLinkingTelegram(false);
+            setTelegramLinkData(null);
+            
             toast({
-              title: "❌ Error",
-              description: err.message,
+              title: "Время истекло",
+              description: "Код верификации истек. Попробуйте снова.",
               variant: "destructive"
             });
-          } finally {
-            setIsLinkingTelegram(false);
-            window.removeEventListener('message', handleMessage);
           }
+        } catch (err) {
+          console.error('Status check error:', err);
         }
-      };
-
-      window.addEventListener('message', handleMessage);
+      }, 3000);
       
-      // Cleanup if popup is closed without auth
-      const checkClosed = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(checkClosed);
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setIsCheckingTelegramStatus(false);
+        if (telegramLinkData) {
           setIsLinkingTelegram(false);
-          window.removeEventListener('message', handleMessage);
+          setTelegramLinkData(null);
         }
-      }, 1000);
+      }, 5 * 60 * 1000);
       
     } catch (err: any) {
       console.error(err);
       toast({
-        title: "❌ Error",
+        title: "Ошибка",
         description: err.message,
         variant: "destructive"
       });
       setIsLinkingTelegram(false);
+      setTelegramLinkData(null);
+    }
+  };
+
+  const handleCancelTelegramLink = () => {
+    setIsLinkingTelegram(false);
+    setIsCheckingTelegramStatus(false);
+    setTelegramLinkData(null);
+  };
+
+  const handleCopyCode = () => {
+    if (telegramLinkData) {
+      navigator.clipboard.writeText(telegramLinkData.verificationCode);
+      toast({
+        title: "Скопировано",
+        description: "Код верификации скопирован в буфер обмена",
+      });
     }
   };
 
@@ -243,37 +195,36 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
       await refreshProfile();
       
       toast({
-        title: "✅ Unlinked",
-        description: "Telegram account unlinked",
+        title: "Отвязано",
+        description: "Telegram аккаунт отвязан",
       });
     } catch (err) {
       console.error(err);
       toast({
-        title: "❌ Error",
-        description: "Failed to unlink Telegram",
+        title: "Ошибка",
+        description: "Не удалось отвязать Telegram",
         variant: "destructive"
       });
     }
   };
 
-  // Handle Discord OAuth linking
+  // Discord OAuth linking
   const handleLinkDiscord = async () => {
     if (!user) return;
     setIsLinkingDiscord(true);
     
     try {
       const t = getAuthToken();
-      if (!t) throw new Error("No auth token");
+      if (!t) throw new Error("Нет токена авторизации");
 
       const res = await fetch('/api/auth/discord/login', {
         headers: { Authorization: `Bearer ${t}` }
       });
       
-      if (!res.ok) throw new Error("Failed to initialize Discord login");
+      if (!res.ok) throw new Error("Не удалось инициализировать Discord авторизацию");
       
       const { authUrl } = await res.json();
       
-      // Open Discord OAuth in popup
       const width = 500;
       const height = 700;
       const left = (window.innerWidth - width) / 2;
@@ -286,26 +237,24 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
       );
       
       if (!popup) {
-        throw new Error("Popup blocked. Please allow popups for this site.");
+        throw new Error("Всплывающее окно заблокировано. Разрешите всплывающие окна для этого сайта.");
       }
 
-      // Poll for popup closure and check if linked
       const checkInterval = setInterval(async () => {
         if (popup.closed) {
           clearInterval(checkInterval);
           setIsLinkingDiscord(false);
           
-          // Refresh user data to check if Discord was linked
           await refreshProfile();
-          const updatedUser = await fetch(`/api/user/${user.id}/discord`, {
+          const updatedUser = await fetch(`/api/auth/me`, {
             headers: { Authorization: `Bearer ${t}` }
           }).then(r => r.json());
           
           if (updatedUser.discordUsername) {
             setLinkedDiscord(updatedUser.discordUsername);
             toast({
-              title: "✅ Success",
-              description: "Discord account linked successfully",
+              title: "Успешно",
+              description: "Discord аккаунт привязан",
             });
           }
         }
@@ -314,7 +263,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     } catch (err: any) {
       console.error(err);
       toast({
-        title: "❌ Error",
+        title: "Ошибка",
         description: err.message,
         variant: "destructive"
       });
@@ -333,14 +282,14 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
       await refreshProfile();
       
       toast({
-        title: "✅ Unlinked",
-        description: "Discord account unlinked",
+        title: "Отвязано",
+        description: "Discord аккаунт отвязан",
       });
     } catch (err) {
       console.error(err);
       toast({
-        title: "❌ Error",
-        description: "Failed to unlink Discord",
+        title: "Ошибка",
+        description: "Не удалось отвязать Discord",
         variant: "destructive"
       });
     }
@@ -445,7 +394,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
           </div>
 
           <div className="space-y-3">
-            {/* Telegram OAuth */}
+            {/* Telegram Bot Link */}
             <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-blue-500/30 transition-colors">
               <div className="flex items-center gap-2">
                 <MessageSquare className="h-4 w-4 text-blue-500" />
@@ -464,6 +413,55 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
                   >
                     Отвязать
                   </button>
+                </div>
+              ) : telegramLinkData ? (
+                <div className="space-y-3">
+                  <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-blue-600 font-medium">Код верификации</span>
+                      <button
+                        onClick={handleCancelTelegramLink}
+                        className="h-6 w-6 rounded-lg hover:bg-blue-500/20 flex items-center justify-center text-blue-600 transition-colors"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 p-3 rounded-lg bg-background/50 border border-blue-500/30">
+                        <div className="text-2xl font-mono font-bold text-center text-blue-700 tracking-widest">
+                          {telegramLinkData.verificationCode}
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleCopyCode}
+                        className="h-12 w-12 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 flex items-center justify-center text-blue-600 transition-colors"
+                      >
+                        <Copy className="h-5 w-5" />
+                      </button>
+                    </div>
+                    
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>1. Откройте Telegram бот по кнопке ниже</p>
+                      <p>2. Отправьте команду: <code className="px-1 py-0.5 bg-background/50 rounded">/start {telegramLinkData.verificationCode}</code></p>
+                      <p>3. Дождитесь подтверждения</p>
+                    </div>
+                  </div>
+                  
+                  {isCheckingTelegramStatus && (
+                    <div className="flex items-center gap-2 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 animate-pulse">
+                      <Loader2 className="h-4 w-4 text-yellow-600 animate-spin" />
+                      <span className="text-xs text-yellow-700 font-medium">Ожидание подтверждения от бота...</span>
+                    </div>
+                  )}
+                  
+                  <Button
+                    onClick={() => window.open(telegramLinkData.botLink, '_blank')}
+                    className="w-full h-11 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg shadow-blue-500/25"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Открыть Telegram бот
+                  </Button>
                 </div>
               ) : (
                 <Button 
@@ -534,7 +532,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
 
           <Button 
             variant="outline" 
-            className="w-full h-11 rounded-xl border-border/50 hover:bg-red-500/5 hover:border-red-500/30 hover:text-red-600 transition-all -mt-[20px]" 
+            className="w-full h-11 rounded-xl border-border/50 hover:bg-red-500/5 hover:border-red-500/30 hover:text-red-600 transition-all" 
             onClick={handleLogout}
           >
             <LogOut className="h-4 w-4 mr-2" />
