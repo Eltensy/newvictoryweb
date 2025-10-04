@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import HeroSection from './HeroSection';
 import SubmissionPage from './SubmissionPage';
 import SubscriptionScreenshotModal from './SubscriptionScreenshotModal';
+import LoadingScreen from './LoadingScreen';
 
 interface User {
   id: string;
@@ -25,6 +26,7 @@ export default function LandingPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isUploadingScreenshot, setIsUploadingScreenshot] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true); // Новое состояние для полной инициализации
 
   const currentUser = authUser; 
   
@@ -113,35 +115,58 @@ export default function LandingPage() {
           console.error('Failed to parse user data:', err);
         }
       }
-      setIsLoading(false);
+      
+      // Убираем автоматическую установку isLoading в false
+      // Теперь это будет контролироваться через isInitializing
     };
 
     handleEpicCallback();
   }, [login]);
 
-  // Auto-refresh user data when logged in
+  // Главный эффект для инициализации - контролирует весь процесс загрузки
   useEffect(() => {
-    const initializeUserData = async () => {
-      if (isLoggedIn && getAuthToken() && !isLoading) {
-        await handleRefreshUser();
+    const initializeApp = async () => {
+      try {
+        // Минимальное время загрузки для лучшего UX
+        const minLoadingTime = new Promise(resolve => setTimeout(resolve, 1000));
+        
+        if (isLoggedIn && getAuthToken()) {
+          // Если пользователь авторизован, обновляем его данные
+          await handleRefreshUser();
+          
+          // Ждем минимальное время загрузки
+          await minLoadingTime;
+          
+          // Даем дополнительное время для стабилизации данных
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } else {
+          // Если не авторизован, просто ждем минимальное время
+          await minLoadingTime;
+        }
+      } catch (error) {
+        console.error('App initialization error:', error);
+      } finally {
+        // Завершаем инициализацию
+        setIsInitializing(false);
+        setIsLoading(false);
       }
     };
 
-    // Small delay to allow initialization
-    const timer = setTimeout(initializeUserData, 100);
+    // Запускаем инициализацию только после первого рендера
+    const timer = setTimeout(initializeApp, 100);
     return () => clearTimeout(timer);
-  }, [isLoggedIn, isLoading]);
+  }, [isLoggedIn]); // Зависим только от isLoggedIn
 
   // Periodic refresh every 30 seconds (optional)
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || isInitializing) return;
 
     const interval = setInterval(async () => {
       await handleRefreshUser();
     }, 30000); // 30 seconds
 
     return () => clearInterval(interval);
-  }, [isLoggedIn]);
+  }, [isLoggedIn, isInitializing]);
 
   const handleAuthError = (message: string) => {
     console.error('Auth error:', message);
@@ -153,6 +178,7 @@ export default function LandingPage() {
 
   const handleEpicLogin = async () => {
     setIsLoading(true);
+    setIsInitializing(true);
 
     try {
       const res = await fetch("/api/auth/epic/login");
@@ -166,6 +192,7 @@ export default function LandingPage() {
       console.error('Epic login error:', error);
       alert('Failed to initialize Epic Games login. Please try again.');
       setIsLoading(false);
+      setIsInitializing(false);
     }
   };
   
@@ -175,19 +202,25 @@ export default function LandingPage() {
     console.log("User logged out");
   };
 
-  // Show loading state while processing authentication
-  if (isLoading) {
+  // Показываем загрузку пока идет инициализация ИЛИ обычная загрузка
+  if (isLoading || isInitializing) {
+    let message = "Загружаем...";
+    let submessage = "Подготавливаем контент для вас...";
+    
+    if (isLoggedIn && currentUser) {
+      message = "Логинимся в систему...";
+      submessage = "Проверяем данные авторизации";
+    }
+    
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="text-muted-foreground">Logging you in...</p>
-        </div>
-      </div>
+      <LoadingScreen 
+        message={message}
+        submessage={submessage}
+      />
     );
   }
 
-  // If user is logged in, check subscription screenshot status
+  // Теперь все проверки статуса происходят только после полной инициализации
   if (isLoggedIn && currentUser) {
     const subscriptionStatus = currentUser.subscriptionScreenshotStatus || 'none';
     
@@ -258,7 +291,6 @@ export default function LandingPage() {
         />
       );
     }
-
   }
 
   // Show hero section for unauthenticated users

@@ -1,17 +1,54 @@
 import { Button } from "@/components/ui/button";
-import { Crown, X, ExternalLink } from "lucide-react";
+import { Crown, X, ExternalLink, Check } from "lucide-react";
 
 interface PremiumModalProps {
   isOpen: boolean;
   onClose: () => void;
+  userPremiumTier?: 'none' | 'basic' | 'gold' | 'platinum' | 'vip';
+  daysRemaining?: number;
 }
 
-export default function PremiumModal({ isOpen, onClose }: PremiumModalProps) {
+export default function PremiumModal({ isOpen, onClose, userPremiumTier = 'none', daysRemaining }: PremiumModalProps) {
   if (!isOpen) return null;
+
+  const hasPremium = userPremiumTier !== 'none';
+  const isExpiringSoon = hasPremium && daysRemaining !== undefined && daysRemaining <= 7;
+
+  const features = [
+    { 
+      text: "🏆 Закрытые турниры", 
+      borderClass: "border-yellow-500/20",
+      bgClass: "bg-gradient-to-r from-yellow-500/10 to-yellow-600/10",
+      dotClass: "bg-yellow-500 shadow-yellow-500/50"
+    },
+    { 
+      text: "💰 +10% к обмену золота", 
+      borderClass: "border-green-500/20",
+      bgClass: "bg-gradient-to-r from-green-500/10 to-green-600/10",
+      dotClass: "bg-green-500 shadow-green-500/50"
+    },
+    { 
+      text: "🎯 Пропуск квалификаций", 
+      borderClass: "border-purple-500/20",
+      bgClass: "bg-gradient-to-r from-purple-500/10 to-purple-600/10",
+      dotClass: "bg-purple-500 shadow-purple-500/50"
+    },
+    { 
+      text: "🚀 Ранний доступ", 
+      borderClass: "border-blue-500/20",
+      bgClass: "bg-gradient-to-r from-blue-500/10 to-blue-600/10",
+      dotClass: "bg-blue-500 shadow-blue-500/50"
+    },
+    { 
+      text: "👑 VIP статус и чат", 
+      borderClass: "border-orange-500/20",
+      bgClass: "bg-gradient-to-r from-orange-500/10 to-orange-600/10",
+      dotClass: "bg-orange-500 shadow-orange-500/50"
+    },
+  ];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-4">
-      {/* Скроллируемая карточка */}
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-yellow-500/20 bg-gradient-to-br from-card via-card to-card/95 shadow-2xl shadow-yellow-500/10 animate-in zoom-in-95 duration-300">
         
         {/* Header */}
@@ -23,10 +60,15 @@ export default function PremiumModal({ isOpen, onClose }: PremiumModalProps) {
               </div>
               <div>
                 <h2 className="font-gaming bg-gradient-to-r from-yellow-400 to-yellow-600 bg-clip-text text-2xl font-bold text-transparent">
-                  Премиум подписка
+                  {hasPremium ? 'Управление подпиской' : 'Премиум подписка'}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Раскрой полный потенциал заработка
+                  {hasPremium 
+                    ? isExpiringSoon 
+                      ? `⚠️ Истекает через ${daysRemaining} ${daysRemaining === 1 ? 'день' : daysRemaining! < 5 ? 'дня' : 'дней'}`
+                      : 'Активна'
+                    : 'Раскрой полный потенциал заработка'
+                  }
                 </p>
               </div>
             </div>
@@ -44,7 +86,19 @@ export default function PremiumModal({ isOpen, onClose }: PremiumModalProps) {
 
         {/* Content */}
         <div className="space-y-6 p-6">
-          {/* Сравнение тарифов */}
+          {hasPremium && (
+            <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/20">
+              <div className="flex items-center gap-2 mb-2">
+                <Check className="h-5 w-5 text-green-600" />
+                <span className="font-semibold text-green-600">У вас активная подписка!</span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Ваша {userPremiumTier} подписка активна. Продлите её, чтобы не потерять преимущества.
+              </p>
+            </div>
+          )}
+
+          {/* Comparison */}
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             {/* Free */}
             <div className="space-y-3">
@@ -78,19 +132,13 @@ export default function PremiumModal({ isOpen, onClose }: PremiumModalProps) {
                   Premium
                 </h3>
               </div>
-              {[
-                { text: "🏆 Закрытые турниры", color: "yellow" },
-                { text: "💰 +10% к обмену золота", color: "green" },
-                { text: "🎯 Пропуск квалификаций", color: "purple" },
-                { text: "🚀 Ранний доступ", color: "blue" },
-                { text: "👑 VIP статус и чат", color: "orange" },
-              ].map((feature, i) => (
+              {features.map((feature, i) => (
                 <div
                   key={i}
-                  className={`flex items-center gap-3 rounded-lg border border-${feature.color}-500/20 bg-gradient-to-r from-${feature.color}-500/10 to-${feature.color}-600/10 p-3`}
+                  className={`flex items-center gap-3 rounded-lg border ${feature.borderClass} ${feature.bgClass} p-3`}
                 >
                   <div
-                    className={`h-2 w-2 rounded-full bg-${feature.color}-500 shadow-lg shadow-${feature.color}-500/50`}
+                    className={`h-2 w-2 rounded-full ${feature.dotClass} shadow-lg`}
                   ></div>
                   <span className="text-sm font-medium text-foreground">
                     {feature.text}
@@ -112,7 +160,7 @@ export default function PremiumModal({ isOpen, onClose }: PremiumModalProps) {
           <div className="space-y-4">
             <div className="text-center">
               <h4 className="mb-3 text-sm font-medium text-muted-foreground">
-                Выберите платформу для подписки:
+                {hasPremium ? 'Продлите подписку:' : 'Выберите платформу для подписки:'}
               </h4>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

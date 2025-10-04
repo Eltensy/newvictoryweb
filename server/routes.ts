@@ -1,29 +1,33 @@
-// Make sure your imports at the top of routes.ts look like this:
+// server/routes.ts - Complete fixed version with OAuth integration
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import path from "path";
 import crypto from 'crypto';
 import { fileTypeFromBuffer } from "file-type";
-import sharp from "sharp";
 import { storage } from "./storage";
 import { promises as fs } from 'fs';
 import { cloudStorage } from './fileStorage.js';
+import { db } from "./db";
+import { users } from "@shared/schema";
 import dotenv from "dotenv";
 dotenv.config();
 import { 
   insertSubmissionSchema, 
   reviewSubmissionSchema, 
   updateUserBalanceSchema,
-  linkTelegramSchema,
-  insertUserSchema,
   processWithdrawalSchema,
   createWithdrawalRequestSchema,
-  type InsertUser
+  insertTournamentSchema,
+  updateTournamentSchema,
+  registerForTournamentSchema,
+  grantPremiumSchema,
+  updatePremiumSchema,
+  type InsertUser,
+  type InsertPremiumHistory
 } from "@shared/schema";
 
-
-// File upload configuration using memory storage for security
+// File upload configuration
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -55,7 +59,6 @@ const authenticateUser = async (req: any): Promise<{ userId: string, user: any }
   try {
     const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
     
-    // Check token expiration
     if (decoded.exp && decoded.exp < Date.now()) {
       return { error: "Token expired", status: 401 };
     }
@@ -86,174 +89,10 @@ const authenticateAdmin = async (req: any): Promise<{ adminId: string, admin: an
   return { adminId: user.id, admin: user };
 };
 
-// File cleanup helper
-const cleanupFiles = async (filePath: string | null, previewPath: string | null) => {
-  if (filePath) {
-    try {
-      // Проверяем существование файла перед удалением
-      await fs.access(filePath);
-      await fs.unlink(filePath);
-      console.log('Successfully cleaned up uploaded file:', filePath);
-    } catch (cleanupError: any) {
-      // Игнорируем ошибку если файл не существует
-      if (cleanupError.code !== 'ENOENT') {
-        console.error('Failed to cleanup uploaded file:', cleanupError);
-      }
-    }
-  }
-  
-  if (previewPath) {
-    try {
-      // Проверяем существование файла перед удалением
-      await fs.access(previewPath);
-      await fs.unlink(previewPath);
-      console.log('Successfully cleaned up preview file:', previewPath);
-    } catch (cleanupError: any) {
-      // Игнорируем ошибку если файл не существует
-      if (cleanupError.code !== 'ENOENT') {
-        console.error('Failed to cleanup preview file:', cleanupError);
-      }
-    }
-  }
-};
-
-
 export async function registerRoutes(app: Express): Promise<Server> {
   
-  // ===== AUTHENTICATION ROUTES =====
-  if (process.env.NODE_ENV === 'development') {
-  // В режиме разработки также обслуживаем файлы напрямую для тестирования
+  // ===== EPIC GAMES AUTHENTICATION =====
   
-  // Логирование запросов к uploads
-  app.use('/uploads/*', (req, res, next) => {
-    console.log(`📂 Direct uploads request: ${req.path}`);
-    next();
-  });
-}
-
-// Добавьте эти routes в routes.ts в разделе ADMIN ROUTES:
-
-// Debug route для проверки файлов
-app.get("/api/debug/files", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    const uploadsPath = path.resolve('./uploads');
-    console.log('📂 Checking uploads directory:', uploadsPath);
-    
-    try {
-      // Ensure directory exists
-      await fs.mkdir(uploadsPath, { recursive: true });
-      
-      const files = await fs.readdir(uploadsPath);
-      const fileDetails = await Promise.all(files.slice(0, 50).map(async (file) => {
-        const filePath = path.join(uploadsPath, file);
-        try {
-          const stats = await fs.stat(filePath);
-          return {
-            name: file,
-            size: stats.size,
-            modified: stats.mtime,
-            isFile: stats.isFile(),
-            path: filePath
-          };
-        } catch (statError) {
-          return {
-            name: file,
-            error: 'Could not read file stats',
-            path: filePath
-          };
-        }
-      }));
-      
-      res.json({
-        uploadsPath,
-        totalFiles: files.length,
-        files: fileDetails
-      });
-    } catch (readError: any) {
-      console.error('❌ Could not read uploads directory:', readError);
-      res.json({
-        uploadsPath,
-        error: `Could not read directory: ${readError.message}`,
-        totalFiles: 0,
-        files: []
-      });
-    }
-  } catch (error) {
-    console.error('Debug files error:', error);
-    res.status(500).json({ error: 'Failed to read uploads directory' });
-  }
-});
-
-// Debug route для конкретной заявки
-app.get("/api/debug/submission/:id", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    const submission = await storage.getSubmission(req.params.id);
-    if (!submission) {
-      return res.status(404).json({ error: "Submission not found" });
-    }
-
-    // Check if file exists
-    let fileExists = false;
-    let fileStats = null;
-    let alternativeFiles = [];
-
-    try {
-      const stats = await fs.stat(submission.filePath);
-      fileExists = true;
-      fileStats = {
-        size: stats.size,
-        modified: stats.mtime,
-        isFile: stats.isFile()
-      };
-    } catch (error) {
-      console.log('File not found at stored path, checking alternatives...');
-      
-      // Try to find alternative files
-      const uploadsDir = path.resolve('./uploads');
-      try {
-        const files = await fs.readdir(uploadsDir);
-        alternativeFiles = files.filter(file => 
-          file.includes(submission.filename) || 
-          file.includes(submission.originalFilename) ||
-          file.includes(submission.id)
-        );
-      } catch (readError) {
-        console.error('Could not read uploads directory:', readError);
-      }
-    }
-
-    res.json({
-      submission: {
-        id: submission.id,
-        filename: submission.filename,
-        originalFilename: submission.originalFilename,
-        filePath: submission.filePath,
-        fileType: submission.fileType,
-        fileSize: submission.fileSize,
-        status: submission.status,
-        createdAt: submission.createdAt
-      },
-      fileExists,
-      fileStats,
-      alternativeFiles,
-      uploadsDirectory: path.resolve('./uploads')
-    });
-  } catch (error) {
-    console.error('Debug submission error:', error);
-    res.status(500).json({ error: 'Failed to debug submission' });
-  }
-});
-  // Epic Games OAuth - Initialize login
   app.get("/api/auth/epic/login", async (req, res) => {
     try {
       if (!process.env.EPIC_CLIENT_ID || !process.env.EPIC_REDIRECT_URI) {
@@ -282,7 +121,6 @@ app.get("/api/debug/submission/:id", async (req, res) => {
     }
   });
   
-  // Epic Games OAuth - Handle callback
   app.get("/api/auth/epic/callback", async (req, res) => {
     try {
       const { code, state, error } = req.query;
@@ -296,7 +134,6 @@ app.get("/api/debug/submission/:id", async (req, res) => {
         return res.redirect('/?error=missing_authorization_code');
       }
       
-      // Exchange code for token
       const tokenParams = new URLSearchParams({
         grant_type: 'authorization_code',
         code: code as string,
@@ -324,7 +161,6 @@ app.get("/api/debug/submission/:id", async (req, res) => {
       
       const tokenData = await tokenResponse.json();
       
-      // Get user profile
       const profileResponse = await fetch('https://api.epicgames.dev/epic/oauth/v2/userInfo', {
         headers: {
           'Authorization': `Bearer ${tokenData.access_token}`
@@ -339,11 +175,9 @@ app.get("/api/debug/submission/:id", async (req, res) => {
       
       const profile = await profileResponse.json();
       
-      // Check if user already exists
       let user = await storage.getUserByEpicGamesId(profile.sub);
       
       if (!user) {
-        // Create new user
         const newUser: InsertUser = {
           username: profile.preferred_username || `epic_${profile.sub.slice(0, 8)}`,
           epicGamesId: profile.sub,
@@ -356,18 +190,16 @@ app.get("/api/debug/submission/:id", async (req, res) => {
         user = await storage.createUser(newUser);
       }
       
-      // Generate session token
       const sessionToken = crypto.randomBytes(32).toString('hex');
       const tokenPayload = {
         userId: user.id,
         epicGamesId: user.epicGamesId,
         sessionToken,
-        exp: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 days
+        exp: Date.now() + (7 * 24 * 60 * 60 * 1000)
       };
       
       const userToken = Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
       
-      // Redirect to frontend with success
       const redirectUrl = new URL('/', `${req.protocol}://${req.get('host')}`);
       redirectUrl.searchParams.set('auth', 'success');
       redirectUrl.searchParams.set('token', userToken);
@@ -387,205 +219,354 @@ app.get("/api/debug/submission/:id", async (req, res) => {
     }
   });
 
-  // Verify current authentication
-  app.get("/api/auth/me", async (req, res) => {
-  try {
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    const { user } = authResult;
-    
-    // Return user data INCLUDING subscription screenshot fields
-    res.json({
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName,
-      balance: user.balance,
-      isAdmin: user.isAdmin,
-      // ADD subscription screenshot fields
-      subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
-      subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
-      subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
-      subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
-      subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason
-    });
-  } catch (error) {
-    console.error('Auth check error:', error);
-    res.status(500).json({ error: "Authentication verification failed" });
-  }
-});
-// ADD to your routes.ts file after existing admin routes:
-
-// ===== ADMIN SUBSCRIPTION SCREENSHOT ROUTES =====
-
-// Get all subscription screenshots with user details (admin only)
-app.get("/api/admin/subscription-screenshots", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    // Get all users (not just pending ones)
-    const users = await storage.getAllUsers();
-    
-    // Filter and format users with subscription data
-    const subscriptionScreenshots = await Promise.all(
-      users
-        .filter(user => user.subscriptionScreenshotStatus && user.subscriptionScreenshotStatus !== 'none')
-        .map(async (user) => {
-          try {
-            const stats = await storage.getUserStats(user.id);
-            return {
-              id: user.id,
-              username: user.username,
-              displayName: user.displayName,
-              subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
-              subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
-              subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
-              subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
-              subscriptionScreenshotReviewedBy: user.subscriptionScreenshotReviewedBy,
-              subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason,
-              balance: user.balance,
-              stats: {
-                totalSubmissions: stats.totalSubmissions,
-                approvedSubmissions: stats.approvedSubmissions,
-                totalEarnings: stats.totalEarnings
-              }
-            };
-          } catch (error) {
-            console.error(`Failed to get stats for user ${user.id}:`, error);
-            return {
-              id: user.id,
-              username: user.username,
-              displayName: user.displayName,
-              subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
-              subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
-              subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
-              subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
-              subscriptionScreenshotReviewedBy: user.subscriptionScreenshotReviewedBy,
-              subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason,
-              balance: user.balance,
-              stats: {
-                totalSubmissions: 0,
-                approvedSubmissions: 0,
-                totalEarnings: 0
-              }
-            };
-          }
-        })
-    );
-
-    // Sort by status priority: pending first, then by date
-    subscriptionScreenshots.sort((a, b) => {
-      if (a.subscriptionScreenshotStatus === 'pending' && b.subscriptionScreenshotStatus !== 'pending') return -1;
-      if (b.subscriptionScreenshotStatus === 'pending' && a.subscriptionScreenshotStatus !== 'pending') return 1;
-      
-      const dateA = new Date(a.subscriptionScreenshotUploadedAt || 0).getTime();
-      const dateB = new Date(b.subscriptionScreenshotUploadedAt || 0).getTime();
-      return dateB - dateA; // Most recent first
-    });
-
-    res.json(subscriptionScreenshots);
-  } catch (error) {
-    console.error('Get subscription screenshots error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Review subscription screenshot (admin only) - UPDATED to allow re-review
-app.post("/api/admin/subscription-screenshot/:userId/review", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    const { status, rejectionReason } = req.body;
-    
-    if (!['approved', 'rejected'].includes(status)) {
-      return res.status(400).json({ error: "Invalid status. Must be 'approved' or 'rejected'" });
-    }
-
-    if (status === 'rejected' && !rejectionReason?.trim()) {
-      return res.status(400).json({ error: "Rejection reason is required when rejecting screenshot" });
-    }
-
-    const user = await storage.getUser(req.params.userId);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    if (!user.subscriptionScreenshotUrl) {
-      return res.status(400).json({ error: "User has no subscription screenshot to review" });
-    }
-
-    // Update user subscription screenshot status (allow re-review)
-    const updatedUser = await storage.updateUser(req.params.userId, {
-      subscriptionScreenshotStatus: status,
-      subscriptionScreenshotReviewedAt: new Date(),
-      subscriptionScreenshotReviewedBy: authResult.adminId,
-      subscriptionScreenshotRejectionReason: status === 'rejected' ? rejectionReason : null
-    });
-
-    // Log admin action
-    await storage.createAdminAction({
-      adminId: authResult.adminId,
-      action: `${status}_subscription_screenshot`,
-      targetType: 'user',
-      targetId: req.params.userId,
-      details: JSON.stringify({ 
-        status, 
-        rejectionReason: status === 'rejected' ? rejectionReason : null,
-        screenshotUrl: user.subscriptionScreenshotUrl,
-        previousStatus: user.subscriptionScreenshotStatus,
-        isReReview: user.subscriptionScreenshotReviewedBy !== null && user.subscriptionScreenshotReviewedBy !== 'system'
-      })
-    });
-
-    console.log(`✅ Subscription screenshot ${status} for user ${req.params.userId} by admin ${authResult.adminId}`);
-
-    res.json({
-      message: `Subscription screenshot ${status} successfully`,
-      user: {
-        id: updatedUser.id,
-        username: updatedUser.username,
-        displayName: updatedUser.displayName,
-        subscriptionScreenshotStatus: updatedUser.subscriptionScreenshotStatus,
-        subscriptionScreenshotReviewedAt: updatedUser.subscriptionScreenshotReviewedAt,
-        subscriptionScreenshotRejectionReason: updatedUser.subscriptionScreenshotRejectionReason
+  // ===== DISCORD OAUTH =====
+  
+  app.get("/api/auth/discord/login", async (req, res) => {
+    try {
+      if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_REDIRECT_URI) {
+        return res.status(500).json({ 
+          error: "Discord authentication is not configured" 
+        });
       }
-    });
 
-  } catch (error) {
-    console.error('Review subscription screenshot error:', error);
-    res.status(500).json({ error: "Failed to review subscription screenshot" });
-  }
-});
-  // Logout
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const state = crypto.randomBytes(32).toString('hex');
+      const stateData = JSON.stringify({
+        state,
+        userId: authResult.userId,
+        timestamp: Date.now()
+      });
+      
+      const params = new URLSearchParams({
+        client_id: process.env.DISCORD_CLIENT_ID,
+        redirect_uri: process.env.DISCORD_REDIRECT_URI,
+        response_type: 'code',
+        scope: 'identify email',
+        state: Buffer.from(stateData).toString('base64')
+      });
+      
+      const authUrl = `https://discord.com/api/oauth2/authorize?${params}`;
+      res.json({ authUrl, state });
+    } catch (error) {
+      console.error('Discord OAuth init error:', error);
+      res.status(500).json({ error: "Failed to initialize Discord OAuth" });
+    }
+  });
+
+  app.get("/api/auth/discord/callback", async (req, res) => {
+    try {
+      const { code, state, error } = req.query;
+      
+      if (error) {
+        console.error('Discord OAuth error:', error);
+        return res.redirect(`/?error=discord_oauth_error&message=${encodeURIComponent(error as string)}`);
+      }
+      
+      if (!code || !state) {
+        return res.redirect('/?error=missing_oauth_data');
+      }
+
+      let stateData;
+      try {
+        stateData = JSON.parse(Buffer.from(state as string, 'base64').toString());
+      } catch {
+        return res.redirect('/?error=invalid_state');
+      }
+
+      if (Date.now() - stateData.timestamp > 5 * 60 * 1000) {
+        return res.redirect('/?error=state_expired');
+      }
+      
+      const tokenParams = new URLSearchParams({
+        client_id: process.env.DISCORD_CLIENT_ID!,
+        client_secret: process.env.DISCORD_CLIENT_SECRET!,
+        grant_type: 'authorization_code',
+        code: code as string,
+        redirect_uri: process.env.DISCORD_REDIRECT_URI!
+      });
+      
+      const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: tokenParams
+      });
+      
+      if (!tokenResponse.ok) {
+        const errorText = await tokenResponse.text();
+        console.error('Discord token exchange failed:', errorText);
+        return res.redirect('/?error=token_exchange_failed');
+      }
+      
+      const tokenData = await tokenResponse.json();
+      
+      const userResponse = await fetch('https://discord.com/api/users/@me', {
+        headers: {
+          'Authorization': `Bearer ${tokenData.access_token}`
+        }
+      });
+      
+      if (!userResponse.ok) {
+        const errorText = await userResponse.text();
+        console.error('Discord user fetch failed:', errorText);
+        return res.redirect('/?error=user_fetch_failed');
+      }
+      
+      const discordUser = await userResponse.json();
+      
+      const existingUser = await storage.getUserByDiscordId(discordUser.id);
+      
+      if (existingUser && existingUser.id !== stateData.userId) {
+        return res.redirect('/?error=discord_already_linked');
+      }
+      
+      await storage.linkDiscordAccount(stateData.userId, {
+        discordId: discordUser.id,
+        discordUsername: discordUser.username,
+        discordEmail: discordUser.email,
+        discordAvatar: discordUser.avatar 
+          ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
+          : undefined
+      });
+      
+      console.log(`Discord linked for user ${stateData.userId}: ${discordUser.username}`);
+      
+      res.redirect('/?success=discord_linked');
+      
+    } catch (error) {
+      console.error('Discord callback error:', error);
+      res.redirect('/?error=discord_link_failed');
+    }
+  });
+
+  // ===== TELEGRAM OAUTH =====
+  
+  app.get("/api/auth/telegram/login", async (req, res) => {
+    try {
+      if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_BOT_USERNAME) {
+        return res.status(500).json({ 
+          error: "Telegram authentication is not configured" 
+        });
+      }
+
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const botUsername = process.env.TELEGRAM_BOT_USERNAME;
+      const redirectUrl = `${req.protocol}://${req.get('host')}/api/auth/telegram/callback`;
+      
+      res.json({ 
+        botUsername,
+        redirectUrl,
+        userId: authResult.userId
+      });
+    } catch (error) {
+      console.error('Telegram OAuth init error:', error);
+      res.status(500).json({ error: "Failed to initialize Telegram OAuth" });
+    }
+  });
+
+  app.post("/api/auth/telegram/callback", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const { id, first_name, last_name, username, photo_url, auth_date, hash } = req.body;
+      
+      if (!id || !hash || !auth_date) {
+        return res.status(400).json({ error: "Invalid Telegram data" });
+      }
+
+      const botToken = process.env.TELEGRAM_BOT_TOKEN!;
+      const secretKey = crypto.createHash('sha256').update(botToken).digest();
+      
+      const dataCheckArr = [];
+      if (auth_date) dataCheckArr.push(`auth_date=${auth_date}`);
+      if (first_name) dataCheckArr.push(`first_name=${first_name}`);
+      if (id) dataCheckArr.push(`id=${id}`);
+      if (last_name) dataCheckArr.push(`last_name=${last_name}`);
+      if (photo_url) dataCheckArr.push(`photo_url=${photo_url}`);
+      if (username) dataCheckArr.push(`username=${username}`);
+      
+      const dataCheckString = dataCheckArr.sort().join('\n');
+      
+      const hmac = crypto
+        .createHmac('sha256', secretKey)
+        .update(dataCheckString)
+        .digest('hex');
+      
+      if (hmac !== hash) {
+        return res.status(401).json({ error: "Invalid Telegram authentication" });
+      }
+
+      const authTimestamp = parseInt(auth_date);
+      const now = Math.floor(Date.now() / 1000);
+      if (now - authTimestamp > 86400) {
+        return res.status(401).json({ error: "Telegram authentication expired" });
+      }
+
+      const existingUser = await storage.getUserByTelegramId(id.toString());
+      
+      if (existingUser && existingUser.id !== authResult.userId) {
+        return res.status(400).json({ error: "Telegram account already linked to another user" });
+      }
+
+      await storage.linkTelegramAccount(authResult.userId, {
+        telegramChatId: id.toString(),
+        telegramUsername: username || `telegram_${id}`,
+        telegramFirstName: first_name || undefined,
+        telegramLastName: last_name || undefined,
+        telegramPhotoUrl: photo_url || undefined
+      });
+      
+      console.log(`Telegram linked for user ${authResult.userId}: ${username || id}`);
+      
+      res.json({ 
+        message: "Telegram linked successfully",
+        telegramUsername: username || `telegram_${id}`,
+        displayName: [first_name, last_name].filter(Boolean).join(' ') || `Telegram User ${id}`
+      });
+      
+    } catch (error) {
+      console.error('Telegram callback error:', error);
+      res.status(500).json({ error: "Failed to link Telegram account" });
+    }
+  });
+
+  // ===== DISCORD/TELEGRAM STATUS & UNLINK =====
+  
+  app.get("/api/user/:id/discord", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      if (authResult.userId !== req.params.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const user = await storage.getUser(req.params.id);
+      res.json({ 
+        discordUsername: user?.discordUsername || null,
+        discordId: user?.discordId || null,
+        discordAvatar: user?.discordAvatar || null
+      });
+    } catch (error) {
+      console.error('Check Discord error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/user/:id/discord", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      if (authResult.userId !== req.params.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      await storage.unlinkDiscordAccount(req.params.id);
+      
+      res.json({ message: "Discord unlinked successfully" });
+    } catch (error) {
+      console.error('Unlink Discord error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/user/:id/telegram", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      if (authResult.userId !== req.params.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const user = await storage.getUser(req.params.id);
+      res.json({ 
+        telegramUsername: user?.telegramUsername || null,
+        telegramChatId: user?.telegramChatId || null,
+        telegramPhotoUrl: user?.telegramPhotoUrl || null
+      });
+    } catch (error) {
+      console.error('Check Telegram error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/user/:id/telegram", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      if (authResult.userId !== req.params.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      await storage.unlinkTelegramAccount(req.params.id);
+      
+      res.json({ message: "Telegram unlinked successfully" });
+    } catch (error) {
+      console.error('Unlink Telegram error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ===== AUTH STATUS =====
+  
+  app.get("/api/auth/me", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const { user } = authResult;
+      
+      res.json({
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        balance: user.balance,
+        isAdmin: user.isAdmin,
+        subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
+        subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
+        subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
+        subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
+        subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason,
+        telegramUsername: user.telegramUsername,
+        discordUsername: user.discordUsername,
+      });
+    } catch (error) {
+      console.error('Auth check error:', error);
+      res.status(500).json({ error: "Authentication verification failed" });
+    }
+  });
+
   app.post("/api/auth/logout", async (req, res) => {
-    // For token-based auth, just return success
-    // In production, you might want to blacklist the token
     res.json({ message: "Logged out successfully" });
   });
 
   // ===== USER ROUTES =====
-  app.get("/api/user/epic/:epicId", async (req, res) => {
-  try {
-    const user = await storage.getUserByEpicGamesId(req.params.epicId);
-    if (!user) return res.status(404).json({ error: "User not found" });
-
-    const { epicGamesId, ...safeUser } = user;
-    res.json(safeUser);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-  // Get user by ID
+  
   app.get("/api/user/:id", async (req, res) => {
     try {
       const user = await storage.getUser(req.params.id);
@@ -593,7 +574,6 @@ app.post("/api/admin/subscription-screenshot/:userId/review", async (req, res) =
         return res.status(404).json({ error: "User not found" });
       }
       
-      // Don't expose sensitive information
       const { epicGamesId, ...safeUser } = user;
       res.json(safeUser);
     } catch (error) {
@@ -602,7 +582,6 @@ app.post("/api/admin/subscription-screenshot/:userId/review", async (req, res) =
     }
   });
 
-  // Get user statistics
   app.get("/api/user/:id/stats", async (req, res) => {
     try {
       const stats = await storage.getUserStats(req.params.id);
@@ -612,176 +591,124 @@ app.post("/api/admin/subscription-screenshot/:userId/review", async (req, res) =
       res.status(500).json({ error: "Internal server error" });
     }
   });
-  app.get("/api/user/:id/telegram", async (req, res) => {
-  try {
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) return res.status(authResult.status).json({ error: authResult.error });
 
-    if (authResult.userId !== req.params.id) return res.status(403).json({ error: "Access denied" });
-
-    const user = await storage.getUser(req.params.id);
-    res.json({ telegramUsername: user.telegramUsername || null });
-  } catch (error) {
-    console.error('Check Telegram error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-app.delete("/api/user/:id/telegram", async (req, res) => {
-  try {
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) return res.status(authResult.status).json({ error: authResult.error });
-
-    if (authResult.userId !== req.params.id) return res.status(403).json({ error: "Access denied" });
-
-    const user = await storage.updateUser(req.params.id, { telegramUsername: null });
-    res.json({ message: "Telegram unlinked successfully", telegramUsername: user.telegramUsername });
-  } catch (error) {
-    console.error('Unlink Telegram error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-  // Link Telegram account
-  app.post("/api/user/:id/telegram", async (req, res) => {
+  app.get("/api/user/:id/premium", async (req, res) => {
     try {
       const authResult = await authenticateUser(req);
       if ('error' in authResult) {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      // Verify user is updating their own account
-      if (authResult.userId !== req.params.id) {
+      if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
         return res.status(403).json({ error: "Access denied" });
       }
 
-      const validation = linkTelegramSchema.safeParse(req.body);
-      if (!validation.success) {
-        return res.status(400).json({ 
-          error: "Invalid telegram username", 
-          details: validation.error.errors 
-        });
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
       }
 
-      const user = await storage.updateUser(req.params.id, {
-        telegramUsername: validation.data.telegramUsername
+      const now = new Date();
+      const isActive = user.premiumEndDate && new Date(user.premiumEndDate) > now;
+      const daysRemaining = user.premiumEndDate 
+        ? Math.max(0, Math.ceil((new Date(user.premiumEndDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+        : 0;
+
+      res.json({
+        tier: user.premiumTier || 'none',
+        isActive,
+        startDate: user.premiumStartDate,
+        endDate: user.premiumEndDate,
+        daysRemaining,
+        autoRenew: user.premiumAutoRenew,
+        source: user.premiumSource,
       });
-      
-      res.json({ 
-        message: "Telegram account linked successfully",
-        telegramUsername: user.telegramUsername
-      });
+
     } catch (error) {
-      console.error('Link telegram error:', error);
-      res.status(500).json({ error: "Internal server error" });
+      console.error('Get user premium status error:', error);
+      res.status(500).json({ error: "Failed to fetch premium status" });
     }
   });
 
-  // ===== FILE UPLOAD ROUTES =====
+  // ===== FILE UPLOAD =====
+  
+  app.post("/api/upload", upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
 
-  // Upload file and create submission
- // Замените upload route в routes.ts на этот исправленный вариант:
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+      
+      const { userId } = authResult;
 
-app.post("/api/upload", upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
+      const fileType = await fileTypeFromBuffer(req.file.buffer);
+      if (!fileType) {
+        return res.status(400).json({ error: "Unable to determine file type" });
+      }
+
+      const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
+      const allAllowedTypes = [...allowedImageTypes, ...allowedVideoTypes];
+
+      if (!allAllowedTypes.includes(fileType.mime)) {
+        return res.status(400).json({ error: "Invalid file type detected. Only images and videos are allowed." });
+      }
+
+      const detectedFileType = allowedImageTypes.includes(fileType.mime) ? 'image' : 'video';
+      
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
+      const filename = `${userId}-${uniqueSuffix}${ext}`;
+      
+      const cloudinaryResult = await cloudStorage.uploadFile(
+        req.file.buffer,
+        filename,
+        detectedFileType
+      );
+      
+      const submissionData = {
+        userId: userId,
+        filename: cloudinaryResult.public_id,
+        originalFilename: req.file.originalname,
+        fileType: detectedFileType,
+        fileSize: req.file.size,
+        filePath: cloudinaryResult.secure_url,
+        category: req.body.category,
+        additionalText: req.body.additionalText || null,
+        cloudinaryPublicId: cloudinaryResult.public_id,
+        cloudinaryUrl: cloudinaryResult.secure_url
+      };
+
+      const validation = insertSubmissionSchema.safeParse(submissionData);
+      if (!validation.success) {
+        await cloudStorage.deleteFile(cloudinaryResult.public_id);
+        throw new Error(`Invalid submission data: ${validation.error.errors.map(e => e.message).join(', ')}`);
+      }
+
+      const submission = await storage.createSubmission(validation.data);
+      
+      const thumbnailUrl = cloudStorage.generateThumbnail(cloudinaryResult.public_id);
+      
+      res.json({
+        ...submission,
+        thumbnailUrl,
+        fileUrl: cloudinaryResult.secure_url
+      });
+      
+    } catch (error) {
+      console.error('Upload error:', error);
+      
+      const errorMessage = error instanceof Error ? error.message : "Failed to process upload";
+      res.status(500).json({ error: errorMessage });
     }
+  });
 
-    // Authenticate user BEFORE any operations
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-    
-    const { userId, user } = authResult;
-
-    // Advanced file type validation using magic bytes
-    const fileType = await fileTypeFromBuffer(req.file.buffer);
-    if (!fileType) {
-      return res.status(400).json({ error: "Unable to determine file type" });
-    }
-
-    const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
-    const allAllowedTypes = [...allowedImageTypes, ...allowedVideoTypes];
-
-    if (!allAllowedTypes.includes(fileType.mime)) {
-      return res.status(400).json({ error: "Invalid file type detected. Only images and videos are allowed." });
-    }
-
-    const detectedFileType = allowedImageTypes.includes(fileType.mime) ? 'image' : 'video';
-    
-    // Generate unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
-    const filename = `${userId}-${uniqueSuffix}${ext}`;
-    
-    console.log(`☁️ Uploading to Cloudinary: ${filename}`);
-    
-    // Upload to Cloudinary
-    const cloudinaryResult = await cloudStorage.uploadFile(
-      req.file.buffer,
-      filename,
-      detectedFileType
-    );
-    
-    console.log(`✅ Cloudinary upload successful:`, {
-      public_id: cloudinaryResult.public_id,
-      url: cloudinaryResult.secure_url,
-      size: cloudinaryResult.bytes
-    });
-    
-    // Validate submission data - добавляем additional text
-    const submissionData = {
-      userId: userId,
-      filename: cloudinaryResult.public_id,
-      originalFilename: req.file.originalname,
-      fileType: detectedFileType,
-      fileSize: req.file.size,
-      filePath: cloudinaryResult.secure_url,
-      category: req.body.category,
-      additionalText: req.body.additionalText || null, // НОВОЕ ПОЛЕ
-      // Дополнительные поля для Cloudinary
-      cloudinaryPublicId: cloudinaryResult.public_id,
-      cloudinaryUrl: cloudinaryResult.secure_url
-    };
-
-    console.log(`📝 Creating submission with data:`, submissionData);
-
-    const validation = insertSubmissionSchema.safeParse(submissionData);
-    if (!validation.success) {
-      // Если валидация не прошла, удаляем файл из Cloudinary
-      await cloudStorage.deleteFile(cloudinaryResult.public_id);
-      throw new Error(`Invalid submission data: ${validation.error.errors.map(e => e.message).join(', ')}`);
-    }
-
-    const submission = await storage.createSubmission(validation.data);
-    console.log('✅ Submission created successfully:', {
-      id: submission.id,
-      cloudinaryPublicId: submission.cloudinaryPublicId,
-      url: submission.filePath,
-      additionalText: submission.additionalText
-    });
-    
-    // Generate thumbnail URL for preview
-    const thumbnailUrl = cloudStorage.generateThumbnail(cloudinaryResult.public_id);
-    
-    // Success response
-    res.json({
-      ...submission,
-      thumbnailUrl,
-      fileUrl: cloudinaryResult.secure_url
-    });
-    
-  } catch (error) {
-    console.error('❌ Upload error:', error);
-    
-    const errorMessage = error instanceof Error ? error.message : "Failed to process upload";
-    res.status(500).json({ error: errorMessage });
-  }
-});
   // ===== SUBMISSION ROUTES =====
-
-  // Get all submissions (admin only)
+  
   app.get("/api/submissions", async (req, res) => {
     try {
       const authResult = await authenticateAdmin(req);
@@ -797,7 +724,6 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
     }
   });
 
-  // Get submissions by user ID
   app.get("/api/submissions/user/:userId", async (req, res) => {
     try {
       const authResult = await authenticateUser(req);
@@ -805,7 +731,6 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      // Users can only see their own submissions, admins can see any
       if (authResult.userId !== req.params.userId && !authResult.user.isAdmin) {
         return res.status(403).json({ error: "Access denied" });
       }
@@ -818,7 +743,6 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
     }
   });
   
-  // Get single submission
   app.get("/api/submission/:id", async (req, res) => {
     try {
       const submission = await storage.getSubmission(req.params.id);
@@ -831,7 +755,6 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      // Users can only see their own submissions, admins can see any
       if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
         return res.status(403).json({ error: "Access denied" });
       }
@@ -843,180 +766,266 @@ app.post("/api/upload", upload.single('file'), async (req, res) => {
     }
   });
 
+  app.get("/api/files/:submissionId", async (req, res) => {
+    const submissionId = req.params.submissionId;
+    
+    try {
+      const submission = await storage.getSubmission(submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: "File not found - submission not found" });
+      }
+
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (submission.filePath.startsWith('https://res.cloudinary.com')) {
+        return res.redirect(submission.filePath);
+      }
+
+      const filePath = path.resolve(submission.filePath);
+      const uploadsDir = path.resolve('./uploads');
+      
+      if (!filePath.startsWith(uploadsDir)) {
+        return res.status(403).json({ error: "Access denied - invalid path" });
+      }
+      
+      try {
+        await fs.access(filePath);
+        res.sendFile(filePath);
+      } catch {
+        return res.status(404).json({ error: "File not found on disk" });
+      }
+      
+    } catch (error) {
+      console.error('Serve file error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/preview/:submissionId", async (req, res) => {
+    try {
+      const submission = await storage.getSubmission(req.params.submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      const authResult = await authenticateUser(req);
+      if ("error" in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+      
+      if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (submission.cloudinaryPublicId) {
+        const thumbnailUrl = cloudStorage.generateThumbnail(submission.cloudinaryPublicId);
+        return res.redirect(thumbnailUrl);
+      }
+
+      const previewPath = submission.filePath.replace(/file-/, "preview-file-") + ".webp";
+      try {
+        await fs.access(previewPath);
+        res.sendFile(path.resolve(previewPath));
+      } catch {
+        return res.status(404).json({ error: "Preview not found" });
+      }
+    } catch (error) {
+      console.error("Serve preview error:", error);
+      res.status(500).json({ error: "Failed to serve preview" });
+    }
+  });
+
+  app.get("/api/file-url/:submissionId", async (req, res) => {
+    try {
+      const submission = await storage.getSubmission(req.params.submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      const authResult = await authenticateUser(req);
+      if ("error" in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+      
+      if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      res.json({
+        fileUrl: submission.filePath,
+        thumbnailUrl: submission.cloudinaryPublicId 
+          ? cloudStorage.generateThumbnail(submission.cloudinaryPublicId) 
+          : null
+      });
+    } catch (error) {
+      console.error("Get file URL error:", error);
+      res.status(500).json({ error: "Failed to get file URL" });
+    }
+  });
+
   // ===== ADMIN ROUTES =====
 
-  // Review submission (approve/reject)
   app.post("/api/admin/submission/:id/review", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
 
-    console.log('Review request body:', req.body); // Для отладки
+      const reviewData = {
+        status: req.body.status,
+        reward: req.body.reward ? Number(req.body.reward) : undefined,
+        rejectionReason: req.body.rejectionReason
+      };
 
-    // Преобразуем данные перед валидацией
-    const reviewData = {
-      status: req.body.status,
-      reward: req.body.reward ? Number(req.body.reward) : undefined, // Преобразуем в число
-      rejectionReason: req.body.rejectionReason
-    };
+      const validation = reviewSubmissionSchema.safeParse(reviewData);
+      if (!validation.success) {
+        return res.status(400).json({ 
+          error: "Invalid review data", 
+          details: validation.error.errors 
+        });
+      }
 
-    console.log('Transformed review data:', reviewData); // Для отладки
-
-    const validation = reviewSubmissionSchema.safeParse(reviewData);
-    if (!validation.success) {
-      console.error('Validation failed:', validation.error.errors); // Для отладки
-      return res.status(400).json({ 
-        error: "Invalid review data", 
-        details: validation.error.errors 
-      });
-    }
-
-    const { status, reward, rejectionReason } = validation.data;
-    
-    // Validate business rules
-    if (status === 'approved' && (!reward || reward <= 0)) {
-      return res.status(400).json({ error: "Valid reward amount required for approved submissions" });
-    }
-    
-    if (status === 'rejected' && !rejectionReason?.trim()) {
-      return res.status(400).json({ error: "Rejection reason required for rejected submissions" });
-    }
-
-    const submission = await storage.updateSubmissionStatus(
-      req.params.id, 
-      status, 
-      authResult.adminId, 
-      reward, 
-      rejectionReason
-    );
-
-    // If approved, update user balance
-    if (status === 'approved' && reward) {
-      await storage.updateUserBalance(submission.userId, reward);
+      const { status, reward, rejectionReason } = validation.data;
       
-      // Log admin action
-      await storage.createAdminAction({
-        adminId: authResult.adminId,
-        action: 'approve_submission',
-        targetType: 'submission',
-        targetId: submission.id,
-        details: JSON.stringify({ reward, submissionId: submission.id })
-      });
-    } else if (status === 'rejected') {
-      // Log admin action
-      await storage.createAdminAction({
-        adminId: authResult.adminId,
-        action: 'reject_submission',
-        targetType: 'submission',
-        targetId: submission.id,
-        details: JSON.stringify({ rejectionReason, submissionId: submission.id })
-      });
+      if (status === 'approved' && (!reward || reward <= 0)) {
+        return res.status(400).json({ error: "Valid reward amount required for approved submissions" });
+      }
+      
+      if (status === 'rejected' && !rejectionReason?.trim()) {
+        return res.status(400).json({ error: "Rejection reason required for rejected submissions" });
+      }
+
+      const submission = await storage.updateSubmissionStatus(
+        req.params.id, 
+        status, 
+        authResult.adminId, 
+        reward, 
+        rejectionReason
+      );
+
+      if (status === 'approved' && reward) {
+        await storage.updateUserBalance(submission.userId, reward);
+        
+        await storage.createAdminAction({
+          adminId: authResult.adminId,
+          action: 'approve_submission',
+          targetType: 'submission',
+          targetId: submission.id,
+          details: JSON.stringify({ reward, submissionId: submission.id })
+        });
+      } else if (status === 'rejected') {
+        await storage.createAdminAction({
+          adminId: authResult.adminId,
+          action: 'reject_submission',
+          targetType: 'submission',
+          targetId: submission.id,
+          details: JSON.stringify({ rejectionReason, submissionId: submission.id })
+        });
+      }
+
+      res.json(submission);
+    } catch (error) {
+      console.error('Review error:', error);
+      res.status(500).json({ error: "Failed to process review" });
     }
+  });
 
-    res.json(submission);
-  } catch (error) {
-    console.error('Review error:', error);
-    res.status(500).json({ error: "Failed to process review" });
-  }
-});
-app.get("/api/admin/users", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
+  app.get("/api/admin/users", async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const users = await storage.getAllUsers();
+      
+      const usersWithStats = await Promise.all(
+        users.map(async (user) => {
+          try {
+            const stats = await storage.getUserStats(user.id);
+            return {
+              ...user,
+              stats
+            };
+          } catch (error) {
+            console.error(`Failed to get stats for user ${user.id}:`, error);
+            return {
+              ...user,
+              stats: {
+                totalSubmissions: 0,
+                approvedSubmissions: 0,
+                pendingSubmissions: 0,
+                rejectedSubmissions: 0,
+                totalEarnings: 0,
+                isAdmin: user.isAdmin
+              }
+            };
+          }
+        })
+      );
+
+      res.json(usersWithStats);
+    } catch (error) {
+      console.error('Get all users error:', error);
+      res.status(500).json({ error: "Internal server error" });
     }
+  });
 
-    const users = await storage.getAllUsers();
-    
-    // Добавляем статистику для каждого пользователя
-    const usersWithStats = await Promise.all(
-      users.map(async (user) => {
-        try {
-          const stats = await storage.getUserStats(user.id);
-          return {
-            ...user,
-            stats
-          };
-        } catch (error) {
-          console.error(`Failed to get stats for user ${user.id}:`, error);
-          return {
-            ...user,
-            stats: {
-              totalSubmissions: 0,
-              approvedSubmissions: 0,
-              pendingSubmissions: 0,
-              rejectedSubmissions: 0,
-              totalEarnings: 0,
-              isAdmin: user.isAdmin
-            }
-          };
-        }
-      })
-    );
-
-    res.json(usersWithStats);
-  } catch (error) {
-    console.error('Get all users error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
   app.post("/api/admin/user/:id/balance", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
 
-    console.log('Balance update request body:', req.body); // Для отладки
+      const balanceData = {
+        amount: req.body.amount ? Number(req.body.amount) : undefined,
+        reason: req.body.reason
+      };
 
-    // Преобразуем данные перед валидацией
-    const balanceData = {
-      amount: req.body.amount ? Number(req.body.amount) : undefined, // Преобразуем в число
-      reason: req.body.reason
-    };
+      const validation = updateUserBalanceSchema.safeParse(balanceData);
+      if (!validation.success) {
+        return res.status(400).json({ 
+          error: "Invalid balance update data", 
+          details: validation.error.errors 
+        });
+      }
 
-    console.log('Transformed balance data:', balanceData); // Для отладки
+      const { amount, reason } = validation.data;
+      
+      if (!amount || isNaN(amount)) {
+        return res.status(400).json({ error: "Valid amount is required" });
+      }
 
-    const validation = updateUserBalanceSchema.safeParse(balanceData);
-    if (!validation.success) {
-      console.error('Balance validation failed:', validation.error.errors); // Для отладки
-      return res.status(400).json({ 
-        error: "Invalid balance update data", 
-        details: validation.error.errors 
+      if (!reason?.trim()) {
+        return res.status(400).json({ error: "Reason is required" });
+      }
+
+      const user = await storage.updateUserBalance(req.params.id, amount);
+      
+      await storage.createAdminAction({
+        adminId: authResult.adminId,
+        action: 'adjust_balance',
+        targetType: 'user',
+        targetId: user.id,
+        details: JSON.stringify({ amount, reason, newBalance: user.balance })
       });
+
+      res.json(user);
+    } catch (error) {
+      console.error('Update balance error:', error);
+      res.status(500).json({ error: "Failed to update balance" });
     }
+  });
 
-    const { amount, reason } = validation.data;
-    
-    // Дополнительная проверка
-    if (!amount || isNaN(amount)) {
-      return res.status(400).json({ error: "Valid amount is required" });
-    }
-
-    if (!reason?.trim()) {
-      return res.status(400).json({ error: "Reason is required" });
-    }
-
-    const user = await storage.updateUserBalance(req.params.id, amount);
-    
-    // Log admin action
-    await storage.createAdminAction({
-      adminId: authResult.adminId,
-      action: 'adjust_balance',
-      targetType: 'user',
-      targetId: user.id,
-      details: JSON.stringify({ amount, reason, newBalance: user.balance })
-    });
-
-    res.json(user);
-  } catch (error) {
-    console.error('Update balance error:', error);
-    res.status(500).json({ error: "Failed to update balance" });
-  }
-});
-  // Get admin actions log
   app.get("/api/admin/actions", async (req, res) => {
     try {
       const authResult = await authenticateAdmin(req);
@@ -1032,499 +1041,1022 @@ app.get("/api/admin/users", async (req, res) => {
     }
   });
 
-  // ===== FILE SERVING ROUTES =====
+  // ===== PREMIUM ROUTES =====
 
-  // Serve uploaded files securely by submission ID
-  // Замените маршрут /api/files/:submissionId в routes.ts на этот улучшенный вариант:
-
-app.get("/api/files/:submissionId", async (req, res) => {
-  const submissionId = req.params.submissionId;
-  console.log(`📁 File request for submission: ${submissionId}`);
-  
-  try {
-    // Get submission data
-    const submission = await storage.getSubmission(submissionId);
-    if (!submission) {
-      console.error(`❌ Submission not found: ${submissionId}`);
-      return res.status(404).json({ error: "File not found - submission not found" });
-    }
-
-    // Check authentication
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) {
-      console.error(`❌ Authentication failed for submission ${submissionId}:`, authResult.error);
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    // Check access permissions
-    if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
-      console.error(`❌ Access denied for user ${authResult.userId} to submission ${submissionId}`);
-      return res.status(403).json({ error: "Access denied" });
-    }
-
-    // Для Cloudinary файлов просто редиректим на URL
-    if (submission.filePath.startsWith('https://res.cloudinary.com')) {
-      console.log(`🔗 Redirecting to Cloudinary URL: ${submission.filePath}`);
-      return res.redirect(submission.filePath);
-    }
-
-    // Fallback для старых файлов в файловой системе (если есть)
-    const filePath = path.resolve(submission.filePath);
-    const uploadsDir = path.resolve('./uploads');
-    
-    if (!filePath.startsWith(uploadsDir)) {
-      return res.status(403).json({ error: "Access denied - invalid path" });
-    }
-    
+  app.post("/api/admin/user/:userId/premium", async (req, res) => {
     try {
-      await fs.access(filePath, fs.constants.F_OK);
-      res.sendFile(filePath);
-    } catch (accessError: any) {
-      return res.status(404).json({ error: "File not found on disk" });
-    }
-    
-  } catch (error) {
-    console.error(`❌ Serve file error for submission ${submissionId}:`, error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
 
-// Serve preview/thumbnail
-app.get("/api/preview/:submissionId", async (req, res) => {
-  try {
-    const submission = await storage.getSubmission(req.params.submissionId);
-    if (!submission) {
-      return res.status(404).json({ error: "Submission not found" });
-    }
+      const validation = grantPremiumSchema.safeParse({
+        userId: req.params.userId,
+        tier: req.body.tier,
+        durationDays: Number(req.body.durationDays),
+        reason: req.body.reason,
+        source: req.body.source
+      });
+      
+      if (!validation.success) {
+        return res.status(400).json({ 
+          error: "Invalid premium grant data", 
+          details: validation.error.errors 
+        });
+      }
 
-    const authResult = await authenticateUser(req);
-    if ("error" in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-    
-    if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
-      return res.status(403).json({ error: "Access denied" });
-    }
+      const { tier, durationDays, reason, source } = validation.data;
+      const userId = req.params.userId;
 
-    // Для Cloudinary файлов генерируем thumbnail URL
-    if (submission.cloudinaryPublicId) {
-      const thumbnailUrl = cloudStorage.generateThumbnail(submission.cloudinaryPublicId);
-      console.log(`🖼️ Redirecting to Cloudinary thumbnail: ${thumbnailUrl}`);
-      return res.redirect(thumbnailUrl);
-    }
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
 
-    // Fallback для старых файлов
-    const previewPath = submission.filePath.replace(/file-/, "preview-file-") + ".webp";
+      const now = new Date();
+      const startDate = user.premiumEndDate && new Date(user.premiumEndDate) > now 
+        ? new Date(user.premiumEndDate)
+        : now;
+      
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + durationDays);
+
+      const updatedUser = await storage.updateUser(userId, {
+        premiumTier: tier,
+        premiumStartDate: startDate,
+        premiumEndDate: endDate,
+        premiumSource: source,
+        premiumGiftedBy: authResult.adminId,
+        premiumLastChecked: now,
+      });
+
+      await storage.createPremiumHistory({
+        userId,
+        tier,
+        startDate,
+        endDate,
+        source,
+        grantedBy: authResult.adminId,
+        reason,
+        autoRenewed: false,
+      });
+
+      await storage.createAdminAction({
+        adminId: authResult.adminId,
+        action: 'grant_premium',
+        targetType: 'user',
+        targetId: userId,
+        details: JSON.stringify({ tier, durationDays, reason, startDate, endDate })
+      });
+
+      res.json({
+        message: "Premium granted successfully",
+        user: {
+          id: updatedUser.id,
+          username: updatedUser.username,
+          premiumTier: updatedUser.premiumTier,
+          premiumStartDate: updatedUser.premiumStartDate,
+          premiumEndDate: updatedUser.premiumEndDate,
+        }
+      });
+
+    } catch (error) {
+      console.error('Grant premium error:', error);
+      res.status(500).json({ error: "Failed to grant premium" });
+    }
+  });
+
+  app.get("/api/admin/premium-users", async (req, res) => {
     try {
-      await fs.access(previewPath);
-      res.sendFile(path.resolve(previewPath));
-    } catch {
-      return res.status(404).json({ error: "Preview not found" });
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const users = await storage.getPremiumUsers();
+      
+      const now = new Date();
+      const usersWithStatus = users.map(user => ({
+        ...user,
+        isExpired: user.premiumEndDate ? new Date(user.premiumEndDate) < now : true,
+        daysRemaining: user.premiumEndDate 
+          ? Math.max(0, Math.ceil((new Date(user.premiumEndDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+          : 0
+      }));
+
+      res.json(usersWithStatus);
+
+    } catch (error) {
+      console.error('Get premium users error:', error);
+      res.status(500).json({ error: "Failed to fetch premium users" });
     }
-  } catch (error) {
-    console.error("Serve preview error:", error);
-    res.status(500).json({ error: "Failed to serve preview" });
-  }
-});
+  });
 
-// Новый маршрут для получения прямого URL файла (для админки)
-app.get("/api/file-url/:submissionId", async (req, res) => {
-  try {
-    const submission = await storage.getSubmission(req.params.submissionId);
-    if (!submission) {
-      return res.status(404).json({ error: "Submission not found" });
+  // ===== BALANCE & WITHDRAWAL ROUTES =====
+
+  app.get("/api/user/:id/balance/transactions", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+      const transactions = await storage.getUserBalanceTransactions(req.params.id, limit);
+      
+      res.json(transactions);
+    } catch (error) {
+      console.error('Get balance transactions error:', error);
+      res.status(500).json({ error: "Internal server error" });
     }
+  });
 
-    const authResult = await authenticateUser(req);
-    if ("error" in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-    
-    if (submission.userId !== authResult.userId && !authResult.user.isAdmin) {
-      return res.status(403).json({ error: "Access denied" });
-    }
+  app.post("/api/user/:id/withdrawal", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
 
-    res.json({
-      fileUrl: submission.filePath,
-      thumbnailUrl: submission.cloudinaryPublicId 
-        ? cloudStorage.generateThumbnail(submission.cloudinaryPublicId) 
-        : null
-    });
-  } catch (error) {
-    console.error("Get file URL error:", error);
-    res.status(500).json({ error: "Failed to get file URL" });
-  }
-});
-app.get("/api/user/:id/balance/transactions", async (req, res) => {
-  try {
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
+      if (authResult.userId !== req.params.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
 
-    // Пользователи могут видеть только свои транзакции, админы - любые
-    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
-      return res.status(403).json({ error: "Access denied" });
-    }
+      const validation = createWithdrawalRequestSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ 
+          error: "Invalid withdrawal data", 
+          details: validation.error.errors 
+        });
+      }
 
-    const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
-    const transactions = await storage.getUserBalanceTransactions(req.params.id, limit);
-    
-    res.json(transactions);
-  } catch (error) {
-    console.error('Get balance transactions error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+      const { amount, method, methodData } = validation.data;
 
-// ===== WITHDRAWAL ROUTES =====
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
 
-// Создать заявку на вывод
-app.post("/api/user/:id/withdrawal", async (req, res) => {
-  try {
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
+      if (user.balance < amount) {
+        return res.status(400).json({ error: "Insufficient balance" });
+      }
 
-    // Пользователь может создать заявку только для себя
-    if (authResult.userId !== req.params.id) {
-      return res.status(403).json({ error: "Access denied" });
-    }
+      const activeRequests = await storage.getUserWithdrawalRequests(req.params.id);
+      const pendingRequests = activeRequests.filter(r => r.status === 'pending' || r.status === 'processing');
+      
+      if (pendingRequests.length > 0) {
+        return res.status(400).json({ 
+          error: "You already have a pending withdrawal request" 
+        });
+      }
 
-    console.log('Withdrawal request body:', req.body);
-
-    const validation = createWithdrawalRequestSchema.safeParse(req.body);
-    if (!validation.success) {
-      console.error('Withdrawal validation failed:', validation.error.errors);
-      return res.status(400).json({ 
-        error: "Invalid withdrawal data", 
-        details: validation.error.errors 
+      const withdrawalRequest = await storage.createWithdrawalRequest({
+        userId: req.params.id,
+        amount,
+        method,
+        methodData: JSON.stringify(methodData),
+        status: 'pending'
       });
-    }
 
-    const { amount, method, methodData } = validation.data;
-
-    // Проверяем баланс пользователя
-    const user = await storage.getUser(req.params.id);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    if (user.balance < amount) {
-      return res.status(400).json({ error: "Insufficient balance" });
-    }
-
-    // Проверяем нет ли активных заявок на вывод
-    const activeRequests = await storage.getUserWithdrawalRequests(req.params.id);
-    const pendingRequests = activeRequests.filter(r => r.status === 'pending' || r.status === 'processing');
-    
-    if (pendingRequests.length > 0) {
-      return res.status(400).json({ 
-        error: "You already have a pending withdrawal request" 
-      });
-    }
-
-    // Создаем заявку на вывод
-    const withdrawalRequest = await storage.createWithdrawalRequest({
-      userId: req.params.id,
-      amount,
-      method,
-      methodData: JSON.stringify(methodData),
-      status: 'pending'
-    });
-
-    // Резервируем средства (уменьшаем баланс)
-    await storage.updateUserBalance(
-      req.params.id, 
-      -amount, 
-      `Заявка на вывод #${withdrawalRequest.id}`,
-      'withdrawal_request',
-      'withdrawal',
-      withdrawalRequest.id
-    );
-
-    res.json(withdrawalRequest);
-  } catch (error) {
-    console.error('Create withdrawal error:', error);
-    res.status(500).json({ error: "Failed to create withdrawal request" });
-  }
-});
-
-// Получить заявки на вывод пользователя
-app.get("/api/user/:id/withdrawals", async (req, res) => {
-  try {
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    // Пользователи могут видеть только свои заявки, админы - любые
-    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
-      return res.status(403).json({ error: "Access denied" });
-    }
-
-    const requests = await storage.getUserWithdrawalRequests(req.params.id);
-    
-    // Парсим methodData для каждой заявки
-    const requestsWithParsedData = requests.map(request => ({
-      ...request,
-      methodData: JSON.parse(request.methodData)
-    }));
-    
-    res.json(requestsWithParsedData);
-  } catch (error) {
-    console.error('Get withdrawal requests error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// ===== ADMIN WITHDRAWAL ROUTES =====
-
-// Получить все заявки на вывод (admin only)
-app.get("/api/admin/withdrawals", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    const requests = await storage.getAllWithdrawalRequests();
-    
-    // Парсим methodData и добавляем информацию о пользователе
-    const requestsWithDetails = await Promise.all(
-      requests.map(async (request) => {
-        const user = await storage.getUser(request.userId);
-        return {
-          ...request,
-          methodData: JSON.parse(request.methodData),
-          user: user ? {
-            username: user.username,
-            displayName: user.displayName,
-            telegramUsername: user.telegramUsername
-          } : null
-        };
-      })
-    );
-    
-    res.json(requestsWithDetails);
-  } catch (error) {
-    console.error('Get all withdrawal requests error:', error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Обработать заявку на вывод (admin only)
-app.post("/api/admin/withdrawal/:id/process", async (req, res) => {
-  try {
-    const authResult = await authenticateAdmin(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-
-    const validation = processWithdrawalSchema.safeParse(req.body);
-    if (!validation.success) {
-      return res.status(400).json({ 
-        error: "Invalid process data", 
-        details: validation.error.errors 
-      });
-    }
-
-    const { status, rejectionReason } = validation.data;
-    const withdrawalId = req.params.id;
-
-    // Получаем заявку на вывод
-    const withdrawal = await storage.getWithdrawalRequest(withdrawalId);
-    if (!withdrawal) {
-      return res.status(404).json({ error: "Withdrawal request not found" });
-    }
-
-    if (withdrawal.status !== 'pending' && withdrawal.status !== 'processing') {
-      return res.status(400).json({ error: "Withdrawal request already processed" });
-    }
-
-    // Обновляем статус заявки
-    const updatedWithdrawal = await storage.updateWithdrawalRequest(withdrawalId, {
-      status,
-      processedBy: authResult.adminId,
-      processedAt: new Date(),
-      rejectionReason
-    });
-
-    // Если заявка отклонена, возвращаем средства пользователю
-    if (status === 'rejected') {
       await storage.updateUserBalance(
-        withdrawal.userId,
-        withdrawal.amount,
-        `Возврат средств за отклоненную заявку #${withdrawalId}: ${rejectionReason}`,
-        'bonus',
+        req.params.id, 
+        -amount, 
+        `Withdrawal request #${withdrawalRequest.id}`,
+        'withdrawal_request',
         'withdrawal',
-        withdrawalId
+        withdrawalRequest.id
+      );
+
+      res.json(withdrawalRequest);
+    } catch (error) {
+      console.error('Create withdrawal error:', error);
+      res.status(500).json({ error: "Failed to create withdrawal request" });
+    }
+  });
+
+  app.get("/api/user/:id/withdrawals", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const requests = await storage.getUserWithdrawalRequests(req.params.id);
+      
+      const requestsWithParsedData = requests.map(request => ({
+        ...request,
+        methodData: JSON.parse(request.methodData)
+      }));
+      
+      res.json(requestsWithParsedData);
+    } catch (error) {
+      console.error('Get withdrawal requests error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/admin/withdrawals", async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const requests = await storage.getAllWithdrawalRequests();
+      
+      const requestsWithDetails = await Promise.all(
+        requests.map(async (request) => {
+          const user = await storage.getUser(request.userId);
+          return {
+            ...request,
+            methodData: JSON.parse(request.methodData),
+            user: user ? {
+              username: user.username,
+              displayName: user.displayName,
+              telegramUsername: user.telegramUsername
+            } : null
+          };
+        })
+      );
+      
+      res.json(requestsWithDetails);
+    } catch (error) {
+      console.error('Get all withdrawal requests error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/admin/withdrawal/:id/process", async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const validation = processWithdrawalSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ 
+          error: "Invalid process data", 
+          details: validation.error.errors 
+        });
+      }
+
+      const { status, rejectionReason } = validation.data;
+      const withdrawalId = req.params.id;
+
+      const withdrawal = await storage.getWithdrawalRequest(withdrawalId);
+      if (!withdrawal) {
+        return res.status(404).json({ error: "Withdrawal request not found" });
+      }
+
+      if (withdrawal.status !== 'pending' && withdrawal.status !== 'processing') {
+        return res.status(400).json({ error: "Withdrawal request already processed" });
+      }
+
+      const updatedWithdrawal = await storage.updateWithdrawalRequest(withdrawalId, {
+        status,
+        processedBy: authResult.adminId,
+        processedAt: new Date(),
+        rejectionReason
+      });
+
+      if (status === 'rejected') {
+        await storage.updateUserBalance(
+          withdrawal.userId,
+          withdrawal.amount,
+          `Refund for rejected withdrawal #${withdrawalId}: ${rejectionReason}`,
+          'bonus',
+          'withdrawal',
+          withdrawalId
+        );
+      }
+
+      if (status === 'completed') {
+        await storage.createBalanceTransaction({
+          userId: withdrawal.userId,
+          type: 'withdrawal_completed',
+          amount: -withdrawal.amount,
+          description: `Withdrawal completed #${withdrawalId}`,
+          sourceType: 'withdrawal',
+          sourceId: withdrawalId
+        });
+      }
+
+      await storage.createAdminAction({
+        adminId: authResult.adminId,
+        action: 'process_withdrawal',
+        targetType: 'withdrawal',
+        targetId: withdrawalId,
+        details: JSON.stringify({ 
+          status, 
+          rejectionReason, 
+          amount: withdrawal.amount,
+          userId: withdrawal.userId 
+        })
+      });
+
+      res.json({
+        ...updatedWithdrawal,
+        methodData: JSON.parse(updatedWithdrawal.methodData)
+      });
+    } catch (error) {
+      console.error('Process withdrawal error:', error);
+      res.status(500).json({ error: "Failed to process withdrawal" });
+    }
+  });
+
+  // ===== SUBSCRIPTION SCREENSHOT =====
+
+  app.post("/api/user/subscription-screenshot", upload.single('screenshot'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No screenshot uploaded" });
+      }
+
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+      
+      const { userId } = authResult;
+
+      const fileType = await fileTypeFromBuffer(req.file.buffer);
+      if (!fileType || !['image/jpeg', 'image/png', 'image/webp'].includes(fileType.mime)) {
+        return res.status(400).json({ error: "Invalid file type. Only JPEG, PNG, and WebP images are allowed." });
+      }
+
+      const currentUser = await storage.getUser(userId);
+      
+      if (currentUser?.subscriptionScreenshotStatus === 'approved') {
+        console.log(`User ${userId} (${currentUser.username}) is re-uploading subscription screenshot`);
+      }
+
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
+      const filename = `subscription-${userId}-${uniqueSuffix}${ext}`;
+      
+      const cloudinaryResult = await cloudStorage.uploadFile(
+        req.file.buffer,
+        filename,
+        'image'
+      );
+      
+      const updatedUser = await storage.updateUser(userId, {
+        subscriptionScreenshotUrl: cloudinaryResult.secure_url,
+        subscriptionScreenshotStatus: 'approved',
+        subscriptionScreenshotUploadedAt: new Date(),
+        subscriptionScreenshotReviewedAt: new Date(),
+        subscriptionScreenshotReviewedBy: 'system',
+        subscriptionScreenshotRejectionReason: null,
+        updatedAt: new Date()
+      });
+
+      await storage.createAdminAction({
+        adminId: 'system',
+        action: currentUser?.subscriptionScreenshotStatus === 'approved' ? 'reupload_subscription_screenshot' : 'auto_approve_subscription_screenshot',
+        targetType: 'user',
+        targetId: userId,
+        details: JSON.stringify({ 
+          screenshotUrl: cloudinaryResult.secure_url,
+          autoApproved: true,
+          previousStatus: currentUser?.subscriptionScreenshotStatus || 'none'
+        })
+      });
+      
+      res.json({
+        message: "Screenshot uploaded and approved successfully",
+        status: updatedUser.subscriptionScreenshotStatus,
+        uploadedAt: updatedUser.subscriptionScreenshotUploadedAt,
+        autoApproved: true,
+        overwritten: currentUser?.subscriptionScreenshotStatus === 'approved'
+      });
+      
+    } catch (error) {
+      console.error('Subscription screenshot upload error:', error);
+      
+      const errorMessage = error instanceof Error ? error.message : "Failed to upload subscription screenshot";
+      res.status(500).json({ error: errorMessage });
+    }
+  });
+
+  app.get("/api/user/:id/subscription-screenshot", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({
+        status: user.subscriptionScreenshotStatus || 'none',
+        uploadedAt: user.subscriptionScreenshotUploadedAt,
+        reviewedAt: user.subscriptionScreenshotReviewedAt,
+        rejectionReason: user.subscriptionScreenshotRejectionReason
+      });
+    } catch (error) {
+      console.error('Get subscription screenshot status error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/admin/subscription-screenshots", async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const users = await storage.getAllUsers();
+      
+      const subscriptionScreenshots = await Promise.all(
+        users
+          .filter(user => user.subscriptionScreenshotStatus && user.subscriptionScreenshotStatus !== 'none')
+          .map(async (user) => {
+            try {
+              const stats = await storage.getUserStats(user.id);
+              return {
+                id: user.id,
+                username: user.username,
+                displayName: user.displayName,
+                subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
+                subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
+                subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
+                subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
+                subscriptionScreenshotReviewedBy: user.subscriptionScreenshotReviewedBy,
+                subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason,
+                balance: user.balance,
+                stats: {
+                  totalSubmissions: stats.totalSubmissions,
+                  approvedSubmissions: stats.approvedSubmissions,
+                  totalEarnings: stats.totalEarnings
+                }
+              };
+            } catch (error) {
+              return {
+                id: user.id,
+                username: user.username,
+                displayName: user.displayName,
+                subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
+                subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
+                subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,
+                subscriptionScreenshotReviewedAt: user.subscriptionScreenshotReviewedAt,
+                subscriptionScreenshotReviewedBy: user.subscriptionScreenshotReviewedBy,
+                subscriptionScreenshotRejectionReason: user.subscriptionScreenshotRejectionReason,
+                balance: user.balance,
+                stats: {
+                  totalSubmissions: 0,
+                  approvedSubmissions: 0,
+                  totalEarnings: 0
+                }
+              };
+            }
+          })
+      );
+
+      subscriptionScreenshots.sort((a, b) => {
+        if (a.subscriptionScreenshotStatus === 'pending' && b.subscriptionScreenshotStatus !== 'pending') return -1;
+        if (b.subscriptionScreenshotStatus === 'pending' && a.subscriptionScreenshotStatus !== 'pending') return 1;
+        
+        const dateA = new Date(a.subscriptionScreenshotUploadedAt || 0).getTime();
+        const dateB = new Date(b.subscriptionScreenshotUploadedAt || 0).getTime();
+        return dateB - dateA;
+      });
+
+      res.json(subscriptionScreenshots);
+    } catch (error) {
+      console.error('Get subscription screenshots error:', error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/admin/subscription-screenshot/:userId/review", async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const { status, rejectionReason } = req.body;
+      
+      if (!['approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ error: "Invalid status. Must be 'approved' or 'rejected'" });
+      }
+
+      if (status === 'rejected' && !rejectionReason?.trim()) {
+        return res.status(400).json({ error: "Rejection reason is required when rejecting screenshot" });
+      }
+
+      const user = await storage.getUser(req.params.userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (!user.subscriptionScreenshotUrl) {
+        return res.status(400).json({ error: "User has no subscription screenshot to review" });
+      }
+
+      const updatedUser = await storage.updateUser(req.params.userId, {
+        subscriptionScreenshotStatus: status,
+        subscriptionScreenshotReviewedAt: new Date(),
+        subscriptionScreenshotReviewedBy: authResult.adminId,
+        subscriptionScreenshotRejectionReason: status === 'rejected' ? rejectionReason : null
+      });
+
+      await storage.createAdminAction({
+        adminId: authResult.adminId,
+        action: `${status}_subscription_screenshot`,
+        targetType: 'user',
+        targetId: req.params.userId,
+        details: JSON.stringify({ 
+          status, 
+          rejectionReason: status === 'rejected' ? rejectionReason : null,
+          screenshotUrl: user.subscriptionScreenshotUrl,
+          previousStatus: user.subscriptionScreenshotStatus,
+          isReReview: user.subscriptionScreenshotReviewedBy !== null && user.subscriptionScreenshotReviewedBy !== 'system'
+        })
+      });
+
+      res.json({
+        message: `Subscription screenshot ${status} successfully`,
+        user: {
+          id: updatedUser.id,
+          username: updatedUser.username,
+          displayName: updatedUser.displayName,
+          subscriptionScreenshotStatus: updatedUser.subscriptionScreenshotStatus,
+          subscriptionScreenshotReviewedAt: updatedUser.subscriptionScreenshotReviewedAt,
+          subscriptionScreenshotRejectionReason: updatedUser.subscriptionScreenshotRejectionReason
+        }
+      });
+
+    } catch (error) {
+      console.error('Review subscription screenshot error:', error);
+      res.status(500).json({ error: "Failed to review subscription screenshot" });
+    }
+  });
+
+  // ===== TOURNAMENTS =====
+
+  app.get("/api/tournaments", async (req, res) => {
+    try {
+      const tournaments = await storage.getActiveTournaments();
+      
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+          const authResult = await authenticateUser(req);
+          if ('userId' in authResult) {
+            const tournamentsWithStatus = await Promise.all(
+              tournaments.map(async (tournament) => {
+                const registration = await storage.getTournamentRegistration(
+                  tournament.id,
+                  authResult.userId
+                );
+                return {
+                  ...tournament,
+                  isUserRegistered: !!registration,
+                  userRegistration: registration,
+                };
+              })
+            );
+            return res.json(tournamentsWithStatus);
+          }
+      } catch (error) {
+        // If auth fails, just return tournaments without user status
+        console.log('Auth check failed, returning tournaments without user status');
+      }
+    }
+    
+    res.json(tournaments);
+  } catch (error) {
+    console.error('Get tournaments error:', error);
+    res.status(500).json({ error: "Failed to fetch tournaments" });
+  }
+});
+
+// Get single tournament with details
+app.get("/api/tournament/:id", async (req, res) => {
+  try {
+    const tournament = await storage.getTournamentWithDetails(req.params.id);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    // Check if user is registered
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const authResult = await authenticateUser(req);
+        if ('userId' in authResult) {
+          const registration = await storage.getTournamentRegistration(
+            tournament.id,
+            authResult.userId
+          );
+          return res.json({
+            ...tournament,
+            isUserRegistered: !!registration,
+            userRegistration: registration,
+          });
+        }
+      } catch (error) {
+        // Auth failed, return tournament without user status
+      }
+    }
+
+    res.json(tournament);
+  } catch (error) {
+    console.error('Get tournament error:', error);
+    res.status(500).json({ error: "Failed to fetch tournament" });
+  }
+});
+
+// Register for tournament
+app.post("/api/tournament/:id/register", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { userId, user } = authResult;
+    const tournamentId = req.params.id;
+
+    // Validate request body
+    const validation = registerForTournamentSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ 
+        error: "Invalid registration data", 
+        details: validation.error.errors 
+      });
+    }
+
+    const { teamName, additionalInfo } = validation.data;
+
+    // Check if tournament exists
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    // Check if registration is open
+    const now = new Date();
+    if (now < new Date(tournament.registrationStartDate)) {
+      return res.status(400).json({ error: "Registration has not started yet" });
+    }
+    if (now > new Date(tournament.registrationEndDate)) {
+      return res.status(400).json({ error: "Registration has closed" });
+    }
+    if (tournament.status !== 'registration_open' && tournament.status !== 'upcoming') {
+      return res.status(400).json({ error: "Registration is not available" });
+    }
+
+    // Check if already registered
+    const existingRegistration = await storage.getTournamentRegistration(tournamentId, userId);
+    if (existingRegistration) {
+      return res.status(400).json({ error: "You are already registered for this tournament" });
+    }
+
+    // Check if tournament is full
+    if (tournament.maxParticipants && tournament.currentParticipants >= tournament.maxParticipants) {
+      return res.status(400).json({ error: "Tournament is full" });
+    }
+
+    // Check balance for paid tournaments
+    if (tournament.entryFee > 0) {
+      if (user.balance < tournament.entryFee) {
+        return res.status(400).json({ 
+          error: `Insufficient balance. Required: ${tournament.entryFee} ₽, Available: ${user.balance} ₽` 
+        });
+      }
+
+      // Deduct entry fee
+      await storage.updateUserBalance(
+        userId,
+        -tournament.entryFee,
+        `Entry fee for tournament: ${tournament.name}`,
+        'withdrawal_request',
+        'tournament',
+        tournamentId
       );
     }
 
-    // Если заявка завершена, создаем транзакцию завершения
-    if (status === 'completed') {
-      await storage.createBalanceTransaction({
-        userId: withdrawal.userId,
-        type: 'withdrawal_completed',
-        amount: -withdrawal.amount,
-        description: `Вывод средств завершен #${withdrawalId}`,
-        sourceType: 'withdrawal',
-        sourceId: withdrawalId
-      });
-    }
-
-    // Логируем действие админа
-    await storage.createAdminAction({
-      adminId: authResult.adminId,
-      action: 'process_withdrawal',
-      targetType: 'withdrawal',
-      targetId: withdrawalId,
-      details: JSON.stringify({ 
-        status, 
-        rejectionReason, 
-        amount: withdrawal.amount,
-        userId: withdrawal.userId 
-      })
-    });
-
-    res.json({
-      ...updatedWithdrawal,
-      methodData: JSON.parse(updatedWithdrawal.methodData)
-    });
-  } catch (error) {
-    console.error('Process withdrawal error:', error);
-    res.status(500).json({ error: "Failed to process withdrawal" });
-  }
-});
-// Upload subscription screenshot with AUTO-APPROVAL
-app.post("/api/user/subscription-screenshot", upload.single('screenshot'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No screenshot uploaded" });
-    }
-
-    // Authenticate user
-    const authResult = await authenticateUser(req);
-    if ('error' in authResult) {
-      return res.status(authResult.status).json({ error: authResult.error });
-    }
-    
-    const { userId, user } = authResult;
-
-    // Validate file type
-    const fileType = await fileTypeFromBuffer(req.file.buffer);
-    if (!fileType || !['image/jpeg', 'image/png', 'image/webp'].includes(fileType.mime)) {
-      return res.status(400).json({ error: "Invalid file type. Only JPEG, PNG, and WebP images are allowed." });
-    }
-
-    // Get current user status
-    const currentUser = await storage.getUser(userId);
-    
-    // If already approved, just overwrite (log this action)
-    if (currentUser?.subscriptionScreenshotStatus === 'approved') {
-      console.log(`📝 User ${userId} (${currentUser.username}) is re-uploading subscription screenshot - overwriting existing approved screenshot`);
-    }
-
-    // Generate unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(req.file.originalname) || `.${fileType.ext}`;
-    const filename = `subscription-${userId}-${uniqueSuffix}${ext}`;
-    
-    console.log(`☁️ Uploading subscription screenshot to Cloudinary: ${filename}`);
-    
-    // Upload to Cloudinary
-    const cloudinaryResult = await cloudStorage.uploadFile(
-      req.file.buffer,
-      filename,
-      'image'
-    );
-    
-    console.log(`✅ Cloudinary upload successful:`, {
-      public_id: cloudinaryResult.public_id,
-      url: cloudinaryResult.secure_url
-    });
-    
-    // AUTO-APPROVE the screenshot (always overwrite)
-    const updatedUser = await storage.updateUser(userId, {
-      subscriptionScreenshotUrl: cloudinaryResult.secure_url,
-      subscriptionScreenshotStatus: 'approved', // AUTO-APPROVED
-      subscriptionScreenshotUploadedAt: new Date(),
-      subscriptionScreenshotReviewedAt: new Date(), // Mark as reviewed
-      subscriptionScreenshotReviewedBy: 'system', // System auto-approval
-      subscriptionScreenshotRejectionReason: null,
-      updatedAt: new Date()
-    });
-
-    // Create admin action log for tracking
-    await storage.createAdminAction({
-      adminId: 'system', // System action
-      action: currentUser?.subscriptionScreenshotStatus === 'approved' ? 'reupload_subscription_screenshot' : 'auto_approve_subscription_screenshot',
-      targetType: 'user',
-      targetId: userId,
-      details: JSON.stringify({ 
-        screenshotUrl: cloudinaryResult.secure_url,
-        autoApproved: true,
-        previousStatus: currentUser?.subscriptionScreenshotStatus || 'none',
-        note: currentUser?.subscriptionScreenshotStatus === 'approved' ? 'User re-uploaded screenshot - overwriting approved one' : 'Auto-approved for immediate access. Admin review required for payouts.'
-      })
-    });
-
-    console.log(`✅ Subscription screenshot ${currentUser?.subscriptionScreenshotStatus === 'approved' ? 'overwritten' : 'auto-approved'} successfully:`, {
+    // Create registration
+    const registration = await storage.registerForTournament({
+      tournamentId,
       userId,
-      username: currentUser?.username,
-      url: cloudinaryResult.secure_url,
-      status: 'approved',
-      previousStatus: currentUser?.subscriptionScreenshotStatus
+      status: tournament.entryFee > 0 ? 'paid' : 'registered',
+      paidAmount: tournament.entryFee,
+      paidAt: tournament.entryFee > 0 ? new Date() : null,
+      teamName: teamName || null,
+      additionalInfo: additionalInfo || null,
     });
-    
+
+    // Increment participant count
+    await storage.incrementTournamentParticipants(tournamentId);
+
+    // Update tournament status if needed
+    const updatedTournament = await storage.getTournament(tournamentId);
+    if (updatedTournament && 
+        updatedTournament.status === 'upcoming' && 
+        now >= new Date(tournament.registrationStartDate)) {
+      await storage.updateTournament(tournamentId, { status: 'registration_open' });
+    }
+
+    console.log(`✅ User ${userId} registered for tournament ${tournamentId}`);
+
     res.json({
-      message: "Screenshot uploaded and approved successfully",
-      status: updatedUser.subscriptionScreenshotStatus,
-      uploadedAt: updatedUser.subscriptionScreenshotUploadedAt,
-      autoApproved: true,
-      overwritten: currentUser?.subscriptionScreenshotStatus === 'approved'
+      message: "Successfully registered for tournament",
+      registration,
+      tournament: await storage.getTournament(tournamentId),
     });
-    
+
   } catch (error) {
-    console.error('❌ Subscription screenshot upload error:', error);
-    
-    const errorMessage = error instanceof Error ? error.message : "Failed to upload subscription screenshot";
-    res.status(500).json({ error: errorMessage });
+    console.error('Tournament registration error:', error);
+    res.status(500).json({ error: "Failed to register for tournament" });
   }
 });
 
-// Get subscription screenshot status
-app.get("/api/user/:id/subscription-screenshot", async (req, res) => {
+// Cancel tournament registration
+app.delete("/api/tournament/:id/register", async (req, res) => {
   try {
     const authResult = await authenticateUser(req);
     if ('error' in authResult) {
       return res.status(authResult.status).json({ error: authResult.error });
     }
 
-    // Users can only check their own status, admins can check any
+    const { userId } = authResult;
+    const tournamentId = req.params.id;
+
+    // Get tournament
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    // Get registration
+    const registration = await storage.getTournamentRegistration(tournamentId, userId);
+    if (!registration) {
+      return res.status(404).json({ error: "Registration not found" });
+    }
+
+    // Check if cancellation is allowed
+    if (tournament.status === 'in_progress' || tournament.status === 'completed') {
+      return res.status(400).json({ error: "Cannot cancel registration for ongoing or completed tournament" });
+    }
+
+    // Refund entry fee if paid
+    if (registration.paidAmount && registration.paidAmount > 0) {
+      await storage.updateUserBalance(
+        userId,
+        registration.paidAmount,
+        `Refund for cancelled tournament registration: ${tournament.name}`,
+        'bonus',
+        'tournament',
+        tournamentId
+      );
+    }
+
+    // Delete registration
+    await storage.cancelTournamentRegistration(registration.id);
+
+    // Decrement participant count
+    await storage.decrementTournamentParticipants(tournamentId);
+
+    console.log(`✅ User ${userId} cancelled registration for tournament ${tournamentId}`);
+
+    res.json({
+      message: "Registration cancelled successfully",
+      refundAmount: registration.paidAmount || 0,
+    });
+
+  } catch (error) {
+    console.error('Cancel registration error:', error);
+    res.status(500).json({ error: "Failed to cancel registration" });
+  }
+});
+
+// Get user's tournament registrations
+app.get("/api/user/:id/tournaments", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Users can only see their own registrations, admins can see any
     if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
       return res.status(403).json({ error: "Access denied" });
     }
 
-    const user = await storage.getUser(req.params.id);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
+    const registrations = await storage.getUserTournamentRegistrations(req.params.id);
+    
+    // Fetch tournament details for each registration
+    const registrationsWithTournaments = await Promise.all(
+      registrations.map(async (reg) => {
+        const tournament = await storage.getTournament(reg.tournamentId);
+        return {
+          ...reg,
+          tournament,
+        };
+      })
+    );
 
-    res.json({
-      status: user.subscriptionScreenshotStatus || 'none',
-      uploadedAt: user.subscriptionScreenshotUploadedAt,
-      reviewedAt: user.subscriptionScreenshotReviewedAt,
-      rejectionReason: user.subscriptionScreenshotRejectionReason
-    });
+    res.json(registrationsWithTournaments);
   } catch (error) {
-    console.error('Get subscription screenshot status error:', error);
-    res.status(500).json({ error: "Internal server error" });
+    console.error('Get user tournaments error:', error);
+    res.status(500).json({ error: "Failed to fetch user tournaments" });
   }
 });
 
+// ===== ADMIN TOURNAMENT ROUTES =====
+
+// Create tournament (admin only)
+app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    let imageUrl = null;
+    let cloudinaryPublicId = null;
+
+    // Handle image upload if provided
+    if (req.file) {
+      const fileType = await fileTypeFromBuffer(req.file.buffer);
+      if (!fileType || !['image/jpeg', 'image/png', 'image/webp'].includes(fileType.mime)) {
+        return res.status(400).json({ error: "Invalid image type" });
+      }
+
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const filename = `tournament-${uniqueSuffix}`;
+      
+      const cloudinaryResult = await cloudStorage.uploadFile(
+        req.file.buffer,
+        filename,
+        'image'
+      );
+      
+      imageUrl = cloudinaryResult.secure_url;
+      cloudinaryPublicId = cloudinaryResult.public_id;
+    }
+
+    // Parse and validate tournament data
+    const tournamentData = {
+      ...req.body,
+      prize: parseInt(req.body.prize) || 0,
+      entryFee: parseInt(req.body.entryFee) || 0,
+      maxParticipants: req.body.maxParticipants ? parseInt(req.body.maxParticipants) : null,
+      imageUrl,
+      cloudinaryPublicId,
+      createdBy: authResult.adminId,
+    };
+
+    const validation = insertTournamentSchema.safeParse(tournamentData);
+    if (!validation.success) {
+      return res.status(400).json({ 
+        error: "Invalid tournament data", 
+        details: validation.error.errors 
+      });
+    }
+
+    const tournament = await storage.createTournament(validation.data);
+
+    // Log admin action
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: 'create_tournament',
+      targetType: 'tournament',
+      targetId: tournament.id,
+      details: JSON.stringify({ 
+        name: tournament.name,
+        prize: tournament.prize,
+        entryFee: tournament.entryFee,
+      })
+    });
+
+    console.log(`✅ Tournament created: ${tournament.id} by admin ${authResult.adminId}`);
+
+    res.json(tournament);
+  } catch (error) {
+    console.error('Create tournament error:', error);
+    res.status(500).json({ error: "Failed to create tournament" });
+  }
+});
+
+// Update tournament (admin only)
+app.patch("/api/admin/tournament/:id", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const validation = updateTournamentSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ 
+        error: "Invalid update data", 
+        details: validation.error.errors 
+      });
+    }
+
+    const tournament = await storage.updateTournament(req.params.id, validation.data);
+
+    // Log admin action
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: 'update_tournament',
+      targetType: 'tournament',
+      targetId: tournament.id,
+      details: JSON.stringify(validation.data)
+    });
+
+    res.json(tournament);
+  } catch (error) {
+    console.error('Update tournament error:', error);
+    res.status(500).json({ error: "Failed to update tournament" });
+  }
+});
+
+// Delete tournament (admin only)
+app.delete("/api/admin/tournament/:id", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const tournament = await storage.getTournament(req.params.id);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    // Refund all participants
+    const registrations = await storage.getTournamentRegistrations(req.params.id);
+    for (const reg of registrations) {
+      if (reg.paidAmount && reg.paidAmount > 0) {
+        await storage.updateUserBalance(
+          reg.userId,
+          reg.paidAmount,
+          `Refund for deleted tournament: ${tournament.name}`,
+          'bonus',
+          'tournament',
+          tournament.id
+        );
+      }
+    }
+
+    await storage.deleteTournament(req.params.id);
+
+    // Log admin action
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: 'delete_tournament',
+      targetType: 'tournament',
+      targetId: req.params.id,
+      details: JSON.stringify({ 
+        name: tournament.name,
+        refundedParticipants: registrations.length,
+      })
+    });
+
+    res.json({ message: "Tournament deleted successfully" });
+  } catch (error) {
+    console.error('Delete tournament error:', error);
+    res.status(500).json({ error: "Failed to delete tournament" });
+  }
+});
+
+// Get all tournaments including completed (admin only)
+app.get("/api/admin/tournaments", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const tournaments = await storage.getAllTournaments();
+    res.json(tournaments);
+  } catch (error) {
+    console.error('Get all tournaments error:', error);
+    res.status(500).json({ error: "Failed to fetch tournaments" });
+  }
+});
 // ===== ADMIN SUBSCRIPTION SCREENSHOT ROUTES =====
 
 // Get all pending subscription screenshots (admin only)
