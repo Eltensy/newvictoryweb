@@ -1,4 +1,4 @@
-// server/telegram-bot.js - Final Production Version
+// server/telegram-bot.js - Fixed Version
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -41,7 +41,6 @@ async function sendMessage(chatId, text, options = {}) {
     });
   } catch (error) {
     console.error('Failed to send message:', error.message);
-    // Fallback without markdown
     try {
       return await bot.sendMessage(chatId, text.replace(/[*_`]/g, ''), options);
     } catch (fallbackError) {
@@ -113,7 +112,7 @@ bot.onText(/^\/start\s+([A-Z0-9]{6})$/i, async (msg, match) => {
   const verificationCode = match[1].trim().toUpperCase();
   const user = getUserInfo(msg.from);
 
-  console.log(`🔐 User @${user.username || user.id} attempting verification with code: ${verificationCode}`);
+  console.log(`🔍 User @${user.username || user.id} attempting verification with code: ${verificationCode}`);
 
   const processingMsg = await sendMessage(
     chatId,
@@ -124,8 +123,12 @@ bot.onText(/^\/start\s+([A-Z0-9]{6})$/i, async (msg, match) => {
     // Get profile photo
     const photoUrl = await getProfilePhotoUrl(user.id);
 
+    // Construct full URL
+    const webhookUrl = `${API_URL}/api/auth/telegram/webhook`;
+    console.log(`📤 Sending request to: ${webhookUrl}`);
+
     // Send verification to backend
-    const response = await fetch(`${API_URL}/api/auth/telegram/webhook`, {
+    const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -141,6 +144,12 @@ bot.onText(/^\/start\s+([A-Z0-9]{6})$/i, async (msg, match) => {
       })
     });
 
+    console.log(`📥 Response status: ${response.status} ${response.statusText}`);
+    
+    // Check content type before parsing
+    const contentType = response.headers.get('content-type');
+    console.log(`📄 Content-Type: ${contentType}`);
+
     // Delete processing message
     try {
       await bot.deleteMessage(chatId, processingMsg.message_id);
@@ -148,12 +157,22 @@ bot.onText(/^\/start\s+([A-Z0-9]{6})$/i, async (msg, match) => {
       // Ignore if can't delete
     }
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Ошибка верификации');
+    // Handle non-JSON responses
+    if (!contentType || !contentType.includes('application/json')) {
+      const textResponse = await response.text();
+      console.error('❌ Received non-JSON response:', textResponse.substring(0, 200));
+      
+      throw new Error(
+        `Сервер вернул неправильный формат ответа. ` +
+        `Проверьте, что API сервер запущен на ${API_URL}`
+      );
     }
 
     const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Ошибка верификации');
+    }
 
     // Success message
     await sendMessage(
@@ -196,6 +215,15 @@ bot.onText(/^\/start\s+([A-Z0-9]{6})$/i, async (msg, match) => {
       errorMessage += 
         '🔗 Этот Telegram аккаунт уже привязан к другому пользователю.\n\n' +
         'Если это ваш аккаунт, обратитесь в поддержку.';
+    } else if (error.message.includes('формат ответа') || error.message.includes('API сервер')) {
+      errorMessage += 
+        '🔧 *Проблема с подключением к серверу*\n\n' +
+        `Не удалось связаться с API сервером (${API_URL}).\n\n` +
+        '**Возможные причины:**\n' +
+        '• Сервер не запущен\n' +
+        '• Неверный URL в настройках бота\n' +
+        '• Проблемы с сетью\n\n' +
+        'Обратитесь к администратору.';
     } else {
       errorMessage += 
         `Произошла ошибка: ${error.message}\n\n` +
@@ -257,7 +285,6 @@ bot.onText(/^\/status$/i, async (msg) => {
 
 // Handle invalid verification codes
 bot.onText(/^\/start\s+([A-Z0-9]+)$/i, async (msg, match) => {
-  // Skip if already handled by 6-char regex
   if (match[1].length === 6) return;
   
   const chatId = msg.chat.id;
@@ -273,13 +300,11 @@ bot.onText(/^\/start\s+([A-Z0-9]+)$/i, async (msg, match) => {
 
 // Handle plain text (might be verification code)
 bot.on('message', async (msg) => {
-  // Skip commands
   if (msg.text && msg.text.startsWith('/')) return;
   
   const text = msg.text?.trim();
   if (!text) return;
   
-  // Check if looks like verification code
   if (/^[A-Z0-9]{6}$/i.test(text)) {
     const chatId = msg.chat.id;
     await sendMessage(
@@ -296,19 +321,16 @@ bot.on('message', async (msg) => {
 bot.on('polling_error', (error) => {
   console.error('⚠️  Telegram polling error:', error.message);
   
-  // Don't exit on polling errors, bot will retry
   if (error.code === 'EFATAL') {
     console.error('Fatal polling error, exiting...');
     process.exit(1);
   }
 });
 
-// Handle webhook errors (if ever switched to webhooks)
 bot.on('webhook_error', (error) => {
   console.error('⚠️  Telegram webhook error:', error.message);
 });
 
-// General error handler
 bot.on('error', (error) => {
   console.error('⚠️  Telegram bot error:', error.message);
 });
@@ -329,16 +351,13 @@ const shutdown = async () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-// Unhandled rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('⚠️  Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-// Bot ready
 console.log('✅ Bot is ready to receive messages');
 console.log('💬 Waiting for user interactions...\n');
 
-// Export for programmatic use
 export function getTelegramBot() {
   return bot;
 }
