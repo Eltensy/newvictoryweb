@@ -13,6 +13,8 @@ import { UsersTable } from "./UsersTable";
 import { WithdrawalsTable } from "./WithdrawalsTable";
 import { SubscriptionScreenshotsTable } from "./SubscriptionScreenshotsTable";
 import { AdminLogsTable } from "./AdminLogsTable";
+import { AdminTournamentsTab } from "./AdminTournamentsTab";
+import AdminPremiumTab from "./AdminPremium";
 
 export default function AdminDashboard() {
   const { getAuthToken } = useAuth();
@@ -43,6 +45,8 @@ export default function AdminDashboard() {
     submissions: [],
     users: [],
     error: null,
+    tournaments: [],
+    tournamentsLoading: false,
   });
 
   // Helper function to show toast
@@ -121,7 +125,29 @@ export default function AdminDashboard() {
       setState(prev => ({ ...prev, subscriptionsLoading: false }));
     }
   };
-
+  const fetchTournaments = async () => {
+  setState(prev => ({ ...prev, tournamentsLoading: true, error: null }));
+  try {
+    const token = getAuthToken();
+    if (!token) throw new Error('No authentication token');
+    
+    const response = await fetch('/api/admin/tournaments', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+    
+    if (!response.ok) throw new Error('Failed to fetch tournaments');
+    
+    const data = await response.json();
+    setState(prev => ({ ...prev, tournaments: data }));
+  } catch (error) {
+    console.error('Failed to fetch tournaments:', error);
+    showError(error, 'Failed to fetch tournaments');
+  } finally {
+    setState(prev => ({ ...prev, tournamentsLoading: false }));
+  }
+};
   const fetchAdminActions = async () => {
     setState(prev => ({ ...prev, logsLoading: true, error: null }));
     try {
@@ -230,26 +256,30 @@ export default function AdminDashboard() {
     setState(prev => ({ ...prev, activeTab: tab, searchTerm: "", statusFilter: "all" }));
   };
 
-  const handleRefresh = () => {
-    switch (state.activeTab) {
-      case 'submissions':
-        fetchSubmissions();
-        break;
-      case 'users':
-        fetchUsers();
-        break;
-      case 'withdrawals':
-        fetchWithdrawals();
-        break;
-      case 'subscriptions':
-        fetchSubscriptionScreenshots();
-        break;
-      case 'logs':
-        fetchAdminActions();
-        break;
-    }
-  };
-
+const handleRefresh = () => {
+  switch (state.activeTab) {
+    case 'submissions':
+      fetchSubmissions();
+      break;
+    case 'users':
+      fetchUsers();
+      break;
+    case 'withdrawals':
+      fetchWithdrawals();
+      break;
+    case 'subscriptions':
+      fetchSubscriptionScreenshots();
+      break;
+    case 'tournaments':  // НОВОЕ
+      fetchTournaments();
+      break;
+    case 'logs':
+      fetchAdminActions();
+      break;
+    case 'premium':
+    break;
+  }
+};
   // Filtering functions
   const filteredSubmissions = state.submissions.filter(submission => {
     const matchesSearch = submission.originalFilename?.toLowerCase().includes(state.searchTerm.toLowerCase()) ||
@@ -281,27 +311,34 @@ export default function AdminDashboard() {
   });
 
   // Effects
-  useEffect(() => {
-    switch (state.activeTab) {
-      case 'submissions':
-        fetchSubmissions();
-        break;
-      case 'users':
-        fetchUsers();
-        break;
-      case 'withdrawals':
-        fetchWithdrawals();
-        break;
-      case 'subscriptions':
-        fetchSubscriptionScreenshots();
-        break;
-      case 'logs':
-        fetchAdminActions();
-        break;
-    }
-  }, [state.activeTab]);
+useEffect(() => {
+  switch (state.activeTab) {
+    case 'submissions':
+      fetchSubmissions();
+      break;
+    case 'users':
+      fetchUsers();
+      break;
+    case 'withdrawals':
+      fetchWithdrawals();
+      break;
+    case 'subscriptions':
+      fetchSubscriptionScreenshots();
+      break;
+    case 'tournaments':  // НОВОЕ
+      fetchTournaments();
+      break;
+    case 'logs':
+      fetchAdminActions();
+      break;
+    case 'premium':
+    break;
+  }
+}, [state.activeTab]);
 
-  const isLoading = state.submissionsLoading || state.usersLoading || state.withdrawalsLoading || state.subscriptionsLoading || state.logsLoading;
+const isLoading = state.submissionsLoading || state.usersLoading || 
+                  state.withdrawalsLoading || state.subscriptionsLoading || 
+                  state.tournamentsLoading || state.logsLoading;
 
   return (
     <div className="min-h-screen bg-background">
@@ -354,6 +391,9 @@ export default function AdminDashboard() {
             actionLoading={state.actionLoading}
           />
         )}
+        {state.activeTab === 'premium' && (
+          <AdminPremiumTab authToken={getAuthToken() || ''} />
+        )}
 
         {state.activeTab === 'withdrawals' && (
           <WithdrawalsTable
@@ -373,7 +413,14 @@ export default function AdminDashboard() {
             actionLoading={state.actionLoading}
           />
         )}
-
+        {state.activeTab === 'tournaments' && (
+  <AdminTournamentsTab
+    tournaments={state.tournaments}
+    loading={state.tournamentsLoading}
+    onRefresh={fetchTournaments}
+    authToken={getAuthToken() || ''}
+  />
+)}
         {state.activeTab === 'logs' && (
           <AdminLogsTable
             logs={state.adminActions}

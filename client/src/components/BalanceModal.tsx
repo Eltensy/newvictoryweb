@@ -431,7 +431,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
   return (
     <>
       {/* Main Balance Modal */}
-      <div className="fixed bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4" style={{ top: 0, left: 0, right: 0, bottom: 0, position: 'fixed' }}>
+      <div className="fixed bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4" style={{ top: 0, left: 0, right: 0, bottom: 0, position: 'fixed', pointerEvents: 'all' }}>
         <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-border">

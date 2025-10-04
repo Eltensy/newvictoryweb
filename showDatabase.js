@@ -33,6 +33,13 @@ async function showDatabase() {
     const actions = await db.select().from(schema.adminActions);
     console.table(actions);
 
+    console.log('=== MAPS ===');
+    const maps = await db.select().from(schema.territories);
+    console.table(maps);
+
+    console.log('=== TERR ===');
+    const territory_templates = await db.select().from(schema.territory_templates);
+    console.table(territory_templates);
   } catch (err) {
     console.error('Error fetching database:', err);
   } finally {
@@ -57,6 +64,22 @@ async function updateUser() {
   }
 }
 
-//updateUser();
+async function dropTerritoryTemplatesTable() {
+  try {
+    console.log('Dropping territory_templates table...');
+    
+    // Выполняем raw SQL запрос для удаления таблицы
+    await pool.query('DROP TABLE IF EXISTS territory_templates CASCADE');
+    
+    console.log('Successfully dropped territory_templates table');
+  } catch (err) {
+    console.error('Error dropping territory_templates table:', err);
+  } finally {
+    await pool.end();
+  }
+}
+
+
+dropTerritoryTemplatesTable();
 
 showDatabase();

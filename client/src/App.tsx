@@ -9,18 +9,22 @@ import LandingPage from "@/components/LandingPage";
 import AdminDashboard from "@/components/AdminDashboard";
 import ThemeToggle from "@/components/ThemeToggle";
 import PrivacyPolicyPage from "./components/PrivacyPolicyPage"; 
+import TerritoryMainPage from './components/TerritoryMain';
+import TournamentsPage from './components/TournamentsPage';
+import TournamentDetailPage from './components/TournamentDetailPage';
+import PremiumModal from './components/PremiumModal';
+import PremiumBadge from './components/PremiumBadge';
+import { useAuth } from './hooks/useAuth';
+import { usePremium } from './hooks/usePremium';
+import { Crown } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 function GameApp() {
-  // Theme toggle in top right corner
-  const themeToggleButton = (
-    <div className="fixed top-4 right-4 z-50">
-      <ThemeToggle />
-    </div>
-  );
-
   return (
     <>
-      {themeToggleButton}
+      <div className="fixed top-4 right-4 z-50">
+        <ThemeToggle />
+      </div>
       <LandingPage />
     </>
   );
@@ -30,6 +34,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={GameApp} />
+      
       <Route path="/admin" component={() => (
         <>
           <div className="fixed top-4 right-4 z-50">
@@ -38,6 +43,7 @@ function Router() {
           <AdminDashboard />
         </>
       )} />
+      
       <Route path="/privacy" component={() => (
         <>
           <div className="fixed top-4 right-4 z-50">
@@ -46,6 +52,43 @@ function Router() {
           <PrivacyPolicyPage />
         </>
       )} />
+      
+      <Route path="/territory" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <TerritoryMainPage />
+        </>
+      )} />
+      
+      <Route path="/territory/:templateId" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <TerritoryMainPage />
+        </>
+      )} />
+      
+      <Route path="/tournaments" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <TournamentsPage />
+        </>
+      )} />
+      
+      <Route path="/tournament/:id" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <TournamentDetailPage />
+        </>
+      )} />
+      
       <Route component={NotFound} />
     </Switch>
   );

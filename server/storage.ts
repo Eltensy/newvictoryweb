@@ -2,32 +2,72 @@ import {
   users, 
   submissions, 
   adminActions,
+  balanceTransactions,
+  withdrawalRequests,
+  tournaments,
+  tournamentRegistrations,
+  premiumHistory,
   type User, 
   type InsertUser, 
   type Submission, 
   type InsertSubmission,
   type AdminAction,
   type InsertAdminAction,
-  balanceTransactions,
   type BalanceTransaction,
   type InsertBalanceTransaction,
-  withdrawalRequests,
   type WithdrawalRequest,
-  type InsertWithdrawalRequest
+  type InsertWithdrawalRequest,
+  type Tournament,
+  type InsertTournament,
+  type TournamentRegistration,
+  type InsertTournamentRegistration,
+  type TournamentWithDetails,
+  type PremiumHistory,
+  type InsertPremiumHistory
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and } from "drizzle-orm";
 
-// Updated storage interface to support new functionality
+// Storage interface with OAuth methods
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByEpicGamesId(epicGamesId: string): Promise<User | undefined>;
+  getUserByDiscordId(discordId: string): Promise<User | undefined>;
+  getUserByTelegramId(telegramChatId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User>;
-  updateUserBalance(id: string, deltaAmount: number, description?: string, type?: 'earning' | 'bonus' | 'withdrawal_request' | 'withdrawal_completed', sourceType?: string, sourceId?: string): Promise<User>;
+  
+  // Discord OAuth
+  linkDiscordAccount(userId: string, discordData: {
+    discordId: string;
+    discordUsername: string;
+    discordEmail?: string;
+    discordAvatar?: string;
+  }): Promise<User>;
+  unlinkDiscordAccount(userId: string): Promise<User>;
+  
+  // Telegram OAuth
+  linkTelegramAccount(userId: string, telegramData: {
+    telegramChatId: string;
+    telegramUsername: string;
+    telegramFirstName?: string;
+    telegramLastName?: string;
+    telegramPhotoUrl?: string;
+  }): Promise<User>;
+  unlinkTelegramAccount(userId: string): Promise<User>;
+  
+  // Balance operations
+  updateUserBalance(
+    id: string, 
+    deltaAmount: number, 
+    description?: string, 
+    type?: 'earning' | 'bonus' | 'withdrawal_request' | 'withdrawal_completed', 
+    sourceType?: string, 
+    sourceId?: string
+  ): Promise<User>;
   createBalanceTransaction(transaction: InsertBalanceTransaction): Promise<BalanceTransaction>;
   getUserBalanceTransactions(userId: string, limit?: number): Promise<BalanceTransaction[]>;
   
@@ -37,12 +77,25 @@ export interface IStorage {
   getSubmissionsByUserId(userId: string): Promise<Submission[]>;
   getAllSubmissions(): Promise<Submission[]>;
   getAllSubmissionsWithUsers(): Promise<Submission[]>;
-  updateSubmissionStatus(id: string, status: 'approved' | 'rejected', reviewerId: string, reward?: number, rejectionReason?: string): Promise<Submission>;
+  updateSubmissionStatus(
+    id: string, 
+    status: 'approved' | 'rejected', 
+    reviewerId: string, 
+    reward?: number, 
+    rejectionReason?: string
+  ): Promise<Submission>;
   
   // Admin operations
-  createAdminAction(action: InsertAdminAction): Promise<AdminAction>;
+  createAdminAction(action: InsertAdminAction | (Omit<InsertAdminAction, 'adminId'> & { adminId: string | 'system' })): Promise<AdminAction>;
   getAdminActions(): Promise<AdminAction[]>;
   getAdminActionsWithUsers(): Promise<AdminAction[]>;
+
+  // Premium operations
+  createPremiumHistory(history: InsertPremiumHistory): Promise<PremiumHistory>;
+  getPremiumHistory(userId: string): Promise<PremiumHistory[]>;
+  getPremiumUsers(): Promise<User[]>;
+  expireOldPremiums(): Promise<number>;
+  checkPremiumStatus(userId: string): Promise<boolean>;
 
   // Subscription screenshot operations
   getUsersWithPendingSubscriptionScreenshots(): Promise<User[]>;
@@ -63,6 +116,24 @@ export interface IStorage {
   updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): Promise<WithdrawalRequest>;
   getWithdrawalRequest(id: string): Promise<WithdrawalRequest | undefined>;
   
+  // Tournament operations
+  createTournament(tournament: InsertTournament): Promise<Tournament>;
+  getTournament(id: string): Promise<Tournament | undefined>;
+  getAllTournaments(): Promise<Tournament[]>;
+  getActiveTournaments(): Promise<Tournament[]>;
+  updateTournament(id: string, updates: Partial<Tournament>): Promise<Tournament>;
+  deleteTournament(id: string): Promise<void>;
+  incrementTournamentParticipants(id: string): Promise<void>;
+  decrementTournamentParticipants(id: string): Promise<void>;
+  getTournamentWithDetails(id: string): Promise<TournamentWithDetails | undefined>;
+
+  // Tournament registration operations
+  registerForTournament(registration: InsertTournamentRegistration): Promise<TournamentRegistration>;
+  getTournamentRegistration(tournamentId: string, userId: string): Promise<TournamentRegistration | undefined>;
+  getTournamentRegistrations(tournamentId: string): Promise<TournamentRegistration[]>;
+  getUserTournamentRegistrations(userId: string): Promise<TournamentRegistration[]>;
+  cancelTournamentRegistration(id: string): Promise<void>;
+  
   // Statistics
   getUserStats(userId: string): Promise<{
     totalSubmissions: number;
@@ -75,7 +146,8 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  // User operations
+  // ===== USER OPERATIONS =====
+  
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
@@ -98,6 +170,16 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
+  async getUserByDiscordId(discordId: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.discordId, discordId));
+    return user || undefined;
+  }
+
+  async getUserByTelegramId(telegramChatId: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.telegramChatId, telegramChatId));
+    return user || undefined;
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db
       .insert(users)
@@ -105,20 +187,6 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return user;
   }
-
-  async createSystemAdminAction(action: Omit<InsertAdminAction, 'adminId'> & { adminId?: string }): Promise<AdminAction> {
-  const adminAction: InsertAdminAction = {
-    ...action,
-    adminId: action.adminId || 'system'
-  };
-  
-  const [actionRecord] = await db
-    .insert(adminActions)
-    .values(adminAction)
-    .returning();
-  return actionRecord;
-}
-
 
   async updateUser(id: string, updates: Partial<User>): Promise<User> {
     const [user] = await db
@@ -129,7 +197,93 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  // Balance operations
+  // ===== DISCORD OAUTH OPERATIONS =====
+  
+  async linkDiscordAccount(userId: string, discordData: {
+    discordId: string;
+    discordUsername: string;
+    discordEmail?: string;
+    discordAvatar?: string;
+  }): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        discordId: discordData.discordId,
+        discordUsername: discordData.discordUsername,
+        discordEmail: discordData.discordEmail || null,
+        discordAvatar: discordData.discordAvatar || null,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    
+    console.log(`Discord linked for user ${userId}: ${discordData.discordUsername} (${discordData.discordId})`);
+    return user;
+  }
+
+  async unlinkDiscordAccount(userId: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        discordId: null,
+        discordUsername: null,
+        discordEmail: null,
+        discordAvatar: null,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    
+    console.log(`Discord unlinked for user ${userId}`);
+    return user;
+  }
+
+  // ===== TELEGRAM OAUTH OPERATIONS =====
+  
+  async linkTelegramAccount(userId: string, telegramData: {
+    telegramChatId: string;
+    telegramUsername: string;
+    telegramFirstName?: string;
+    telegramLastName?: string;
+    telegramPhotoUrl?: string;
+  }): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        telegramChatId: telegramData.telegramChatId,
+        telegramUsername: telegramData.telegramUsername,
+        telegramFirstName: telegramData.telegramFirstName || null,
+        telegramLastName: telegramData.telegramLastName || null,
+        telegramPhotoUrl: telegramData.telegramPhotoUrl || null,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    
+    console.log(`Telegram linked for user ${userId}: ${telegramData.telegramUsername} (${telegramData.telegramChatId})`);
+    return user;
+  }
+
+  async unlinkTelegramAccount(userId: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        telegramChatId: null,
+        telegramUsername: null,
+        telegramFirstName: null,
+        telegramLastName: null,
+        telegramPhotoUrl: null,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    
+    console.log(`Telegram unlinked for user ${userId}`);
+    return user;
+  }
+
+  // ===== BALANCE OPERATIONS =====
+  
   async createBalanceTransaction(insertTransaction: InsertBalanceTransaction): Promise<BalanceTransaction> {
     const [transaction] = await db
       .insert(balanceTransactions)
@@ -155,7 +309,6 @@ export class DatabaseStorage implements IStorage {
     sourceType?: string,
     sourceId?: string
   ): Promise<User> {
-    // Get current user
     const currentUser = await this.getUser(id);
     if (!currentUser) {
       throw new Error('User not found');
@@ -163,7 +316,6 @@ export class DatabaseStorage implements IStorage {
     
     const newBalance = currentUser.balance + deltaAmount;
     
-    // Update user balance
     const [user] = await db
       .update(users)
       .set({ 
@@ -173,7 +325,6 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     
-    // Create transaction record
     await this.createBalanceTransaction({
       userId: id,
       type,
@@ -186,7 +337,83 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  // Withdrawal operations
+  // ===== PREMIUM OPERATIONS =====
+
+  async createPremiumHistory(insertHistory: InsertPremiumHistory): Promise<PremiumHistory> {
+    const [history] = await db
+      .insert(premiumHistory)
+      .values(insertHistory)
+      .returning();
+    return history;
+  }
+
+  async getPremiumHistory(userId: string): Promise<PremiumHistory[]> {
+    return await db
+      .select()
+      .from(premiumHistory)
+      .where(eq(premiumHistory.userId, userId))
+      .orderBy(desc(premiumHistory.createdAt));
+  }
+
+  async getPremiumUsers(): Promise<User[]> {
+    return await db
+      .select()
+      .from(users)
+      .where(sql`${users.premiumTier} != 'none'`)
+      .orderBy(users.premiumEndDate);
+  }
+
+  async expireOldPremiums(): Promise<number> {
+    const now = new Date();
+    
+    const expiredUsers = await db
+      .select()
+      .from(users)
+      .where(
+        and(
+          sql`${users.premiumTier} != 'none'`,
+          sql`${users.premiumEndDate} < ${now}`
+        )
+      );
+    
+    if (expiredUsers.length === 0) {
+      return 0;
+    }
+    
+    for (const user of expiredUsers) {
+      await db
+        .update(users)
+        .set({
+          premiumTier: 'none',
+          premiumStartDate: null,
+          premiumEndDate: null,
+          premiumAutoRenew: false,
+          premiumLastChecked: now,
+          updatedAt: now
+        })
+        .where(eq(users.id, user.id));
+      
+      console.log(`Premium expired for user ${user.username} (${user.id})`);
+    }
+    
+    return expiredUsers.length;
+  }
+
+  async checkPremiumStatus(userId: string): Promise<boolean> {
+    const user = await this.getUser(userId);
+    if (!user) return false;
+    
+    if (!user.premiumTier || user.premiumTier === 'none') return false;
+    if (!user.premiumEndDate) return false;
+    
+    const now = new Date();
+    const endDate = new Date(user.premiumEndDate);
+    
+    return endDate > now;
+  }
+
+  // ===== WITHDRAWAL OPERATIONS =====
+  
   async createWithdrawalRequest(insertRequest: InsertWithdrawalRequest): Promise<WithdrawalRequest> {
     const [request] = await db
       .insert(withdrawalRequests)
@@ -227,7 +454,8 @@ export class DatabaseStorage implements IStorage {
     return request;
   }
 
-  // Submission operations
+  // ===== SUBMISSION OPERATIONS =====
+  
   async createSubmission(insertSubmission: InsertSubmission): Promise<Submission> {
     const [submission] = await db
       .insert(submissions)
@@ -336,20 +564,20 @@ export class DatabaseStorage implements IStorage {
     return submission;
   }
 
-  // Admin operations
+  // ===== ADMIN OPERATIONS =====
+  
   async createAdminAction(insertAction: InsertAdminAction | (Omit<InsertAdminAction, 'adminId'> & { adminId: string | 'system' })): Promise<AdminAction> {
-  // Handle both regular admin actions and system actions
-  const actionData: InsertAdminAction = {
-    ...insertAction,
-    adminId: insertAction.adminId || 'system'
-  };
+    const actionData: InsertAdminAction = {
+      ...insertAction,
+      adminId: insertAction.adminId || 'system'
+    };
 
-  const [action] = await db
-    .insert(adminActions)
-    .values(actionData)
-    .returning();
-  return action;
-}
+    const [action] = await db
+      .insert(adminActions)
+      .values(actionData)
+      .returning();
+    return action;
+  }
 
   async getAdminActions(): Promise<AdminAction[]> {
     return await db
@@ -394,7 +622,8 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  // Subscription screenshot operations
+  // ===== SUBSCRIPTION SCREENSHOT OPERATIONS =====
+  
   async getUsersWithPendingSubscriptionScreenshots(): Promise<User[]> {
     return await db
       .select()
@@ -420,7 +649,149 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  // Statistics
+  // ===== TOURNAMENT OPERATIONS =====
+  
+  async createTournament(insertTournament: InsertTournament): Promise<Tournament> {
+    const [tournament] = await db
+      .insert(tournaments)
+      .values(insertTournament)
+      .returning();
+    return tournament;
+  }
+
+  async getTournament(id: string): Promise<Tournament | undefined> {
+    const [tournament] = await db
+      .select()
+      .from(tournaments)
+      .where(eq(tournaments.id, id));
+    return tournament || undefined;
+  }
+
+  async getAllTournaments(): Promise<Tournament[]> {
+    return await db
+      .select()
+      .from(tournaments)
+      .orderBy(desc(tournaments.createdAt));
+  }
+
+  async getActiveTournaments(): Promise<Tournament[]> {
+    return await db
+      .select()
+      .from(tournaments)
+      .where(sql`${tournaments.status} != 'cancelled' AND ${tournaments.status} != 'completed'`)
+      .orderBy(tournaments.startDate);
+  }
+
+  async updateTournament(id: string, updates: Partial<Tournament>): Promise<Tournament> {
+    const [tournament] = await db
+      .update(tournaments)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(tournaments.id, id))
+      .returning();
+    return tournament;
+  }
+
+  async deleteTournament(id: string): Promise<void> {
+    await db
+      .delete(tournaments)
+      .where(eq(tournaments.id, id));
+  }
+
+  async incrementTournamentParticipants(id: string): Promise<void> {
+    await db
+      .update(tournaments)
+      .set({ 
+        currentParticipants: sql`${tournaments.currentParticipants} + 1`,
+        updatedAt: new Date()
+      })
+      .where(eq(tournaments.id, id));
+  }
+
+  async decrementTournamentParticipants(id: string): Promise<void> {
+    await db
+      .update(tournaments)
+      .set({ 
+        currentParticipants: sql`GREATEST(${tournaments.currentParticipants} - 1, 0)`,
+        updatedAt: new Date()
+      })
+      .where(eq(tournaments.id, id));
+  }
+
+  async getTournamentWithDetails(id: string): Promise<TournamentWithDetails | undefined> {
+    const tournament = await this.getTournament(id);
+    if (!tournament) return undefined;
+
+    const registrations = await this.getTournamentRegistrations(id);
+    const creator = await this.getUser(tournament.createdBy);
+
+    return {
+      ...tournament,
+      creator: creator ? {
+        username: creator.username,
+        displayName: creator.displayName
+      } : undefined,
+      registrations: await Promise.all(
+        registrations.map(async (reg) => {
+          const user = await this.getUser(reg.userId);
+          return {
+            ...reg,
+            user: user ? {
+              username: user.username,
+              displayName: user.displayName
+            } : undefined
+          };
+        })
+      )
+    };
+  }
+
+  // ===== TOURNAMENT REGISTRATION OPERATIONS =====
+  
+  async registerForTournament(insertRegistration: InsertTournamentRegistration): Promise<TournamentRegistration> {
+    const [registration] = await db
+      .insert(tournamentRegistrations)
+      .values(insertRegistration)
+      .returning();
+    return registration;
+  }
+
+  async getTournamentRegistration(tournamentId: string, userId: string): Promise<TournamentRegistration | undefined> {
+    const [registration] = await db
+      .select()
+      .from(tournamentRegistrations)
+      .where(
+        and(
+          eq(tournamentRegistrations.tournamentId, tournamentId),
+          eq(tournamentRegistrations.userId, userId)
+        )
+      );
+    return registration || undefined;
+  }
+
+  async getTournamentRegistrations(tournamentId: string): Promise<TournamentRegistration[]> {
+    return await db
+      .select()
+      .from(tournamentRegistrations)
+      .where(eq(tournamentRegistrations.tournamentId, tournamentId))
+      .orderBy(desc(tournamentRegistrations.registeredAt));
+  }
+
+  async getUserTournamentRegistrations(userId: string): Promise<TournamentRegistration[]> {
+    return await db
+      .select()
+      .from(tournamentRegistrations)
+      .where(eq(tournamentRegistrations.userId, userId))
+      .orderBy(desc(tournamentRegistrations.registeredAt));
+  }
+
+  async cancelTournamentRegistration(id: string): Promise<void> {
+    await db
+      .delete(tournamentRegistrations)
+      .where(eq(tournamentRegistrations.id, id));
+  }
+
+  // ===== STATISTICS =====
+  
   async getUserStats(userId: string): Promise<{
     totalSubmissions: number;
     approvedSubmissions: number;

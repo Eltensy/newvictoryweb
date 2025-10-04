@@ -33,11 +33,23 @@ export interface User {
   balance: number;
   createdAt: string;
   updatedAt: string;
-  telegramUsername: string;
+  telegramUsername?: string;
+  telegramChatId?: string;
+  telegramFirstName?: string;
+  telegramLastName?: string;
+  telegramPhotoUrl?: string;
+  
+  // Discord OAuth
+  discordUsername?: string;
+  discordId?: string;
+  discordEmail?: string;
+  discordAvatar?: string;
+  
   isAdmin: boolean;
   email?: string;
   epicGamesId?: string;
-  // Stats from backend
+  premiumTier?: 'none' | 'basic' | 'gold' | 'platinum' | 'vip';
+  premiumEndDate?: string;
   stats?: {
     totalSubmissions: number;
     approvedSubmissions: number;
@@ -68,21 +80,14 @@ export interface WithdrawalRequest {
   amount: number;
   method: 'telegram' | 'card' | 'crypto' | 'paypal';
   methodData: {
-    // Telegram method
     telegramUsername?: string;
-    
-    // Card method
     cardNumber?: string;
     cardHolder?: string;
     cardCountry?: string;
-    
-    // Crypto method
     walletAddress?: string;
     currency?: string;
-    
-    // PayPal method
     email?: string;
-    paypalEmail?: string; // keeping both for backward compatibility
+    paypalEmail?: string;
   };
   status: 'pending' | 'processing' | 'completed' | 'rejected';
   createdAt: string;
@@ -96,7 +101,29 @@ export interface WithdrawalRequest {
   };
 }
 
-export type TabType = 'submissions' | 'users' | 'withdrawals' | 'subscriptions' | 'logs';
+export interface Tournament {
+  id: string;
+  name: string;
+  description: string | null;
+  mapUrl: string | null;
+  rules: string | null;
+  prize: number;
+  entryFee: number;
+  registrationStartDate: string;
+  registrationEndDate: string;
+  startDate: string;
+  endDate: string | null;
+  maxParticipants: number | null;
+  currentParticipants: number;
+  status: 'upcoming' | 'registration_open' | 'registration_closed' | 'in_progress' | 'completed' | 'cancelled';
+  imageUrl: string | null;
+  cloudinaryPublicId: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TabType = 'submissions' | 'users' | 'subscriptions' | 'withdrawals' | 'premium' | 'tournaments' | 'logs';
 
 export interface AdminDashboardState {
   activeTab: TabType;
@@ -109,19 +136,19 @@ export interface AdminDashboardState {
   rejectionReason: string;
   balanceAmount: string;
   balanceReason: string;
+  tournaments: Tournament[];
+  tournamentsLoading: boolean;
   
-  // Data arrays
   submissions: Submission[];
   users: User[];
   withdrawalRequests: WithdrawalRequest[];
-  subscriptionScreenshots: SubscriptionScreenshot[];  // NEW
+  subscriptionScreenshots: SubscriptionScreenshot[];
   adminActions: AdminAction[];
 
-  // Loading states
   submissionsLoading: boolean;
   usersLoading: boolean;
   withdrawalsLoading: boolean;
-  subscriptionsLoading: boolean;  // NEW
+  subscriptionsLoading: boolean;
   logsLoading: boolean;
   actionLoading: boolean;
   
