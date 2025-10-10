@@ -286,9 +286,10 @@ export const territoryTemplates = pgTable("territory_templates", {
 export const territories = pgTable("territories", {
   id: uuid("id").defaultRandom().primaryKey(),
   templateId: uuid("template_id").references(() => territoryTemplates.id, { onDelete: 'cascade' }).notNull(),
-  shapeId: uuid("shape_id").references(() => territoryShapes.id).notNull(), // НОВОЕ
+  shapeId: uuid("shape_id").references(() => territoryShapes.id).notNull(),
   name: text("name").notNull(),
-  color: text("color").notNull(), // Берется из shape.defaultColor
+  points: jsonb("points"), // Made nullable - points come from shape
+  color: text("color").notNull(),
   ownerId: uuid("owner_id").references(() => users.id),
   claimedAt: timestamp("claimed_at"),
   isActive: boolean("is_active").default(true).notNull(),
@@ -296,7 +297,6 @@ export const territories = pgTable("territories", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
-
 // Territory Claims History Table
 export const territoryClaims = pgTable("territory_claims", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -994,6 +994,166 @@ export type QueueEntryWithDetails = TerritoryQueue & {
     username: string;
     displayName: string;
   };
+};
+
+// shared/schema.ts - добавить в конец файла после территорий
+
+// ===== DROPMAP SYSTEM (расширение территориальной системы) =====
+
+export const dropMapModeEnum = pgEnum('dropmap_mode', ['tournament', 'practice']);
+
+// DropMap Settings (настройки для конкретной карты)
+export const dropMapSettings = pgTable('drop_map_settings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  templateId: uuid('template_id').notNull().references(() => territoryTemplates.id, { onDelete: 'cascade' }),
+  tournamentId: uuid('tournament_id').references(() => tournaments.id, { onDelete: 'set null' }),
+  customName: text('custom_name'), // <-- ДОБАВЬТЕ ЭТУ СТРОКУ
+  mode: text('mode').notNull().default('tournament'),
+  maxPlayersPerSpot: integer('max_players_per_spot').notNull().default(1),
+  maxContestedSpots: integer('max_contested_spots').notNull().default(0),
+  allowReclaim: boolean('allow_reclaim').notNull().default(false),
+  isLocked: boolean('is_locked').notNull().default(false),
+  createdBy: uuid('created_by').references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+// Eligible Players для DropMap
+export const dropMapEligiblePlayers = pgTable("dropmap_eligible_players", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  settingsId: uuid("settings_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  displayName: text("display_name").notNull(),
+  sourceType: varchar("source_type", { length: 50 }), // 'manual', 'tournament_import', 'positions'
+  sourceDetails: jsonb("source_details"), // детали импорта
+  addedBy: uuid("added_by").references(() => users.id),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
+
+// Invite Codes для неавторизованных игроков
+export const dropMapInviteCodes = pgTable("dropmap_invite_codes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  settingsId: uuid("settings_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
+  code: varchar("code", { length: 50 }).notNull().unique(),
+  displayName: text("display_name").notNull(),
+  isUsed: boolean("is_used").default(false).notNull(),
+  usedAt: timestamp("used_at"),
+  territoryId: uuid("territory_id").references(() => territories.id), // какую территорию заклеймил
+  expiresAt: timestamp("expires_at"),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Relations
+export const dropMapSettingsRelations = relations(dropMapSettings, ({ one, many }) => ({
+  template: one(territoryTemplates, {
+    fields: [dropMapSettings.templateId],
+    references: [territoryTemplates.id],
+  }),
+  tournament: one(tournaments, {
+    fields: [dropMapSettings.tournamentId],
+    references: [tournaments.id],
+  }),
+  creator: one(users, {
+    fields: [dropMapSettings.createdBy],
+    references: [users.id],
+  }),
+  eligiblePlayers: many(dropMapEligiblePlayers),
+  inviteCodes: many(dropMapInviteCodes),
+}));
+
+export const dropMapEligiblePlayersRelations = relations(dropMapEligiblePlayers, ({ one }) => ({
+  settings: one(dropMapSettings, {
+    fields: [dropMapEligiblePlayers.settingsId],
+    references: [dropMapSettings.id],
+  }),
+  user: one(users, {
+    fields: [dropMapEligiblePlayers.userId],
+    references: [users.id],
+  }),
+  addedByUser: one(users, {
+    fields: [dropMapEligiblePlayers.addedBy],
+    references: [users.id],
+  }),
+}));
+
+export const dropMapInviteCodesRelations = relations(dropMapInviteCodes, ({ one }) => ({
+  settings: one(dropMapSettings, {
+    fields: [dropMapInviteCodes.settingsId],
+    references: [dropMapSettings.id],
+  }),
+  territory: one(territories, {
+    fields: [dropMapInviteCodes.territoryId],
+    references: [territories.id],
+  }),
+  creator: one(users, {
+    fields: [dropMapInviteCodes.createdBy],
+    references: [users.id],
+  }),
+}));
+
+// Zod Schemas для DropMap
+export const createDropMapSettingsSchema = z.object({
+  templateId: z.string().uuid(),
+  tournamentId: z.string().uuid().optional(),
+  mode: z.enum(['tournament', 'practice']).default('practice'),
+  maxPlayersPerSpot: z.number().min(1).max(10).default(1),
+  maxContestedSpots: z.number().min(0).max(50).default(0),
+  allowReclaim: z.boolean().default(true),
+});
+
+export const updateDropMapSettingsSchema = z.object({
+  maxPlayersPerSpot: z.number().min(1).max(10).optional(),
+  maxContestedSpots: z.number().min(0).max(50).optional(),
+  allowReclaim: z.boolean().optional(),
+  isLocked: z.boolean().optional(),
+});
+
+export const addDropMapPlayersSchema = z.object({
+  userIds: z.array(z.string().uuid()).min(1),
+});
+
+export const importDropMapPlayersSchema = z.object({
+  tournamentId: z.string().uuid(),
+  positions: z.array(z.number().min(1)).optional(),
+  topN: z.number().min(1).optional(),
+});
+
+export const createDropMapInviteSchema = z.object({
+  displayName: z.string().min(1).max(100),
+  expiresInDays: z.number().min(1).max(365).default(30),
+});
+
+export const claimWithInviteSchema = z.object({
+  code: z.string(),
+  territoryId: z.string().uuid(),
+});
+
+// Types
+export type DropMapSettings = typeof dropMapSettings.$inferSelect;
+export type InsertDropMapSettings = typeof dropMapSettings.$inferInsert;
+
+export type DropMapEligiblePlayer = typeof dropMapEligiblePlayers.$inferSelect;
+export type InsertDropMapEligiblePlayer = typeof dropMapEligiblePlayers.$inferInsert;
+
+export type DropMapInviteCode = typeof dropMapInviteCodes.$inferSelect;
+export type InsertDropMapInviteCode = typeof dropMapInviteCodes.$inferInsert;
+
+export type DropMapWithDetails = DropMapSettings & {
+  template: TerritoryTemplateWithShapes;
+  tournament?: {
+    id: string;
+    name: string;
+    status: string;
+  };
+  eligiblePlayers: (DropMapEligiblePlayer & {
+    user: {
+      id: string;
+      username: string;
+      displayName: string;
+    };
+  })[];
+  territories: TerritoryWithShape[];
+  inviteCodes: DropMapInviteCode[];
 };
 
 

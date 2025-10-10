@@ -25,7 +25,8 @@ import {
   MessageSquare,
   AlertTriangle,
   Info,
-  Zap
+  Zap,
+  Crown
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,8 @@ interface WithdrawalRequest {
   rejectionReason?: string;
   createdAt: string;
   processedAt?: string;
+  premiumBonus?: number;
+  finalAmount?: number;
 }
 
 interface User {
@@ -58,6 +61,8 @@ interface User {
   isAdmin: boolean;
   telegramUsername?: string;
   discordUsername?: string;
+  premiumTier?: 'none' | 'basic' | 'gold' | 'platinum' | 'vip';
+  premiumEndDate?: string;
 }
 
 interface BalanceModalProps {
@@ -68,7 +73,6 @@ interface BalanceModalProps {
   onRefreshUser: () => Promise<void>;
 }
 
-// Интерфейс для уведомлений
 interface NotificationProps {
   isOpen: boolean;
   type: 'success' | 'error' | 'warning' | 'info';
@@ -77,7 +81,6 @@ interface NotificationProps {
   onClose: () => void;
 }
 
-// Компонент уведомления
 function NotificationModal({ isOpen, type, title, message, onClose }: NotificationProps) {
   if (!isOpen) return null;
 
@@ -136,7 +139,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
   const [isLoading, setIsLoading] = useState(false);
   const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
 
-  // Состояние для уведомлений
   const [notification, setNotification] = useState<{
     isOpen: boolean;
     type: 'success' | 'error' | 'warning' | 'info';
@@ -149,7 +151,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
     message: ''
   });
 
-  // Функция для показа уведомлений
   const showNotification = (type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
     setNotification({ isOpen: true, type, title, message });
   };
@@ -158,7 +159,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
     setNotification(prev => ({ ...prev, isOpen: false }));
   };
 
-  // Withdrawal form state
   const [withdrawalForm, setWithdrawalForm] = useState({
     amount: '',
     method: 'crypto' as 'card' | 'crypto' | 'paypal' | '',
@@ -172,30 +172,31 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
   });
   const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
 
-  // Проверка привязки Telegram или Discord
   const hasContactMethod = user.telegramUsername || user.discordUsername;
 
-  // Функция для форматирования номера карты
+  // Fixed premium check - check if user has ANY premium tier (not 'none')
+  const hasPremium = user.premiumTier && user.premiumTier !== 'none';
+
+  // Calculate withdrawal amount with premium bonus
+  const calculateWithdrawal = (amount: number) => {
+    const baseAmount = amount;
+    const premiumBonus = hasPremium ? Math.round(amount * 0.1) : 0;
+    const finalAmount = baseAmount + premiumBonus;
+    return { baseAmount, premiumBonus, finalAmount };
+  };
+
   const formatCardNumber = (value: string) => {
-    // Удаляем все не-цифры
     const cleanValue = value.replace(/\D/g, '');
-    
-    // Ограничиваем длину до 16 цифр
     const limitedValue = cleanValue.slice(0, 16);
-    
-    // Добавляем пробелы каждые 4 цифры
     const formattedValue = limitedValue.replace(/(\d{4})(?=\d)/g, '$1 ');
-    
     return formattedValue;
   };
 
-  // Функция для валидации номера карты
   const isValidCardNumber = (cardNumber: string) => {
     const cleanNumber = cardNumber.replace(/\s/g, '');
     return cleanNumber.length === 16 && /^\d{16}$/.test(cleanNumber);
   };
 
-  // Load data when modal opens
   useEffect(() => {
     if (isOpen) {
       loadTransactions();
@@ -252,7 +253,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
   };
 
   const handleWithdrawalSubmit = async () => {
-    // Проверка привязки Telegram или Discord
     if (!hasContactMethod) {
       showNotification(
         'warning', 
@@ -338,7 +338,14 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
       });
 
       if (response.ok) {
-        showNotification('success', 'Заявка создана', 'Заявка на вывод создана успешно');
+        const withdrawal = calculateWithdrawal(amount);
+        showNotification(
+          'success', 
+          'Заявка создана', 
+          hasPremium 
+            ? `Заявка на вывод создана успешно! Сумма вывода: ${withdrawal.baseAmount} ₽ + ${withdrawal.premiumBonus} ₽ (Premium бонус) = ${withdrawal.finalAmount} ₽`
+            : 'Заявка на вывод создана успешно'
+        );
         setIsWithdrawalModalOpen(false);
         setWithdrawalForm({
           amount: '',
@@ -352,7 +359,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
           email: ''
         });
         
-        // Refresh data
         await Promise.all([
           loadTransactions(),
           loadWithdrawals(),
@@ -443,6 +449,9 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
 
   if (!isOpen) return null;
 
+  // Calculate final withdrawal amount for display
+  const currentWithdrawal = withdrawalForm.amount ? calculateWithdrawal(parseInt(withdrawalForm.amount)) : null;
+
   return (
     <>
       {/* Main Balance Modal */}
@@ -453,7 +462,15 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
             <div className="flex items-center gap-3">
               <Wallet className="h-6 w-6 text-primary" />
               <div>
-                <h2 className="text-2xl font-bold font-gaming">Баланс</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-2xl font-bold font-gaming">Баланс</h2>
+                  {hasPremium && (
+                    <Badge className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white border-0">
+                      <Crown className="h-3 w-3 mr-1" />
+                      Premium
+                    </Badge>
+                  )}
+                </div>
                 <p className="text-3xl font-bold text-primary">{user.balance} ₽</p>
               </div>
             </div>
@@ -569,7 +586,15 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2 flex-1 min-w-0">
                           {getWithdrawalStatusIcon(withdrawal.status)}
-                          <span className="font-medium whitespace-nowrap">{withdrawal.amount} ₽</span>
+                          <div className="flex flex-col">
+                            <span className="font-medium whitespace-nowrap">{withdrawal.amount} ₽</span>
+                            {withdrawal.premiumBonus && withdrawal.premiumBonus > 0 && (
+                              <span className="text-xs text-green-600 flex items-center gap-1">
+                                <Crown className="h-3 w-3" />
+                                +{withdrawal.premiumBonus} ₽ (Premium) = {withdrawal.finalAmount} ₽
+                              </span>
+                            )}
+                          </div>
                           <Badge variant="secondary" className="text-xs">
                             {getStatusText(withdrawal.status)}
                           </Badge>
@@ -620,7 +645,15 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
           <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-border">
-              <h3 className="text-xl font-bold font-gaming">Вывод средств</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xl font-bold font-gaming">Вывод средств</h3>
+                {hasPremium && (
+                  <Badge className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white border-0">
+                    <Crown className="h-3 w-3 mr-1" />
+                    +10%
+                  </Badge>
+                )}
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
@@ -641,6 +674,21 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                       <p className="font-medium text-yellow-600 mb-1">Требуется привязка контакта</p>
                       <p className="text-yellow-600/80">
                         Для вывода средств необходимо привязать Telegram или Discord в настройках профиля
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Premium Bonus Info */}
+              {hasPremium && (
+                <div className="p-4 bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/20 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <Crown className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm">
+                      <p className="font-medium text-yellow-600 mb-1">Premium бонус активен!</p>
+                      <p className="text-yellow-600/80">
+                        Вы получаете +10% к сумме вывода благодаря Premium статусу ({user.premiumTier})
                       </p>
                     </div>
                   </div>
@@ -673,6 +721,25 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                 <p className="text-xs text-muted-foreground mt-1">
                   От 1000 до {user.balance} ₽
                 </p>
+                {currentWithdrawal && currentWithdrawal.baseAmount >= 1000 && hasPremium && (
+                  <div className="mt-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                    <div className="flex items-center justify-between text-sm">
+                      <span>Базовая сумма:</span>
+                      <span className="font-medium">{currentWithdrawal.baseAmount} ₽</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm text-green-600">
+                      <span className="flex items-center gap-1">
+                        <Crown className="h-3 w-3" />
+                        Premium бонус (+10%):
+                      </span>
+                      <span className="font-medium">+{currentWithdrawal.premiumBonus} ₽</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm font-bold border-t border-green-500/20 mt-2 pt-2">
+                      <span>Итого к выводу:</span>
+                      <span className="text-green-600">{currentWithdrawal.finalAmount} ₽</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Method */}

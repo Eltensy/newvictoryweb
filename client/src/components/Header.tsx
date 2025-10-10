@@ -401,14 +401,14 @@ export default function EnhancedHeader({
   >
     <User className="h-4 w-4 text-white" />
   </button>
-  {/* Premium badge overlay */}
+  {/* Premium badge overlay - now with pointer-events-none */}
   {user.premiumTier && user.premiumTier !== 'none' && (
-    <div className="absolute -bottom-1 -right-1">
+    <div className="absolute -bottom-1 -right-1 pointer-events-none">
       <PremiumBadge tier={user.premiumTier} size="sm" />
     </div>
   )}
 </div>
-        </div>
+</div>
 
         {/* Mobile Menu */}
         <div className="lg:hidden flex items-center gap-2">
