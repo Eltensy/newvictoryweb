@@ -544,6 +544,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         telegramUsername: user.telegramUsername,
         telegramChatId: user.telegramChatId,
         discordUsername: user.discordUsername,
+        premiumTier: user.premiumTier,
+        premiumEndDate: user.premiumEndDate,
       });
     } catch (error) {
       console.error('Auth check error:', error);
@@ -1173,123 +1175,160 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/user/:id/withdrawal", async (req, res) => {
-    try {
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
 
-      if (authResult.userId !== req.params.id) {
-        return res.status(403).json({ error: "Access denied" });
-      }
+    if (authResult.userId !== req.params.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
 
-      const validation = createWithdrawalRequestSchema.safeParse(req.body);
-      if (!validation.success) {
-        return res.status(400).json({ 
-          error: "Invalid withdrawal data", 
-          details: validation.error.errors 
-        });
-      }
-
-      const { amount, method, methodData } = validation.data;
-
-      const user = await storage.getUser(req.params.id);
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
-      }
-
-      if (user.balance < amount) {
-        return res.status(400).json({ error: "Insufficient balance" });
-      }
-
-      const activeRequests = await storage.getUserWithdrawalRequests(req.params.id);
-      const pendingRequests = activeRequests.filter(r => r.status === 'pending' || r.status === 'processing');
-      
-      if (pendingRequests.length > 0) {
-        return res.status(400).json({ 
-          error: "You already have a pending withdrawal request" 
-        });
-      }
-
-      const withdrawalRequest = await storage.createWithdrawalRequest({
-        userId: req.params.id,
-        amount,
-        method,
-        methodData: JSON.stringify(methodData),
-        status: 'pending'
+    const validation = createWithdrawalRequestSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ 
+        error: "Invalid withdrawal data", 
+        details: validation.error.errors 
       });
-
-      await storage.updateUserBalance(
-        req.params.id, 
-        -amount, 
-        `Withdrawal request #${withdrawalRequest.id}`,
-        'withdrawal_request',
-        'withdrawal',
-        withdrawalRequest.id
-      );
-
-      res.json(withdrawalRequest);
-    } catch (error) {
-      console.error('Create withdrawal error:', error);
-      res.status(500).json({ error: "Failed to create withdrawal request" });
     }
-  });
 
-  app.get("/api/user/:id/withdrawals", async (req, res) => {
-    try {
-      const authResult = await authenticateUser(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
+    const { amount, method, methodData } = validation.data;
+
+    const user = await storage.getUser(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (user.balance < amount) {
+      return res.status(400).json({ error: "Insufficient balance" });
+    }
+
+    const activeRequests = await storage.getUserWithdrawalRequests(req.params.id);
+    const pendingRequests = activeRequests.filter(r => r.status === 'pending' || r.status === 'processing');
+    
+    if (pendingRequests.length > 0) {
+      return res.status(400).json({ 
+        error: "You already have a pending withdrawal request" 
+      });
+    }
+
+    // Check if user has active premium
+    const hasPremium = user.premiumTier && 
+                       user.premiumTier !== 'none' && 
+                       user.premiumEndDate && 
+                       new Date(user.premiumEndDate) > new Date();
+
+    // Calculate premium bonus (10% if premium is active)
+    const premiumBonus = hasPremium ? Math.round(amount * 0.1) : 0;
+    const finalAmount = amount + premiumBonus;
+
+    const withdrawalRequest = await storage.createWithdrawalRequest({
+      userId: req.params.id,
+      amount,
+      method,
+      methodData: JSON.stringify({
+        ...methodData,
+        premiumBonus,
+        finalAmount,
+        hasPremium
+      }),
+      status: 'pending'
+    });
+
+    // Deduct only the base amount from balance (not the bonus)
+    await storage.updateUserBalance(
+      req.params.id, 
+      -amount, 
+      `Withdrawal request #${withdrawalRequest.id}${hasPremium ? ` (Premium +${premiumBonus} ₽)` : ''}`,
+      'withdrawal_request',
+      'withdrawal',
+      withdrawalRequest.id
+    );
+
+    res.json({
+      ...withdrawalRequest,
+      premiumBonus,
+      finalAmount,
+      methodData: {
+        ...methodData,
+        premiumBonus,
+        finalAmount,
+        hasPremium
       }
+    });
+  } catch (error) {
+    console.error('Create withdrawal error:', error);
+    res.status(500).json({ error: "Failed to create withdrawal request" });
+  }
+});
 
-      if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
-        return res.status(403).json({ error: "Access denied" });
-      }
+ app.get("/api/user/:id/withdrawals", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
 
-      const requests = await storage.getUserWithdrawalRequests(req.params.id);
-      
-      const requestsWithParsedData = requests.map(request => ({
+    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const requests = await storage.getUserWithdrawalRequests(req.params.id);
+    
+    const requestsWithParsedData = requests.map(request => {
+      const parsedMethodData = JSON.parse(request.methodData);
+      return {
         ...request,
-        methodData: JSON.parse(request.methodData)
-      }));
-      
-      res.json(requestsWithParsedData);
-    } catch (error) {
-      console.error('Get withdrawal requests error:', error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
+        methodData: parsedMethodData,
+        premiumBonus: parsedMethodData.premiumBonus || 0,
+        finalAmount: parsedMethodData.finalAmount || request.amount
+      };
+    });
+    
+    res.json(requestsWithParsedData);
+  } catch (error) {
+    console.error('Get withdrawal requests error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
-  app.get("/api/admin/withdrawals", async (req, res) => {
-    try {
-      const authResult = await authenticateAdmin(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-
-      const requests = await storage.getAllWithdrawalRequests();
-      
-      const requestsWithDetails = await Promise.all(
-        requests.map(async (request) => {
-          const user = await storage.getUser(request.userId);
-          return {
-            ...request,
-            methodData: JSON.parse(request.methodData),
-            user: user ? {
-              username: user.username,
-              displayName: user.displayName,
-              telegramUsername: user.telegramUsername
-            } : null
-          };
-        })
-      );
-      
-      res.json(requestsWithDetails);
-    } catch (error) {
-      console.error('Get all withdrawal requests error:', error);
-      res.status(500).json({ error: "Internal server error" });
+ app.get("/api/admin/withdrawals", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
     }
-  });
+
+    const requests = await storage.getAllWithdrawalRequests();
+    
+    const requestsWithDetails = await Promise.all(
+      requests.map(async (request) => {
+        const user = await storage.getUser(request.userId);
+        const parsedMethodData = JSON.parse(request.methodData);
+        
+        return {
+          ...request,
+          methodData: parsedMethodData,
+          premiumBonus: parsedMethodData.premiumBonus || 0,
+          finalAmount: parsedMethodData.finalAmount || request.amount,
+          user: user ? {
+            username: user.username,
+            displayName: user.displayName,
+            telegramUsername: user.telegramUsername,
+            premiumTier: user.premiumTier,
+            premiumEndDate: user.premiumEndDate
+          } : null
+        };
+      })
+    );
+    
+    res.json(requestsWithDetails);
+  } catch (error) {
+    console.error('Get all withdrawal requests error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
   app.post("/api/admin/withdrawal/:id/process", async (req, res) => {
     try {

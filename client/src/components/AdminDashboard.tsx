@@ -15,6 +15,7 @@ import { SubscriptionScreenshotsTable } from "./SubscriptionScreenshotsTable";
 import { AdminLogsTable } from "./AdminLogsTable";
 import { AdminTournamentsTab } from "./AdminTournamentsTab";
 import AdminPremiumTab from "./AdminPremium";
+import AdminDropMapTab from './AdminDropMapTab';
 
 export default function AdminDashboard() {
   const { getAuthToken } = useAuth();
@@ -333,6 +334,8 @@ useEffect(() => {
       break;
     case 'premium':
     break;
+    case 'dropmap':
+    break;
   }
 }, [state.activeTab]);
 
@@ -427,6 +430,9 @@ const isLoading = state.submissionsLoading || state.usersLoading ||
             loading={state.logsLoading}
           />
         )}
+        {state.activeTab === 'dropmap' && (
+  <AdminDropMapTab authToken={getAuthToken() || ''} />
+)}
       </main>
     </div>
   );

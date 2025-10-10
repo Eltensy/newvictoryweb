@@ -12,6 +12,7 @@ import PrivacyPolicyPage from "./components/PrivacyPolicyPage";
 import TerritoryMainPage from './components/TerritoryMain';
 import TournamentsPage from './components/TournamentsPage';
 import TournamentDetailPage from './components/TournamentDetailPage';
+import DropMapInvitePage from './components/DropMapInvitePage';
 import PremiumModal from './components/PremiumModal';
 import PremiumBadge from './components/PremiumBadge';
 import { useAuth } from './hooks/useAuth';
@@ -86,6 +87,14 @@ function Router() {
             <ThemeToggle />
           </div>
           <TournamentDetailPage />
+        </>
+      )} />
+      <Route path="/dropmap/invite/:id" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <DropMapInvitePage />
         </>
       )} />
       

@@ -123,7 +123,7 @@ export interface Tournament {
   updatedAt: string;
 }
 
-export type TabType = 'submissions' | 'users' | 'subscriptions' | 'withdrawals' | 'premium' | 'tournaments' | 'logs';
+export type TabType = 'submissions' | 'users' | 'subscriptions' | 'withdrawals' | 'premium' | 'tournaments' | 'logs' | 'dropmap';
 
 export interface AdminDashboardState {
   activeTab: TabType;

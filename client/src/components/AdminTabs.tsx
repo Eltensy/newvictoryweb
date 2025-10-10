@@ -17,6 +17,7 @@ export function AdminTabs({ activeTab, onTabChange }: AdminTabsProps) {
     { id: "withdrawals" as const, label: "Выводы", testId: "tab-withdrawals" },
     { id: "premium" as const, label: "Премиум", testId: "tab-premium" },
     { id: "tournaments" as const, label: "Турниры", testId: "tab-tournaments" },
+    { id: "dropmap" as const, label: "Карты", testId: "tab-dropmap" },
     { id: "logs" as const, label: "Логи", testId: "tab-logs" },
   ];
 
