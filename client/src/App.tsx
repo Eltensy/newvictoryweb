@@ -13,6 +13,7 @@ import TerritoryMainPage from './components/TerritoryMain';
 import TournamentsPage from './components/TournamentsPage';
 import TournamentDetailPage from './components/TournamentDetailPage';
 import DropMapInvitePage from './components/DropMapInvitePage';
+import MySubmissionsPage from './components/MySubmissions';
 import PremiumModal from './components/PremiumModal';
 import PremiumBadge from './components/PremiumBadge';
 import { useAuth } from './hooks/useAuth';
@@ -60,6 +61,15 @@ function Router() {
             <ThemeToggle />
           </div>
           <TerritoryMainPage />
+        </>
+      )} />
+
+      <Route path="/my-submissions" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <MySubmissionsPage />
         </>
       )} />
       
