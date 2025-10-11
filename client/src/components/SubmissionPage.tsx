@@ -103,7 +103,23 @@ export default function SubmissionPage({
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background relative overflow-hidden flex flex-col">
+      {/* Animated background gradient */}
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-purple-500/5 animate-gradient"></div>
+      
+      {/* Decorative glow elements */}
+      <div className="absolute top-20 left-20 w-72 h-72 bg-primary/10 rounded-full blur-3xl animate-pulse"></div>
+      <div className="absolute bottom-20 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
+      <div className="absolute top-1/2 right-1/4 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl animate-pulse delay-500"></div>
+
+      {/* Floating particles effect */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-2 h-2 bg-primary/30 rounded-full animate-float"></div>
+        <div className="absolute top-1/3 right-1/3 w-3 h-3 bg-purple-500/20 rounded-full animate-float-delayed"></div>
+        <div className="absolute bottom-1/3 left-1/2 w-2 h-2 bg-blue-500/30 rounded-full animate-float"></div>
+        <div className="absolute top-1/2 left-1/3 w-2 h-2 bg-primary/20 rounded-full animate-float-delayed"></div>
+      </div>
+
       {/* Header */}
       <Header
         user={user}
@@ -115,8 +131,8 @@ export default function SubmissionPage({
       />
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
-        <div className="max-w-6xl mx-auto">
+      <main className="relative z-10 py-6">
+        <div className="container mx-auto px-4 w-full max-w-[1400px]">
           {/* Title */}
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold font-gaming mb-2">
@@ -128,11 +144,14 @@ export default function SubmissionPage({
           </div>
 
           {/* Main Content Grid */}
-          <div className="grid lg:grid-cols-3 gap-6">
-            {/* File Upload Area - Takes 2 columns */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* File Upload Section */}
-              <div className="bg-card/30 backdrop-blur-sm rounded-lg border border-border p-6">
+          <div className="grid lg:grid-cols-[70%_30%] gap-6 justify-center mx-auto" style={{ maxWidth: '90%' }}>
+            {/* File Upload Area */}
+            <div className="flex flex-col gap-6">
+              {/* File Upload Section with glass effect */}
+              <div className="bg-card/30 backdrop-blur-md rounded-2xl border border-border/50 p-6 relative overflow-hidden">
+                {/* Glow effect */}
+                <div className="absolute top-0 right-0 h-32 w-32 bg-primary/10 rounded-full blur-3xl"></div>
+                
                 <FileUpload
                   selectedFile={selectedFile}
                   onFileSelect={setSelectedFile}
@@ -143,10 +162,13 @@ export default function SubmissionPage({
               </div>
             </div>
 
-            {/* Category Selection Sidebar */}
-            <div className="lg:col-span-1 space-y-6">
-              {/* Category Selection Section */}
-              <div className="bg-card/30 backdrop-blur-sm rounded-lg border border-border p-6">
+            {/* Category Selection */}
+            <div className="flex flex-col gap-6">
+              {/* Category Selection Section with glass effect */}
+              <div className="bg-card/30 backdrop-blur-md rounded-2xl border border-border/50 p-6 relative overflow-hidden">
+                {/* Glow effect */}
+                <div className="absolute top-0 right-0 h-32 w-32 bg-purple-500/10 rounded-full blur-3xl"></div>
+                
                 <CategorySelection
                   selectedCategory={selectedCategory}
                   onCategoryChange={setSelectedCategory}
@@ -178,6 +200,44 @@ export default function SubmissionPage({
         isOpen={isPremiumModalOpen}
         onClose={() => setIsPremiumModalOpen(false)}
       />
+
+      <style>{`
+        @keyframes float {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-20px); }
+        }
+        
+        @keyframes float-delayed {
+          0%, 100% { transform: translateY(0px) translateX(0px); }
+          50% { transform: translateY(-15px) translateX(10px); }
+        }
+        
+        .animate-float {
+          animation: float 6s ease-in-out infinite;
+        }
+        
+        .animate-float-delayed {
+          animation: float-delayed 8s ease-in-out infinite;
+          animation-delay: 2s;
+        }
+        
+        @keyframes gradient {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.8; }
+        }
+        
+        .animate-gradient {
+          animation: gradient 8s ease-in-out infinite;
+        }
+
+        .delay-500 {
+          animation-delay: 0.5s;
+        }
+
+        .delay-1000 {
+          animation-delay: 1s;
+        }
+      `}</style>
     </div>
   );
-} 
+}

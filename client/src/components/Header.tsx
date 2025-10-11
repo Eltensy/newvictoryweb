@@ -15,7 +15,8 @@ import {
   Clock,
   Shield,
   Home,
-  CheckCircle2
+  CheckCircle2,
+  FileText
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PremiumBadge from './PremiumBadge';
@@ -26,7 +27,6 @@ interface User {
   displayName: string;
   balance: number;
   isAdmin: boolean;
-  subscriptionScreenshotStatus?: string;
   premiumTier?: 'none' | 'basic' | 'gold' | 'platinum' | 'vip';
   premiumEndDate?: Date | string;
 }
@@ -56,6 +56,7 @@ interface HeaderProps {
   onProfileClick: () => void;
   onRefreshUser: () => Promise<void>;
   isRefreshing: boolean;
+  onMySubmissionsClick?: () => void;
   
   territoryStats?: TerritoryStats;
   notifications?: Notification[];
@@ -72,6 +73,7 @@ export default function EnhancedHeader({
   onProfileClick, 
   onRefreshUser, 
   isRefreshing,
+  onMySubmissionsClick,
   territoryStats,
   notifications = [],
   onNotificationClick,
@@ -168,7 +170,8 @@ export default function EnhancedHeader({
   const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
   const isInTournamentsSection = currentPath.includes('/tournament');
   const isInTerritorySection = currentPath.includes('/territory');
-  const hasSubscription = user.subscriptionScreenshotStatus === 'approved';
+  const isInMySubmissions = currentPath.includes('/my-submissions');
+  const hasSubscription = user?.premiumTier && user.premiumTier !== 'none';
 
   return (
     <header className="border-b border-border/40 bg-background/80 backdrop-blur-xl sticky top-0 z-40">
@@ -191,13 +194,28 @@ export default function EnhancedHeader({
               size="sm"
               className={cn(
                 "h-8 px-3 text-sm font-medium transition-colors",
-                !isInTerritorySection && !isInTournamentsSection 
+                !isInTerritorySection && !isInTournamentsSection && !isInMySubmissions
                   ? "text-foreground" 
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
               <Home className="h-3.5 w-3.5 mr-1.5" />
               Загрузка
+            </Button>
+            
+            <Button
+              onClick={onMySubmissionsClick || (() => window.location.href = '/my-submissions')}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-8 px-3 text-sm font-medium transition-colors",
+                isInMySubmissions
+                  ? "text-foreground" 
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <FileText className="h-3.5 w-3.5 mr-1.5" />
+              Мои заявки
             </Button>
             
             <div className="relative group">
@@ -394,25 +412,23 @@ export default function EnhancedHeader({
 
           {/* Profile Avatar */}
           <div className="relative">
-  <button 
-    onClick={onProfileClick}
-    className="h-8 w-8 rounded-full bg-gradient-to-br from-primary to-primary/60 hover:scale-105 transition-transform flex items-center justify-center relative"
-    data-testid="button-profile"
-  >
-    <User className="h-4 w-4 text-white" />
-  </button>
-  {/* Premium badge overlay - now with pointer-events-none */}
-  {user.premiumTier && user.premiumTier !== 'none' && (
-    <div className="absolute -bottom-1 -right-1 pointer-events-none">
-      <PremiumBadge tier={user.premiumTier} size="sm" />
-    </div>
-  )}
-</div>
-</div>
+            <button 
+              onClick={onProfileClick}
+              className="h-8 w-8 rounded-full bg-gradient-to-br from-primary to-primary/60 hover:scale-105 transition-transform flex items-center justify-center relative"
+              data-testid="button-profile"
+            >
+              <User className="h-4 w-4 text-white" />
+            </button>
+            {user.premiumTier && user.premiumTier !== 'none' && (
+              <div className="absolute -bottom-1 -right-1 pointer-events-none">
+                <PremiumBadge tier={user.premiumTier} size="sm" />
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Mobile Menu */}
         <div className="lg:hidden flex items-center gap-2">
-          {/* Premium button for mobile */}
           <Button
             onClick={onPremiumClick}
             size="sm"
@@ -435,54 +451,62 @@ export default function EnhancedHeader({
             </SheetTrigger>
             <SheetContent side="right" className="w-72 p-0">
               <div className="p-6 border-b">
-  <div className="flex items-center gap-3">
-    <div className="relative">
-      <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
-        <User className="h-5 w-5 text-white" />
-      </div>
-      {user.premiumTier && user.premiumTier !== 'none' && (
-        <div className="absolute -bottom-1 -right-1">
-          <PremiumBadge tier={user.premiumTier} size="sm" />
-        </div>
-      )}
-    </div>
-    <div className="flex-1">
-      <div className="flex items-center gap-2">
-        <span className="font-medium">{user.displayName}</span>
-        {user.premiumTier && user.premiumTier !== 'none' && (
-          <PremiumBadge tier={user.premiumTier} size="sm" showLabel />
-        )}
-      </div>
-      <div className="text-sm text-muted-foreground">{user.balance.toLocaleString()} ₽</div>
-    </div>
-  </div>
-  
-  {/* Premium expiration warning if applicable */}
-  {user.premiumTier && user.premiumTier !== 'none' && user.premiumEndDate && (
-    (() => {
-      const daysRemaining = Math.ceil((new Date(user.premiumEndDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-      if (daysRemaining <= 7 && daysRemaining > 0) {
-        return (
-          <div className="mt-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
-            <p className="text-xs text-yellow-600 dark:text-yellow-400">
-              ⚠️ Premium истекает через {daysRemaining} {daysRemaining === 1 ? 'день' : daysRemaining < 5 ? 'дня' : 'дней'}
-            </p>
-          </div>
-        );
-      }
-      return null;
-    })()
-  )}
-</div>
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
+                      <User className="h-5 w-5 text-white" />
+                    </div>
+                    {user.premiumTier && user.premiumTier !== 'none' && (
+                      <div className="absolute -bottom-1 -right-1">
+                        <PremiumBadge tier={user.premiumTier} size="sm" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{user.displayName}</span>
+                      {user.premiumTier && user.premiumTier !== 'none' && (
+                        <PremiumBadge tier={user.premiumTier} size="sm" showLabel />
+                      )}
+                    </div>
+                    <div className="text-sm text-muted-foreground">{user.balance.toLocaleString()} ₽</div>
+                  </div>
+                </div>
+                
+                {user.premiumTier && user.premiumTier !== 'none' && user.premiumEndDate && (
+                  (() => {
+                    const daysRemaining = Math.ceil((new Date(user.premiumEndDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                    if (daysRemaining <= 7 && daysRemaining > 0) {
+                      return (
+                        <div className="mt-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                          <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                            ⚠️ Premium истекает через {daysRemaining} {daysRemaining === 1 ? 'день' : daysRemaining < 5 ? 'дня' : 'дней'}
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()
+                )}
+              </div>
 
               <div className="p-4 space-y-1">
                 <Button
                   onClick={() => window.location.href = '/'}
-                  variant={!isInTerritorySection && !isInTournamentsSection ? "default" : "ghost"}
+                  variant={!isInTerritorySection && !isInTournamentsSection && !isInMySubmissions ? "default" : "ghost"}
                   className="w-full justify-start h-10"
                 >
                   <Home className="h-4 w-4 mr-3" />
                   Загрузка
+                </Button>
+                
+                <Button
+                  onClick={onMySubmissionsClick || (() => window.location.href = '/my-submissions')}
+                  variant={isInMySubmissions ? "default" : "ghost"}
+                  className="w-full justify-start h-10"
+                >
+                  <FileText className="h-4 w-4 mr-3" />
+                  Мои заявки
                 </Button>
                 
                 <Button

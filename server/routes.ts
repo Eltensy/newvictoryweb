@@ -1042,6 +1042,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ===== PREMIUM ROUTES =====
 
+  app.delete("/api/admin/user/:userId/premium", async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const userId = req.params.userId;
+      const user = await storage.getUser(userId);
+
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Сбрасываем премиум статус
+      const updatedUser = await storage.updateUser(userId, {
+        premiumTier: 'none',
+        premiumEndDate: new Date(),
+        premiumSource: null,
+        premiumGiftedBy: null,
+      });
+
+      // Логируем действие админа
+      await storage.createAdminAction({
+        adminId: authResult.adminId,
+        action: 'revoke_premium',
+        targetType: 'user',
+        targetId: userId,
+        details: JSON.stringify({ reason: 'Admin revocation' })
+      });
+
+      res.json({ message: "Premium status revoked successfully" });
+
+    } catch (error) {
+      console.error('Revoke premium error:', error);
+      res.status(500).json({ error: "Failed to revoke premium" });
+    }
+  });
+
   app.post("/api/admin/user/:userId/premium", async (req, res) => {
     try {
       const authResult = await authenticateAdmin(req);
