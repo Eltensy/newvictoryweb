@@ -19,6 +19,7 @@ import {
   updateTournamentSchema,
   registerForTournamentSchema,
   grantPremiumSchema,
+  getKillTypeFromCategory,
   type InsertUser
 } from "@shared/schema";
 
@@ -871,72 +872,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ===== ADMIN ROUTES =====
 
-  app.post("/api/admin/submission/:id/review", async (req, res) => {
-    try {
-      const authResult = await authenticateAdmin(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-
-      const reviewData = {
-        status: req.body.status,
-        reward: req.body.reward ? Number(req.body.reward) : undefined,
-        rejectionReason: req.body.rejectionReason
-      };
-
-      const validation = reviewSubmissionSchema.safeParse(reviewData);
-      if (!validation.success) {
-        return res.status(400).json({ 
-          error: "Invalid review data", 
-          details: validation.error.errors 
-        });
-      }
-
-      const { status, reward, rejectionReason } = validation.data;
-      
-      if (status === 'approved' && (!reward || reward <= 0)) {
-        return res.status(400).json({ error: "Valid reward amount required for approved submissions" });
-      }
-      
-      if (status === 'rejected' && !rejectionReason?.trim()) {
-        return res.status(400).json({ error: "Rejection reason required for rejected submissions" });
-      }
-
-      const submission = await storage.updateSubmissionStatus(
-        req.params.id, 
-        status, 
-        authResult.adminId, 
-        reward, 
-        rejectionReason
-      );
-
-      if (status === 'approved' && reward) {
-        await storage.updateUserBalance(submission.userId, reward);
-        
-        await storage.createAdminAction({
-          adminId: authResult.adminId,
-          action: 'approve_submission',
-          targetType: 'submission',
-          targetId: submission.id,
-          details: JSON.stringify({ reward, submissionId: submission.id })
-        });
-      } else if (status === 'rejected') {
-        await storage.createAdminAction({
-          adminId: authResult.adminId,
-          action: 'reject_submission',
-          targetType: 'submission',
-          targetId: submission.id,
-          details: JSON.stringify({ rejectionReason, submissionId: submission.id })
-        });
-      }
-
-      res.json(submission);
-    } catch (error) {
-      console.error('Review error:', error);
-      res.status(500).json({ error: "Failed to process review" });
-    }
-  });
-
+ 
   app.get("/api/admin/users", async (req, res) => {
     try {
       const authResult = await authenticateAdmin(req);
@@ -1960,7 +1896,6 @@ app.get("/api/user/:id/tournaments", async (req, res) => {
 
 // ===== ADMIN TOURNAMENT ROUTES =====
 
-// Create tournament (admin only)
 app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
   try {
     const authResult = await authenticateAdmin(req);
@@ -1971,7 +1906,6 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
     let imageUrl = null;
     let cloudinaryPublicId = null;
 
-    // Handle image upload if provided
     if (req.file) {
       const fileType = await fileTypeFromBuffer(req.file.buffer);
       if (!fileType || !['image/jpeg', 'image/png', 'image/webp'].includes(fileType.mime)) {
@@ -1991,10 +1925,38 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
       cloudinaryPublicId = cloudinaryResult.public_id;
     }
 
-    // Parse and validate tournament data
+    // Parse prize distribution from form data
+    let prizeDistribution = null;
+    if (req.body.prizeDistribution) {
+      try {
+        const parsed = typeof req.body.prizeDistribution === 'string' 
+          ? JSON.parse(req.body.prizeDistribution)
+          : req.body.prizeDistribution;
+        
+        // Validate that all values are positive numbers
+        const isValid = Object.entries(parsed).every(([place, amount]) => {
+          return !isNaN(parseInt(place)) && 
+                 !isNaN(parseFloat(amount as string)) && 
+                 parseFloat(amount as string) > 0;
+        });
+
+        if (isValid) {
+          prizeDistribution = parsed;
+        }
+      } catch (error) {
+        console.error('Failed to parse prize distribution:', error);
+      }
+    }
+
+    // Calculate total prize from distribution or use provided prize
+    const totalPrize = prizeDistribution 
+      ? Object.values(prizeDistribution).reduce((sum: number, amount) => sum + parseFloat(amount as string), 0)
+      : parseInt(req.body.prize) || 0;
+
     const tournamentData = {
       ...req.body,
-      prize: parseInt(req.body.prize) || 0,
+      prize: totalPrize,
+      prizeDistribution,
       entryFee: parseInt(req.body.entryFee) || 0,
       maxParticipants: req.body.maxParticipants ? parseInt(req.body.maxParticipants) : null,
       imageUrl,
@@ -2012,7 +1974,6 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
 
     const tournament = await storage.createTournament(validation.data);
 
-    // Log admin action
     await storage.createAdminAction({
       adminId: authResult.adminId,
       action: 'create_tournament',
@@ -2021,20 +1982,174 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
       details: JSON.stringify({ 
         name: tournament.name,
         prize: tournament.prize,
+        prizeDistribution: tournament.prizeDistribution,
         entryFee: tournament.entryFee,
       })
     });
 
     console.log(`✅ Tournament created: ${tournament.id} by admin ${authResult.adminId}`);
-
     res.json(tournament);
   } catch (error) {
     console.error('Create tournament error:', error);
     res.status(500).json({ error: "Failed to create tournament" });
   }
 });
+app.post("/api/admin/submission/:id/review", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
 
-// Update tournament (admin only)
+    const reviewData = {
+      status: req.body.status,
+      reward: req.body.reward ? Number(req.body.reward) : undefined,
+      rejectionReason: req.body.rejectionReason
+    };
+
+    const validation = reviewSubmissionSchema.safeParse(reviewData);
+    if (!validation.success) {
+      return res.status(400).json({ 
+        error: "Invalid review data", 
+        details: validation.error.errors 
+      });
+    }
+
+    const { status, reward, rejectionReason } = validation.data;
+    
+    if (status === 'approved' && (!reward || reward <= 0)) {
+      return res.status(400).json({ error: "Valid reward amount required for approved submissions" });
+    }
+    
+    if (status === 'rejected' && !rejectionReason?.trim()) {
+      return res.status(400).json({ error: "Rejection reason required for rejected submissions" });
+    }
+
+    const submission = await storage.updateSubmissionStatus(
+      req.params.id, 
+      status, 
+      authResult.adminId, 
+      reward, 
+      rejectionReason
+    );
+
+    if (status === 'approved' && reward) {
+      // Выдаем баланс
+      await storage.updateUserBalance(submission.userId, reward);
+      
+      // 🆕 ВЫДАЕМ КИЛЛ ЕСЛИ ЭТО KILL-КАТЕГОРИЯ
+      const killType = getKillTypeFromCategory(submission.category);
+      if (killType) {
+        try {
+          await storage.addKillToUser(
+            submission.userId,
+            killType,
+            reward,
+            submission.id,
+            authResult.adminId,
+            `Approved ${submission.category} submission`,
+            {
+              category: submission.category,
+              filename: submission.originalFilename,
+              adminUsername: authResult.admin.username
+            }
+          );
+          
+          console.log(`✅ ${killType.toUpperCase()} kill granted to user ${submission.userId} for submission ${submission.id}`);
+        } catch (killError) {
+          console.error('Error granting kill:', killError);
+          // Не прерываем процесс если не удалось выдать килл
+        }
+      }
+      
+      await storage.createAdminAction({
+        adminId: authResult.adminId,
+        action: 'approve_submission',
+        targetType: 'submission',
+        targetId: submission.id,
+        details: JSON.stringify({ 
+          reward, 
+          submissionId: submission.id,
+          killType: killType || 'none' // 🆕 Добавляем тип килла в детали
+        })
+      });
+    } else if (status === 'rejected') {
+      await storage.createAdminAction({
+        adminId: authResult.adminId,
+        action: 'reject_submission',
+        targetType: 'submission',
+        targetId: submission.id,
+        details: JSON.stringify({ rejectionReason, submissionId: submission.id })
+      });
+    }
+
+    res.json(submission);
+  } catch (error) {
+    console.error('Review error:', error);
+    res.status(500).json({ error: "Failed to process review" });
+  }
+});
+
+// 🆕 НОВЫЙ РОУТ: ПОЛУЧИТЬ ИСТОРИЮ КИЛЛОВ ПОЛЬЗОВАТЕЛЯ
+app.get("/api/user/:id/kills", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Пользователи могут смотреть только свою историю, админы - любую
+    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    const killHistory = await storage.getUserKillHistory(req.params.id, limit);
+    
+    res.json(killHistory);
+  } catch (error) {
+    console.error('Get kill history error:', error);
+    res.status(500).json({ error: "Failed to fetch kill history" });
+  }
+});
+
+// 🆕 НОВЫЙ РОУТ: ПОЛУЧИТЬ СТАТИСТИКУ КИЛЛОВ ПОЛЬЗОВАТЕЛЯ
+app.get("/api/user/:id/kill-stats", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const stats = await storage.getUserKillStats(req.params.id);
+    res.json(stats);
+  } catch (error) {
+    console.error('Get kill stats error:', error);
+    res.status(500).json({ error: "Failed to fetch kill stats" });
+  }
+});
+
+// 🆕 НОВЫЙ РОУТ: ПОЛУЧИТЬ ВСЮ ИСТОРИЮ КИЛЛОВ (АДМИН)
+app.get("/api/admin/kills", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 100;
+    const killHistory = await storage.getAllKillHistory(limit);
+    
+    res.json(killHistory);
+  } catch (error) {
+    console.error('Get all kill history error:', error);
+    res.status(500).json({ error: "Failed to fetch kill history" });
+  }
+});
 app.patch("/api/admin/tournament/:id", async (req, res) => {
   try {
     const authResult = await authenticateAdmin(req);
@@ -2042,7 +2157,31 @@ app.patch("/api/admin/tournament/:id", async (req, res) => {
       return res.status(authResult.status).json({ error: authResult.error });
     }
 
-    const validation = updateTournamentSchema.safeParse(req.body);
+    // Handle prize distribution update
+    let updateData = { ...req.body };
+    
+    if (req.body.prizeDistribution) {
+      try {
+        const parsed = typeof req.body.prizeDistribution === 'string' 
+          ? JSON.parse(req.body.prizeDistribution)
+          : req.body.prizeDistribution;
+        
+        updateData.prizeDistribution = parsed;
+        
+        // Recalculate total prize if distribution changed
+        if (parsed) {
+          const totalPrize = Object.values(parsed).reduce(
+            (sum: number, amount) => sum + parseFloat(amount as string), 
+            0
+          );
+          updateData.prize = totalPrize;
+        }
+      } catch (error) {
+        console.error('Failed to parse prize distribution:', error);
+      }
+    }
+
+    const validation = updateTournamentSchema.safeParse(updateData);
     if (!validation.success) {
       return res.status(400).json({ 
         error: "Invalid update data", 
@@ -2052,7 +2191,6 @@ app.patch("/api/admin/tournament/:id", async (req, res) => {
 
     const tournament = await storage.updateTournament(req.params.id, validation.data);
 
-    // Log admin action
     await storage.createAdminAction({
       adminId: authResult.adminId,
       action: 'update_tournament',
@@ -2065,6 +2203,99 @@ app.patch("/api/admin/tournament/:id", async (req, res) => {
   } catch (error) {
     console.error('Update tournament error:', error);
     res.status(500).json({ error: "Failed to update tournament" });
+  }
+});
+
+// Distribute prizes according to prize distribution
+app.post("/api/admin/tournament/:id/distribute-prizes", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { placements } = req.body; // { userId: place } mapping
+    const tournamentId = req.params.id;
+
+    if (!placements || Object.keys(placements).length === 0) {
+      return res.status(400).json({ error: "Placements are required" });
+    }
+
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    if (!tournament.prizeDistribution) {
+      return res.status(400).json({ error: "Tournament has no prize distribution configured" });
+    }
+
+    const results = [];
+
+    for (const [userId, place] of Object.entries(placements)) {
+      const prizeAmount = tournament.prizeDistribution[place as string];
+      
+      if (!prizeAmount) {
+        console.warn(`No prize configured for place ${place}`);
+        continue;
+      }
+
+      try {
+        await storage.updateUserBalance(
+          userId,
+          prizeAmount,
+          `Приз за ${place}-е место в турнире: ${tournament.name}`,
+          'bonus',
+          'tournament',
+          tournamentId
+        );
+
+        results.push({
+          userId,
+          place: parseInt(place as string),
+          amount: prizeAmount,
+          success: true
+        });
+
+        console.log(`✅ Prize distributed: ${prizeAmount} ₽ to user ${userId} for place ${place}`);
+      } catch (error) {
+        console.error(`Failed to distribute prize to user ${userId}:`, error);
+        results.push({
+          userId,
+          place: parseInt(place as string),
+          amount: prizeAmount,
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: 'distribute_tournament_prizes',
+      targetType: 'tournament',
+      targetId: tournamentId,
+      details: JSON.stringify({ 
+        tournamentName: tournament.name,
+        placements,
+        results
+      })
+    });
+
+    const successCount = results.filter(r => r.success).length;
+    const totalDistributed = results
+      .filter(r => r.success)
+      .reduce((sum, r) => sum + r.amount, 0);
+
+    res.json({
+      message: `Призы распределены: ${successCount} из ${results.length}`,
+      totalDistributed,
+      results
+    });
+
+  } catch (error) {
+    console.error('Distribute prizes error:', error);
+    res.status(500).json({ error: "Failed to distribute prizes" });
   }
 });
 

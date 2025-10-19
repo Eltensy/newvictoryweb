@@ -14,12 +14,6 @@ import TournamentsPage from './components/TournamentsPage';
 import TournamentDetailPage from './components/TournamentDetailPage';
 import DropMapInvitePage from './components/DropMapInvitePage';
 import MySubmissionsPage from './components/MySubmissions';
-import PremiumModal from './components/PremiumModal';
-import PremiumBadge from './components/PremiumBadge';
-import { useAuth } from './hooks/useAuth';
-import { usePremium } from './hooks/usePremium';
-import { Crown } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 
 function GameApp() {
   return (
@@ -54,8 +48,19 @@ function Router() {
           <PrivacyPolicyPage />
         </>
       )} />
-      
-      <Route path="/territory" component={() => (
+
+      {/* NEW: Основной роут для карт с выбором первой доступной */}
+      <Route path="/dropmap" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <TerritoryMainPage />
+        </>
+      )} />
+
+      {/* NEW: Роут для конкретной карты по ID */}
+      <Route path="/dropmap/:dropmapId" component={() => (
         <>
           <div className="fixed top-4 right-4 z-50">
             <ThemeToggle />
@@ -70,6 +75,16 @@ function Router() {
             <ThemeToggle />
           </div>
           <MySubmissionsPage />
+        </>
+      )} />
+      
+      {/* DEPRECATED: оставляем для обратной совместимости */}
+      <Route path="/territory" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <TerritoryMainPage />
         </>
       )} />
       
@@ -99,7 +114,8 @@ function Router() {
           <TournamentDetailPage />
         </>
       )} />
-      <Route path="/dropmap/invite/:id" component={() => (
+      
+      <Route path="/dropmap/invite/:code" component={() => (
         <>
           <div className="fixed top-4 right-4 z-50">
             <ThemeToggle />

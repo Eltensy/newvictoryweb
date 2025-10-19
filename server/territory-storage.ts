@@ -1,838 +1,365 @@
+// server/territory-storage.ts - Финальная версия с копированием изображения карты
+
 import {
-  territoryShapes,
-  territoryTemplates,
   territories,
   territoryClaims,
   dropMapSettings,
   dropMapEligiblePlayers,
   dropMapInviteCodes,
   tournamentRegistrations,
-  InsertDropMapSettings,
-  DropMapSettings,
-  DropMapEligiblePlayer,
-  DropMapInviteCode,
   users,
-  tournaments,
-  type TerritoryShape,
   type Territory,
   type TerritoryClaim,
+  type DropMapSettings,
+  type DropMapEligiblePlayer,
+  type DropMapInviteCode,
 } from "../shared/schema";
 import { db } from "./db";
-import { eq, desc, sql, and, isNull, inArray, or } from "drizzle-orm";
+import { eq, desc, sql, and, isNull, inArray } from "drizzle-orm";
 
-export interface ITerritoryStorage {
+const UNCLAIMED_COLOR = '#374151'; // Very Dark Gray
+const DEFAULT_CLAIM_COLOR = '#3B82F6'; // Bright Blue
 
-deleteTerritory(territoryId: string): Promise<void>;
+export class DatabaseTerritoryStorage {
 
-  // Шаблоны контуров
-  createShape(shape: { name: string; points: any; defaultColor: string; description?: string; createdBy?: string }): Promise<TerritoryShape>;
-  getAllShapes(): Promise<any[]>;
-  getShape(id: string): Promise<TerritoryShape | undefined>;
-  updateShape(id: string, updates: Partial<TerritoryShape>): Promise<TerritoryShape | undefined>;
-  deleteShape(id: string): Promise<void>;
-  
-  // Шаблоны карт
-  createTemplate(template: { name: string; description?: string; mapImageUrl?: string; shapeIds: string[]; tournamentId?: string; createdBy?: string }): Promise<any>;
-  getAllTemplatesWithDetails(): Promise<any[]>;
-  getTemplateWithShapes(templateId: string): Promise<any>;
-  getActiveTemplate(): Promise<any>;
-  setActiveTemplate(templateId: string): Promise<void>;
-  deleteTemplate(templateId: string): Promise<void>;
-  
-  // Территории
-  getTerritoriesForTemplate(templateId: string, userId?: string): Promise<any[]>;
-  getTerritory(id: string): Promise<Territory | undefined>;
-  
-  // Клеймы
-  claimTerritory(territoryId: string, userId: string): Promise<TerritoryClaim>;
-  revokeTerritory(territoryId: string, adminId: string, reason: string): Promise<void>;
-  getUserTerritories(userId: string): Promise<any[]>;
-  
-  // Логи
-  getAdminActivityLogs(limit?: number): Promise<any[]>;
+  // =============================================
+  // ========== MAP METHODS ==========
+  // =============================================
 
-    createDropMapSettings(data: InsertDropMapSettings): Promise<DropMapSettings>;
-  getDropMapSettings(settingsId: string): Promise<DropMapSettings | undefined>;
-  getDropMapByTemplate(templateId: string): Promise<DropMapSettings | undefined>;
-  updateDropMapSettings(settingsId: string, updates: Partial<DropMapSettings>): Promise<DropMapSettings>;
-  
-  addDropMapPlayer(settingsId: string, userId: string | null, displayName: string, addedBy: string, sourceType?: string): Promise<DropMapEligiblePlayer>;
-  getDropMapPlayers(settingsId: string): Promise<DropMapEligiblePlayer[]>;
-  removeDropMapPlayer(settingsId: string, userId: string): Promise<void>;
-  isPlayerEligibleForDropMap(settingsId: string, userId: string): Promise<boolean>;
-  importDropMapPlayersFromTournament(settingsId: string, tournamentId: string, positions?: number[], topN?: number, addedBy?: string): Promise<DropMapEligiblePlayer[]>;
-  
-  createDropMapInvite(settingsId: string, displayName: string, expiresInDays: number, createdBy?: string): Promise<DropMapInviteCode>;
-  getDropMapInvite(code: string): Promise<DropMapInviteCode | undefined>;
-  validateDropMapInvite(code: string): Promise<{ valid: boolean; error?: string; invite?: DropMapInviteCode }>;
-  useDropMapInvite(code: string, territoryId: string): Promise<void>;
-  getDropMapInvites(settingsId: string): Promise<DropMapInviteCode[]>;
-  deleteDropMapInvite(code: string): Promise<void>;
-  
-  claimTerritoryWithInvite(code: string, territoryId: string): Promise<{ claim: TerritoryClaim; invite: DropMapInviteCode }>;
-}
+  async createEmptyMap(name: string, description?: string, mapImageUrl?: string, createdBy?: string): Promise<DropMapSettings> {
+    const [newMap] = await db.insert(dropMapSettings).values({ name, description, mapImageUrl, createdBy, mode: 'tournament' }).returning();
+    if (!newMap) throw new Error('Failed to create map');
+    return newMap;
+  }
 
-export class DatabaseTerritoryStorage implements ITerritoryStorage {
+  async createMapFromSourceMap(sourceMapId: string, name: string, description?: string, mapImageUrl?: string, createdBy?: string): Promise<DropMapSettings> {
+    return db.transaction(async (tx) => {
+      // 1. Получаем исходную карту, чтобы получить URL ее изображения
+      const [sourceMap] = await tx.select().from(dropMapSettings).where(eq(dropMapSettings.id, sourceMapId));
+      if (!sourceMap) {
+        throw new Error('Source map not found');
+      }
 
-async deleteTerritory(territoryId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    // Сначала удаляем все связанные claims
-    await tx
-      .delete(territoryClaims)
-      .where(eq(territoryClaims.territoryId, territoryId));
+      // 2. Создаем новую карту
+      const [newMap] = await tx.insert(dropMapSettings).values({ 
+        name, 
+        description, 
+        // Если передан новый URL — используем его, иначе — берем URL из исходной карты
+        mapImageUrl: mapImageUrl || sourceMap.mapImageUrl, 
+        createdFrom: sourceMapId, 
+        createdBy, 
+        mode: 'tournament' 
+      }).returning();
+      
+      if (!newMap) throw new Error('Failed to create new map');
+
+      // 3. Копируем территории
+      const sourceTerritories = await tx.select().from(territories).where(eq(territories.mapId, sourceMapId));
+      if (sourceTerritories.length > 0) {
+        await tx.insert(territories).values(sourceTerritories.map(t => ({ 
+            ...t, 
+            id: undefined, 
+            mapId: newMap.id, 
+            ownerId: null, 
+            claimedAt: null, 
+            color: UNCLAIMED_COLOR, 
+            createdAt: undefined, 
+            updatedAt: undefined, 
+        })));
+      }
+      return newMap;
+    });
+  }
+
+  async getMap(id: string): Promise<DropMapSettings | undefined> {
+    const [map] = await db.select().from(dropMapSettings).where(eq(dropMapSettings.id, id));
+    return map;
+  }
+
+  async getAllMaps(): Promise<DropMapSettings[]> {
+    return db.select().from(dropMapSettings).orderBy(desc(dropMapSettings.createdAt));
+  }
+
+  async updateMap(id: string, updates: Partial<Omit<DropMapSettings, 'id' | 'createdAt'>>): Promise<DropMapSettings> {
+    const [updated] = await db.update(dropMapSettings).set({ ...updates, updatedAt: new Date() }).where(eq(dropMapSettings.id, id)).returning();
+    if (!updated) throw new Error('Map not found');
+    return updated;
+  }
+
+  async deleteMap(mapId: string): Promise<void> {
+    await db.delete(dropMapSettings).where(eq(dropMapSettings.id, mapId));
+  }
+
+  // =============================================
+  // ========== TERRITORY METHODS ==========
+  // =============================================
+
+  async getMapTerritories(mapId: string): Promise<any[]> {
+    const territoriesData = await db
+      .select({ territory: territories, ownerUsername: users.username, ownerDisplayName: users.displayName })
+      .from(territories).leftJoin(users, sql`(${territories.ownerId})::text = (${users.id})::text`).where(eq(territories.mapId, mapId));
     
-    // Затем удаляем саму территорию
-    await tx
-      .delete(territories)
-      .where(eq(territories.id, territoryId));
-  });
-}
+    const territoryIds = territoriesData.map(t => t.territory.id);
+    if (territoryIds.length === 0) return [];
 
-  async createDropMapSettings(data: any) {
-    const [settings] = await db
-      .insert(dropMapSettings)
-      .values(data)
-      .returning();
-    return settings;
+    const allClaims = await db.select({ claim: territoryClaims, user: { username: users.username, displayName: users.displayName } })
+      .from(territoryClaims).leftJoin(users, sql`(${territoryClaims.userId})::text = (${users.id})::text`)
+      .where(and(inArray(territoryClaims.territoryId, territoryIds), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
+
+    const claimsByTerritory = allClaims.reduce((acc, row) => {
+      const id = row.claim.territoryId;
+      if (!acc[id]) acc[id] = [];
+      acc[id].push({ userId: row.claim.userId, username: row.user?.username, displayName: row.user?.displayName, claimedAt: row.claim.claimedAt });
+      return acc;
+    }, {} as Record<string, any[]>);
+
+    return territoriesData.map(row => {
+      const claims = claimsByTerritory[row.territory.id] || [];
+      return { ...row.territory, owner: row.territory.ownerId ? { id: row.territory.ownerId, username: row.ownerUsername || '', displayName: row.ownerDisplayName || '' } : undefined, claims, claimCount: claims.length };
+    });
   }
   
-  async getDropMapSettings(settingsId: string) {
-    const [settings] = await db
-      .select()
-      .from(dropMapSettings)
-      .where(eq(dropMapSettings.id, settingsId));
-    return settings;
+  async createTerritory(data: { mapId: string; name: string; points: any; color?: string; maxPlayers?: number; description?: string; }): Promise<Territory> {
+    const [territory] = await db.insert(territories).values({ mapId: data.mapId, name: data.name, points: data.points, color: data.color || UNCLAIMED_COLOR, maxPlayers: data.maxPlayers || 1, description: data.description }).returning();
+    return territory;
   }
-  
-  async getDropMapByTemplate(templateId: string) {
-    const [settings] = await db
-      .select()
-      .from(dropMapSettings)
-      .where(eq(dropMapSettings.templateId, templateId))
-      .orderBy(desc(dropMapSettings.createdAt))
-      .limit(1);
-    return settings;
+
+  async getTerritory(id: string): Promise<Territory | undefined> {
+    const [territory] = await db.select().from(territories).where(eq(territories.id, id));
+    return territory;
   }
-  
-  async updateDropMapSettings(settingsId: string, updates: Partial<DropMapSettings>) {
-    const [settings] = await db
-      .update(dropMapSettings)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(dropMapSettings.id, settingsId))
-      .returning();
-    return settings;
+
+  async updateTerritory(id: string, updates: Partial<Territory>): Promise<Territory> {
+    const [updated] = await db.update(territories).set({ ...updates, updatedAt: new Date() }).where(eq(territories.id, id)).returning();
+    if (!updated) throw new Error('Territory not found');
+    return updated;
   }
-  
-  async addDropMapPlayer(settingsId: string, userId: string | null, displayName: string, addedBy: string, sourceType?: string) {
-    const [player] = await db
-      .insert(dropMapEligiblePlayers)
-      .values({
-        settingsId,
-        userId,
-        displayName,
-        sourceType,
-        addedBy,
-      })
-      .returning();
-    return player;
+
+  async deleteTerritory(id: string): Promise<void> {
+    await db.delete(territories).where(eq(territories.id, id));
   }
-  
-  async getDropMapPlayers(settingsId: string) {
-    const players = await db
-      .select({
-        player: dropMapEligiblePlayers,
-        user: users,
-      })
-      .from(dropMapEligiblePlayers)
-      .leftJoin(users, eq(dropMapEligiblePlayers.userId, users.id))
-      .where(eq(dropMapEligiblePlayers.settingsId, settingsId))
-      .orderBy(dropMapEligiblePlayers.addedAt);
+
+  // =============================================
+  // ========== PLAYER METHODS ==========
+  // =============================================
+
+  async addPlayersToMap(mapId: string, userIds: string[], addedBy: string): Promise<{ added: number; skipped: number; errors: string[] }> {
+    const usersData = await db.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, userIds));
+    if (usersData.length === 0) return { added: 0, skipped: 0, errors: userIds.map(id => `User ${id} not found`) };
     
-    return players.map(row => ({
-      ...row.player,
-      user: row.user ? {
-        id: row.user.id,
-        username: row.user.username,
-        displayName: row.user.displayName,
-      } : undefined,
-    }));
+    const playersToInsert = usersData.map(u => ({ settingsId: mapId, userId: u.id, displayName: u.displayName, addedBy, sourceType: 'manual' }));
+    
+    const inserted = await db.insert(dropMapEligiblePlayers).values(playersToInsert).onConflictDoNothing().returning();
+    return { added: inserted.length, skipped: userIds.length - inserted.length, errors: [] };
   }
-  
-  async removeDropMapPlayer(settingsId: string, userId: string) {
-    await db
-      .delete(dropMapEligiblePlayers)
-      .where(and(
-        eq(dropMapEligiblePlayers.settingsId, settingsId),
+
+  async removePlayerFromMap(mapId: string, userId: string): Promise<void> {
+    await db.delete(dropMapEligiblePlayers).where(and(eq(dropMapEligiblePlayers.settingsId, mapId), eq(dropMapEligiblePlayers.userId, userId)));
+  }
+
+  async getMapPlayers(mapId: string): Promise<any[]> {
+    return db.select({ player: dropMapEligiblePlayers, user: { id: users.id, username: users.username, displayName: users.displayName } })
+      .from(dropMapEligiblePlayers).leftJoin(users, eq(dropMapEligiblePlayers.userId, users.id))
+      .where(eq(dropMapEligiblePlayers.settingsId, mapId)).orderBy(desc(dropMapEligiblePlayers.addedAt));
+  }
+
+  async isUserEligibleForMap(mapId: string, userId: string): Promise<boolean> {
+  const [player] = await db
+    .select()
+    .from(dropMapEligiblePlayers)
+    .where(
+      and(
+        eq(dropMapEligiblePlayers.settingsId, mapId),
         eq(dropMapEligiblePlayers.userId, userId)
-      ));
-  }
+      )
+    )
+    .limit(1);
   
-  async isPlayerEligibleForDropMap(settingsId: string, userId: string) {
-    const [player] = await db
-      .select()
-      .from(dropMapEligiblePlayers)
-      .where(and(
-        eq(dropMapEligiblePlayers.settingsId, settingsId),
-        eq(dropMapEligiblePlayers.userId, userId)
-      ));
-    return !!player;
-  }
+  return !!player;
+}
   
-  async importDropMapPlayersFromTournament(
-    settingsId: string,
-    tournamentId: string,
-    positions?: number[],
-    topN?: number,
-    addedBy?: string
-  ) {
-    const registrations = await db
-      .select({
-        registration: tournamentRegistrations,
-        user: users,
-      })
-      .from(tournamentRegistrations)
-      .leftJoin(users, eq(tournamentRegistrations.userId, users.id))
-      .where(and(
-        eq(tournamentRegistrations.tournamentId, tournamentId),
-        eq(tournamentRegistrations.status, 'paid')
-      ))
+  async importPlayersFromTournament(mapId: string, tournamentId: string, positions?: number[], topN?: number, addedBy?: string): Promise<DropMapEligiblePlayer[]> {
+    let query = db.select({ userId: tournamentRegistrations.userId, displayName: users.displayName }).from(tournamentRegistrations)
+      .innerJoin(users, eq(tournamentRegistrations.userId, users.id))
+      .where(and(eq(tournamentRegistrations.tournamentId, tournamentId), eq(tournamentRegistrations.status, 'paid')))
       .orderBy(tournamentRegistrations.registeredAt);
+
+    let registrations = await query;
+    if (positions?.length) registrations = registrations.filter((_, i) => positions.includes(i + 1));
+    else if (topN) registrations = registrations.slice(0, topN);
+    if (!registrations.length) return [];
     
-    let playersToAdd = registrations;
-    
-    if (positions && positions.length > 0) {
-      playersToAdd = registrations.filter((_, index) => 
-        positions.includes(index + 1)
-      );
-    } else if (topN) {
-      playersToAdd = registrations.slice(0, topN);
-    }
-    
-    const added = [];
-    for (const { registration, user } of playersToAdd) {
-      if (!user) continue;
-      
-      const exists = await this.isPlayerEligibleForDropMap(settingsId, user.id);
-      if (exists) continue;
-      
-      const player = await this.addDropMapPlayer(
-        settingsId,
-        user.id,
-        user.displayName,
-        addedBy || 'system',
-        'tournament_import'
-      );
-      added.push(player);
-    }
-    
-    return added;
+    const playersToInsert = registrations.map(reg => ({ settingsId: mapId, userId: reg.userId, displayName: reg.displayName, addedBy: addedBy || 'system', sourceType: 'tournament_import' }));
+    return db.insert(dropMapEligiblePlayers).values(playersToInsert).onConflictDoNothing().returning();
   }
   
-  async createDropMapInvite(settingsId: string, displayName: string, expiresInDays: number, createdBy?: string) {
+  // =============================================
+  // ========== CLAIM METHODS ==========
+  // =============================================
+
+  async claimTerritory(territoryId: string, userId: string): Promise<TerritoryClaim> {
+    return db.transaction(async (tx) => {
+        const [territory] = await tx.select().from(territories).where(eq(territories.id, territoryId));
+        if (!territory || !territory.mapId) throw new Error('Territory or associated map not found');
+
+        const oldClaims = await tx.select({ id: territoryClaims.id, territoryId: territoryClaims.territoryId })
+            .from(territoryClaims)
+            .innerJoin(territories, eq(territoryClaims.territoryId, territories.id))
+            .where(and(
+                eq(territoryClaims.userId, userId), 
+                eq(territories.mapId, territory.mapId), 
+                eq(territoryClaims.claimType, 'claim'), 
+                isNull(territoryClaims.revokedAt)
+            ));
+        
+        const oldClaim = oldClaims[0];
+
+        if (oldClaim && oldClaim.territoryId !== territoryId) {
+            await tx.update(territoryClaims).set({ revokedAt: new Date() }).where(eq(territoryClaims.id, oldClaim.id));
+
+            const remainingOnOld = await tx.select({ id: territoryClaims.id, userId: territoryClaims.userId }).from(territoryClaims)
+                .where(and(
+                    eq(territoryClaims.territoryId, oldClaim.territoryId),
+                    eq(territoryClaims.claimType, 'claim'),
+                    isNull(territoryClaims.revokedAt)
+                )).orderBy(territoryClaims.claimedAt);
+
+            if (remainingOnOld.length === 0) {
+                await tx.update(territories).set({ 
+                    ownerId: null, 
+                    claimedAt: null, 
+                    color: UNCLAIMED_COLOR 
+                }).where(eq(territories.id, oldClaim.territoryId));
+            } else {
+                const [oldTerritory] = await tx.select({ ownerId: territories.ownerId }).from(territories).where(eq(territories.id, oldClaim.territoryId));
+                if (oldTerritory.ownerId === userId) {
+                    await tx.update(territories).set({ ownerId: remainingOnOld[0].userId }).where(eq(territories.id, oldClaim.territoryId));
+                }
+            }
+        }
+
+        const currentClaims = await tx.select({ id: territoryClaims.id }).from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
+        if (currentClaims.length >= (territory.maxPlayers || 1)) {
+            const userAlreadyOnThisTerritory = currentClaims.some(c => c.userId === userId);
+            if (userAlreadyOnThisTerritory) {
+                const [existingClaim] = await tx.select().from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.userId, userId), isNull(territoryClaims.revokedAt)));
+                return existingClaim;
+            }
+            throw new Error(`Максимум ${territory.maxPlayers} игрок(ов) на локации`);
+        }
+
+        if (currentClaims.length === 0) {
+            await tx.update(territories).set({ 
+                ownerId: userId, 
+                claimedAt: new Date(),
+                color: DEFAULT_CLAIM_COLOR 
+            }).where(eq(territories.id, territoryId));
+        }
+
+        const [newClaim] = await tx.insert(territoryClaims).values({ territoryId, userId, claimType: 'claim' }).returning();
+        return newClaim;
+    });
+  }
+  
+
+  async getUserTerritoryClaimForTerritory(territoryId: string, userId: string): Promise<TerritoryClaim | undefined> {
+    const [claim] = await db.select().from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.userId, userId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
+    return claim;
+  }
+
+  async removeUserClaim(territoryId: string, userId: string): Promise<void> {
+    await db.transaction(async (tx) => {
+        await tx.update(territoryClaims).set({ revokedAt: new Date() }).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.userId, userId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
+        
+        const remaining = await tx.select({ userId: territoryClaims.userId }).from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt))).orderBy(territoryClaims.claimedAt);
+        const [currentTerritory] = await tx.select({ ownerId: territories.ownerId }).from(territories).where(eq(territories.id, territoryId));
+        
+        if (remaining.length === 0) {
+            await tx.update(territories).set({ 
+                ownerId: null, 
+                claimedAt: null,
+                color: UNCLAIMED_COLOR
+            }).where(eq(territories.id, territoryId));
+        } else if (currentTerritory.ownerId === userId) {
+            await tx.update(territories).set({ ownerId: remaining[0].userId }).where(eq(territories.id, territoryId));
+        }
+    });
+  }
+
+  // =============================================
+  // ========== INVITE METHODS ==========
+  // =============================================
+
+  async createInvite(mapId: string, displayName: string, expiresInDays: number, createdBy?: string): Promise<DropMapInviteCode> {
     const code = `invite-${Math.random().toString(36).substring(2, 10)}`;
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + expiresInDays);
-    
-    const [invite] = await db
-      .insert(dropMapInviteCodes)
-      .values({
-        settingsId,
-        code,
-        displayName,
-        expiresAt,
-        createdBy,
-      })
-      .returning();
-    
+    const [invite] = await db.insert(dropMapInviteCodes).values({ settingsId: mapId, code, displayName, expiresAt, createdBy }).returning();
     return invite;
   }
-  
-  async getDropMapInvite(code: string) {
-    const [invite] = await db
-      .select()
-      .from(dropMapInviteCodes)
-      .where(eq(dropMapInviteCodes.code, code));
-    return invite;
-  }
-  
-  async validateDropMapInvite(code: string) {
-    const invite = await this.getDropMapInvite(code);
-    
+
+  async validateInvite(code: string): Promise<{ valid: boolean; error?: string; invite?: DropMapInviteCode }> {
+    const [invite] = await db.select().from(dropMapInviteCodes).where(eq(dropMapInviteCodes.code, code));
     if (!invite) return { valid: false, error: 'Код не найден' };
     if (invite.isUsed) return { valid: false, error: 'Код уже использован' };
-    if (invite.expiresAt && new Date() > invite.expiresAt) {
-      return { valid: false, error: 'Код истёк' };
-    }
-    
+    if (invite.expiresAt && new Date() > invite.expiresAt) return { valid: false, error: 'Срок действия кода истёк' };
     return { valid: true, invite };
   }
-  
-  async useDropMapInvite(code: string, territoryId: string) {
-    await db
-      .update(dropMapInviteCodes)
-      .set({ 
-        isUsed: true, 
-        usedAt: new Date(),
-        territoryId 
-      })
-      .where(eq(dropMapInviteCodes.code, code));
-  }
-  
-  async getDropMapInvites(settingsId: string) {
-    return await db
-      .select()
-      .from(dropMapInviteCodes)
-      .where(eq(dropMapInviteCodes.settingsId, settingsId))
-      .orderBy(desc(dropMapInviteCodes.createdAt));
-  }
-  
-  async deleteDropMapInvite(code: string) {
-    await db
-      .delete(dropMapInviteCodes)
-      .where(eq(dropMapInviteCodes.code, code));
-  }
-  
-  async claimTerritoryWithInvite(code: string, territoryId: string) {
-    return await db.transaction(async (tx) => {
-      // Validate invite
-      const validation = await this.validateDropMapInvite(code);
-      if (!validation.valid || !validation.invite) {
-        throw new Error(validation.error);
-      }
-      
-      const invite = validation.invite;
-      
-      // Get settings
-      const [settings] = await tx
-        .select()
-        .from(dropMapSettings)
-        .where(eq(dropMapSettings.id, invite.settingsId));
-      
-      if (!settings) throw new Error('DropMap settings not found');
-      if (settings.isLocked) throw new Error('Карта заблокирована');
-      
-      // Get territory with shape
-      const [territoryData] = await tx
-        .select({
-          territory: territories,
-          shape: territoryShapes,
-        })
-        .from(territories)
-        .leftJoin(territoryShapes, eq(territories.shapeId, territoryShapes.id))
-        .where(eq(territories.id, territoryId));
-      
-      if (!territoryData) throw new Error('Territory not found');
-      if (territoryData.territory.templateId !== settings.templateId) {
-        throw new Error('Territory не принадлежит этой карте');
-      }
-      
-      // Check max players per spot
-      const currentClaims = await tx
-        .select()
-        .from(territoryClaims)
-        .where(and(
-          eq(territoryClaims.territoryId, territoryId),
-          isNull(territoryClaims.revokedAt)
-        ));
-      
-      if (currentClaims.length >= settings.maxPlayersPerSpot) {
-        throw new Error(`Максимум ${settings.maxPlayersPerSpot} игрок(ов) на локации`);
-      }
-      
-      // Check contested spots limit
-      if (currentClaims.length > 0 && settings.maxContestedSpots > 0) {
-        const contestedCount = await tx
-          .select({ territoryId: territoryClaims.territoryId })
-          .from(territoryClaims)
-          .leftJoin(territories, eq(territoryClaims.territoryId, territories.id))
-          .where(and(
-            eq(territories.templateId, settings.templateId),
-            isNull(territoryClaims.revokedAt)
-          ))
-          .groupBy(territoryClaims.territoryId)
-          .having(sql`COUNT(*) > 1`);
-        
-        if (contestedCount.length >= settings.maxContestedSpots) {
-          throw new Error(`Достигнут лимит спорных локаций: ${settings.maxContestedSpots}`);
-        }
-      }
-      
-      // Update territory color
-      await tx
-        .update(territories)
-        .set({ 
-          color: territoryData.shape?.defaultColor || '#3B82F6',
-          claimedAt: new Date(),
-          updatedAt: new Date()
-        })
-        .where(eq(territories.id, territoryId));
-      
-      // Create claim record (without userId for invite)
-      const [claim] = await tx
-        .insert(territoryClaims)
-        .values({
-          territoryId,
-          userId: sql`NULL`,
-          claimType: 'claim' as any,
-          reason: `Клейм по коду: ${invite.displayName}`
-        })
-        .returning();
-      
-      // Mark invite as used
-      await this.useDropMapInvite(code, territoryId);
-      
-      return { claim, invite };
-    });
-  }
-  
-  // ===== ШАБЛОНЫ КОНТУРОВ =====
-  
-  async createShape(insertShape: { 
-    name: string; 
-    points: any; 
-    defaultColor: string; 
-    description?: string; 
-    createdBy?: string 
-  }): Promise<TerritoryShape> {
-    const [shape] = await db
-      .insert(territoryShapes)
-      .values({
-        name: insertShape.name,
-        points: insertShape.points,
-        defaultColor: insertShape.defaultColor,
-        description: insertShape.description,
-        createdBy: insertShape.createdBy,
-      })
-      .returning();
-    return shape;
-  }
-  
-  async getAllShapes(): Promise<any[]> {
-    const shapeData = await db
-      .select({
-        shape: territoryShapes,
-        creatorUsername: users.username,
-        creatorDisplayName: users.displayName,
-      })
-      .from(territoryShapes)
-      .leftJoin(users, sql`${territoryShapes.createdBy}::text = ${users.id}::text`)
-      .orderBy(desc(territoryShapes.createdAt));
-    
-    return shapeData.map(row => ({
-      ...row.shape,
-      creator: row.shape.createdBy ? {
-        username: row.creatorUsername || '',
-        displayName: row.creatorDisplayName || ''
-      } : undefined
-    }));
-  }
-  
-  async getShape(id: string): Promise<TerritoryShape | undefined> {
-    const [shape] = await db
-      .select()
-      .from(territoryShapes)
-      .where(eq(territoryShapes.id, id));
-    return shape || undefined;
-  }
-  
-  async updateShape(id: string, updates: Partial<TerritoryShape>): Promise<TerritoryShape | undefined> {
-    const [shape] = await db
-      .update(territoryShapes)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(territoryShapes.id, id))
-      .returning();
-    return shape || undefined;
-  }
-  
-  async deleteShape(id: string): Promise<void> {
-    await db.delete(territoryShapes).where(eq(territoryShapes.id, id));
-  }
-  
-  // ===== ШАБЛОНЫ КАРТ =====
-  
-  // Замените метод createTemplate в territory-storage.ts:
 
-async createTemplate(insertTemplate: { 
-  name: string; 
-  description?: string; 
-  mapImageUrl?: string; 
-  shapeIds: string[];
-  tournamentId?: string;
-  createdBy?: string 
-}): Promise<any> {
-  return await db.transaction(async (tx) => {
-    // Автоматически добавляем " - Copy" к названию
-    const templateName = `${insertTemplate.name} - Copy`;
-    
-    // Создаем шаблон
-    const [template] = await tx
-      .insert(territoryTemplates)
-      .values({
-        name: templateName,
-        description: insertTemplate.description,
-        mapImageUrl: insertTemplate.mapImageUrl,
-        shapeIds: insertTemplate.shapeIds as any,
-        tournamentId: insertTemplate.tournamentId,
-        createdBy: insertTemplate.createdBy,
-      })
-      .returning();
-    
-    // Получаем все контуры
-    const shapes = await tx
-      .select()
-      .from(territoryShapes)
-      .where(inArray(territoryShapes.id, insertTemplate.shapeIds));
-    
-    // Создаем инстансы территорий для каждого контура
-    // БЕЗ владельца (ownerId = null), черного цвета
-    for (const shape of shapes) {
-      await tx.insert(territories).values({
-        templateId: template.id,
-        shapeId: shape.id,
-        name: shape.name,
-        color: '#000000', // Черный для незаклеймленных
-        priority: 1,
-        ownerId: null, // Явно null - нет владельца
-        claimedAt: null, // Не заклеймлено
-      });
-    }
-    
-    return template;
-  });
-}
-  async getAllTemplatesWithDetails(): Promise<any[]> {
-    const templateData = await db
-      .select({
-        template: territoryTemplates,
-        creatorUsername: users.username,
-        creatorDisplayName: users.displayName,
-        tournamentName: tournaments.name,
-        tournamentStatus: tournaments.status,
-      })
-      .from(territoryTemplates)
-      .leftJoin(users, sql`${territoryTemplates.createdBy}::text = ${users.id}::text`)
-      .leftJoin(tournaments, sql`${territoryTemplates.tournamentId}::text = ${tournaments.id}::text`)
-      .orderBy(desc(territoryTemplates.createdAt));
-    
-    // Добавляем статистику
-    const templatesWithStats = await Promise.all(
-      templateData.map(async (row) => {
-        const [stats] = await db
-          .select({
-            territoryCount: sql<number>`COUNT(*)::int`,
-            claimedCount: sql<number>`COUNT(CASE WHEN ${territories.ownerId} IS NOT NULL THEN 1 END)::int`,
-          })
-          .from(territories)
-          .where(and(
-            sql`${territories.templateId}::text = ${row.template.id}::text`,
-            eq(territories.isActive, true)
-          ));
-        
-        return {
-          ...row.template,
-          territoryCount: Number(stats?.territoryCount || 0),
-          claimedCount: Number(stats?.claimedCount || 0),
-          creator: row.template.createdBy ? {
-            username: row.creatorUsername || '',
-            displayName: row.creatorDisplayName || ''
-          } : undefined,
-          tournament: row.template.tournamentId ? {
-            id: row.template.tournamentId,
-            name: row.tournamentName || '',
-            status: row.tournamentStatus || ''
-          } : undefined
-        };
-      })
-    );
-    
-    return templatesWithStats;
-  }
-  
-  async getTemplateWithShapes(templateId: string): Promise<any> {
-    const [template] = await db
-      .select()
-      .from(territoryTemplates)
-      .where(eq(territoryTemplates.id, templateId));
-    
-    if (!template) return undefined;
-    
-    const shapeIds = (template.shapeIds as string[]) || [];
-    const shapes = shapeIds.length > 0
-      ? await db
-          .select()
-          .from(territoryShapes)
-          .where(inArray(territoryShapes.id, shapeIds))
-      : [];
-    
-    return {
-      ...template,
-      shapes
-    };
-  }
-  
-  async getActiveTemplate(): Promise<any> {
-    const [template] = await db
-      .select()
-      .from(territoryTemplates)
-      .where(eq(territoryTemplates.isActive, true))
-      .limit(1);
-    return template || null;
-  }
-  
-  async setActiveTemplate(templateId: string): Promise<void> {
-    await db.transaction(async (tx) => {
-      // Деактивируем все
-      await tx
-        .update(territoryTemplates)
-        .set({ isActive: false, updatedAt: new Date() });
-      
-      // Активируем нужный
-      await tx
-        .update(territoryTemplates)
-        .set({ isActive: true, updatedAt: new Date() })
-        .where(eq(territoryTemplates.id, templateId));
-    });
-  }
-  
-  async deleteTemplate(templateId: string): Promise<void> {
-    await db.delete(territoryTemplates).where(eq(territoryTemplates.id, templateId));
-  }
-  
-  // ===== ТЕРРИТОРИИ =====
-  
-  async getTerritoriesForTemplate(templateId: string, userId?: string): Promise<any[]> {
-    const territoryData = await db
-      .select({
-        territory: territories,
-        shape: territoryShapes,
-        ownerUsername: users.username,
-        ownerDisplayName: users.displayName,
-      })
-      .from(territories)
-      .leftJoin(territoryShapes, eq(territories.shapeId, territoryShapes.id))
-      .leftJoin(users, sql`${territories.ownerId}::uuid = ${users.id}::uuid`)
-      .where(and(
-        eq(territories.templateId, sql`${templateId}::uuid`),
-        eq(territories.isActive, true)
-      ));
-
-    
-    return territoryData.map(row => ({
-      id: row.territory.id,
-      name: row.territory.name,
-      color: row.territory.color,
-      points: row.shape?.points || [], // Берем координаты из shape
-      ownerId: row.territory.ownerId,
-      owner: row.territory.ownerId ? {
-        id: row.territory.ownerId,
-        username: row.ownerUsername || '',
-        displayName: row.ownerDisplayName || ''
-      } : undefined,
-      claimedAt: row.territory.claimedAt,
-      templateId: row.territory.templateId,
-      shapeId: row.territory.shapeId,
-    }));
-  }
-  
-  async getTerritory(id: string): Promise<Territory | undefined> {
-    const [territory] = await db
-      .select()
-      .from(territories)
-      .where(eq(territories.id, id));
-    return territory || undefined;
-  }
-  
-  // ===== КЛЕЙМЫ =====
-  
-  async claimTerritory(territoryId: string, userId: string): Promise<TerritoryClaim> {
-    return await db.transaction(async (tx) => {
-      // Получаем территорию с её shape
-      const [territoryData] = await tx
-        .select({
-          territory: territories,
-          shape: territoryShapes,
-        })
-        .from(territories)
-        .leftJoin(territoryShapes, eq(territories.shapeId, territoryShapes.id))
-        .where(eq(territories.id, sql`${territoryId}::uuid`));
-      
-      if (!territoryData) throw new Error('Territory not found');
-      
-      // Освобождаем все предыдущие территории пользователя
-      const oldTerritories = await tx
-        .select()
-        .from(territories)
-        .where(and(
-          eq(territories.ownerId, sql`${userId}::uuid`),
-          eq(territories.isActive, true)
-        ));
-      
-      // Отзываем старые клеймы
-      if (oldTerritories.length > 0) {
-        await tx
-          .update(territoryClaims)
-          .set({ revokedAt: new Date() })
-          .where(and(
-            eq(territoryClaims.userId, sql`${userId}::uuid`),
-            isNull(territoryClaims.revokedAt)
-          ));
-        
-        // Создаем записи об освобождении
-        for (const oldTerr of oldTerritories) {
-          await tx
-            .insert(territoryClaims)
-            .values({
-              territoryId: oldTerr.id,
-              userId,
-              claimType: 'revoke' as any,
-              reason: 'Переклейм на новую территорию'
-            });
-        }
-        
-        // Освобождаем старые территории
-        await tx
-          .update(territories)
-          .set({ 
-            ownerId: null, 
-            color: '#000000',
-            claimedAt: null,
-            updatedAt: new Date()
-          })
-          .where(eq(territories.ownerId, userId));
-      }
-      
-      // Клеймим новую территорию с цветом из shape
-      await tx
-        .update(territories)
-        .set({ 
-          ownerId: userId,
-          color: territoryData.shape?.defaultColor || '#3B82F6',
-          claimedAt: new Date(),
-          updatedAt: new Date()
-        })
-        .where(eq(territories.id, territoryId));
-      
-      // Создаем запись о клейме
-      const [claim] = await tx
-        .insert(territoryClaims)
-        .values({
-          territoryId,
-          userId,
-          claimType: 'claim' as any,
-        })
-        .returning();
-      
-      return claim;
-    });
-  }
-  
-  async revokeTerritory(territoryId: string, adminId: string, reason: string): Promise<void> {
-    await db.transaction(async (tx) => {
-      const [territory] = await tx
-        .select()
-        .from(territories)
-        .where(eq(territories.id, territoryId));
-      
-      if (!territory || !territory.ownerId) {
-        throw new Error('Territory not claimed');
-      }
-      
-      // Отзываем клейм
-      await tx
-        .update(territoryClaims)
-        .set({ revokedAt: new Date() })
-        .where(and(
-          eq(territoryClaims.territoryId, territoryId),
-          eq(territoryClaims.userId, territory.ownerId),
-          isNull(territoryClaims.revokedAt)
-        ));
-      
-      // Создаем запись об отзыве
-      await tx
-        .insert(territoryClaims)
-        .values({
-          territoryId,
-          userId: territory.ownerId,
-          claimType: 'revoke' as any,
-          assignedBy: adminId,
-          reason
-        });
-      
-      // Освобождаем территорию
-      await tx
-        .update(territories)
-        .set({ 
-          ownerId: null, 
-          color: '#000000',
-          claimedAt: null,
-          updatedAt: new Date()
-        })
-        .where(eq(territories.id, territoryId));
-    });
-  }
-  
-  async getUserTerritories(userId: string): Promise<any[]> {
-    const territoryData = await db
-      .select({
-        territory: territories,
-        shape: territoryShapes,
-        template: territoryTemplates,
-      })
-      .from(territories)
-      .leftJoin(territoryShapes, eq(territories.shapeId, territoryShapes.id))
-      .leftJoin(territoryTemplates, eq(territories.templateId, territoryTemplates.id))
-      .where(and(
-        eq(territories.ownerId, sql`${userId}::uuid`),
-        eq(territories.isActive, true)
-      ))
-      .orderBy(desc(territories.claimedAt));
-    
-    return territoryData.map(row => ({
-      ...row.territory,
-      points: row.shape?.points,
-      template: row.template
-    }));
-  }
-  
-  // ===== ЛОГИ =====
-  
-  async getAdminActivityLogs(limit: number = 50): Promise<any[]> {
-    const claimLogs = await db
-      .select({
-        id: territoryClaims.id,
-        actionType: territoryClaims.claimType,
-        createdAt: territoryClaims.claimedAt,
-        userId: territoryClaims.userId,
-        territoryId: territoryClaims.territoryId,
-        reason: territoryClaims.reason,
-        userName: users.username,
-        userDisplayName: users.displayName,
-        territoryName: territories.name,
-        territoryColor: territories.color
-      })
-      .from(territoryClaims)
-      .leftJoin(users, sql`${territoryClaims.userId}::uuid = ${users.id}::uuid`)
-      .leftJoin(territories, sql`${territoryClaims.territoryId}::uuid = ${territories.id}::uuid`)
-      .orderBy(desc(territoryClaims.claimedAt))
-      .limit(limit);
-    
-    return claimLogs.map(row => ({
-      id: `claim_${row.id}`,
-      actionType: row.actionType,
-      createdAt: row.createdAt,
-      userId: row.userId,
-      territoryId: row.territoryId,
-      territoryName: row.territoryName || 'Удаленная локация',
-      territoryColor: row.territoryColor,
-      user: {
-        username: row.userName || '',
-        displayName: row.userDisplayName || 'Неизвестный'
-      },
-      reason: row.reason,
-    }));
+  async getInvites(mapId: string): Promise<DropMapInviteCode[]> {
+    return db.select().from(dropMapInviteCodes).where(eq(dropMapInviteCodes.settingsId, mapId)).orderBy(desc(dropMapInviteCodes.createdAt));
   }
 
- 
+  async deleteInvite(code: string): Promise<void> {
+    await db.delete(dropMapInviteCodes).where(eq(dropMapInviteCodes.code, code));
+  }
+
+  async claimTerritoryWithInvite(code: string, territoryId: string): Promise<{ claim: TerritoryClaim; invite: DropMapInviteCode }> {
+    return db.transaction(async (tx) => {
+      const { valid, error, invite } = await this.validateInvite(code);
+      if (!valid || !invite) throw new Error(error);
+
+      const [map] = await tx.select().from(dropMapSettings).where(eq(dropMapSettings.id, invite.settingsId));
+      if (!map) throw new Error('Карта для этого инвайта не найдена');
+      if (map.isLocked) throw new Error('Карта заблокирована');
+
+      const [territory] = await tx.select().from(territories).where(eq(territories.id, territoryId));
+      if (!territory) throw new Error('Territory not found');
+
+      const currentClaims = await tx.select({ id: territoryClaims.id }).from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
+      if (currentClaims.length >= (territory.maxPlayers || 1)) throw new Error(`Максимум ${territory.maxPlayers} игрок(ов) на локации`);
+
+      if (currentClaims.length === 0) {
+        await tx.update(territories).set({ color: DEFAULT_CLAIM_COLOR }).where(eq(territories.id, territoryId));
+      }
+
+      const [newClaim] = await tx.insert(territoryClaims).values({ territoryId, userId: null, claimType: 'claim', reason: `Клейм по коду: ${invite.displayName}` }).returning();
+      await tx.update(dropMapInviteCodes).set({ isUsed: true, usedAt: new Date(), territoryId }).where(eq(dropMapInviteCodes.code, code));
+      
+      return { claim: newClaim, invite };
+    });
+  }
+
+  // ===== Admin & Logging =====
+  
+  async logAdminActivity(adminId: string, actionType: string, description: string, metadata?: any): Promise<void> {
+      console.log(`[ADMIN LOG] User: ${adminId}, Action: ${actionType}, Details: ${description}`, metadata);
+  }
+
+  async getAdminActivityLogs(limit: number): Promise<any[]> {
+    console.log(`Fetching last ${limit} admin logs... (Not implemented)`);
+    return [];
+  }
+
+  // ===== ALIASES FOR BACKWARD COMPATIBILITY =====
+
+  async getDropMapPlayers(mapId: string): Promise<any[]> { return this.getMapPlayers(mapId); }
+  async removeDropMapPlayer(mapId: string, userId: string): Promise<void> { return this.removePlayerFromMap(mapId, userId); }
+  async createDropMapInvite(mapId: string, displayName: string, expiresInDays: number, createdBy?: string): Promise<DropMapInviteCode> { return this.createInvite(mapId, displayName, expiresInDays, createdBy); }
+  async getDropMapInvites(mapId: string): Promise<DropMapInviteCode[]> { return this.getInvites(mapId); }
+  async deleteDropMapInvite(code: string): Promise<void> { return this.deleteInvite(code); }
+  async validateDropMapInvite(code: string): Promise<{ valid: boolean; error?: string; invite?: DropMapInviteCode }> { return this.validateInvite(code); }
+  async importDropMapPlayersFromTournament(mapId: string, tournamentId: string, positions?: number[], topN?: number, addedBy?: string): Promise<DropMapEligiblePlayer[]> { return this.importPlayersFromTournament(mapId, tournamentId, positions, topN, addedBy); }
 }
 
 export const territoryStorage = new DatabaseTerritoryStorage();

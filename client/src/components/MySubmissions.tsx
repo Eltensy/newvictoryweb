@@ -111,7 +111,7 @@ export default function MySubmissionsPage() {
   
   const getCategoryLabel = (category: string) => {
     const labels: Record<string, string> = {
-      'gold-kill': 'Золот килл',
+      'gold-kill': 'Золотой килл',
       'silver-kill': 'Серебрянный килл',
       'bronze-kill': 'Бронзовый килл',
       'victory': 'Победа',
@@ -324,7 +324,7 @@ export default function MySubmissionsPage() {
 
             <div className="lg:ml-auto flex-1 lg:flex-initial lg:w-80">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-[999]" />
                 <input
                   type="text"
                   placeholder="Поиск по названию или категории..."

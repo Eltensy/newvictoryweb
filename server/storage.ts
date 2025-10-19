@@ -1,4 +1,3 @@
-// server/storage.ts - Complete storage implementation with Telegram verification
 import { 
   users, 
   submissions, 
@@ -9,6 +8,7 @@ import {
   tournamentRegistrations,
   premiumHistory,
   telegramVerifications,
+  killHistory, // 🆕 ДОБАВИТЬ ЭТУ СТРОКУ
   type User, 
   type InsertUser, 
   type Submission, 
@@ -27,7 +27,9 @@ import {
   type PremiumHistory,
   type InsertPremiumHistory,
   type TelegramVerification,
-  type InsertTelegramVerification
+  type InsertTelegramVerification,
+  type KillHistory, // 🆕 ДОБАВИТЬ ЭТУ СТРОКУ
+  type InsertKillHistory, // 🆕 ДОБАВИТЬ ЭТУ СТРОКУ
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, sql, and, lt } from "drizzle-orm";
@@ -156,58 +158,380 @@ export interface IStorage {
     totalEarnings: number;
     isAdmin: boolean;
   }>;
+
+  addKillToUser(
+    userId: string,
+    killType: 'gold' | 'silver' | 'bronze',
+    rewardAmount: number,
+    submissionId?: string,
+    grantedBy?: string,
+    reason?: string,
+    metadata?: any
+  ): Promise<{ user: User; killHistory: KillHistory }>;
+  
+  getUserKillHistory(userId: string, limit?: number): Promise<KillHistory[]>;
+  getAllKillHistory(limit?: number): Promise<KillHistory[]>;
+  getKillHistoryBySubmission(submissionId: string): Promise<KillHistory | undefined>;
+  getUserKillStats(userId: string): Promise<{
+    goldKills: number;
+    silverKills: number;
+    bronzeKills: number;
+    totalKills: number;
+    lastKillDate: Date | null;
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
+
+  async addKillToUser(
+    userId: string,
+    killType: 'gold' | 'silver' | 'bronze',
+    rewardAmount: number,
+    submissionId?: string,
+    grantedBy?: string,
+    reason?: string,
+    metadata?: any
+  ): Promise<{ user: User; killHistory: KillHistory }> {
+    // Получаем текущего пользователя
+    const currentUser = await this.getUser(userId);
+    if (!currentUser) {
+      throw new Error('User not found');
+    }
+
+    // Обновляем счетчики в зависимости от типа килла
+    const updates: Partial<User> = {
+      totalKills: currentUser.totalKills + 1,
+      updatedAt: new Date()
+    };
+
+    switch (killType) {
+      case 'gold':
+        updates.goldKills = currentUser.goldKills + 1;
+        break;
+      case 'silver':
+        updates.silverKills = currentUser.silverKills + 1;
+        break;
+      case 'bronze':
+        updates.bronzeKills = currentUser.bronzeKills + 1;
+        break;
+    }
+
+    // Обновляем пользователя
+    const updatedUser = await db
+      .update(users)
+      .set(updates)
+      .where(eq(users.id, userId))
+      .returning() as User[];
+
+    // Создаем запись в истории киллов
+    const killHistoryRecord = await db
+      .insert(killHistory)
+      .values({
+        userId,
+        killType,
+        rewardAmount,
+        submissionId: submissionId || null,
+        grantedBy: grantedBy || null,
+        reason: reason || null,
+        metadata: metadata ? JSON.stringify(metadata) : null,
+      })
+      .returning() as KillHistory[];
+
+    console.log(`✅ Kill added: ${killType} for user ${userId} (submission: ${submissionId || 'none'})`);
+
+    return {
+      user: updatedUser[0],
+      killHistory: killHistoryRecord[0]
+    };
+  }
+
+  /**
+   * Получает историю киллов пользователя
+   */
+  async getUserKillHistory(userId: string, limit: number = 50): Promise<KillHistory[]> {
+    const records = await db
+      .select({
+        id: killHistory.id,
+        userId: killHistory.userId,
+        killType: killHistory.killType,
+        submissionId: killHistory.submissionId,
+        rewardAmount: killHistory.rewardAmount,
+        grantedBy: killHistory.grantedBy,
+        reason: killHistory.reason,
+        metadata: killHistory.metadata,
+        createdAt: killHistory.createdAt,
+        // Join submission info
+        submissionCategory: submissions.category,
+        submissionFilename: submissions.originalFilename,
+        // Join granted by user info
+        grantedByUsername: users.username,
+        grantedByDisplayName: users.displayName,
+      })
+      .from(killHistory)
+      .leftJoin(submissions, eq(killHistory.submissionId, submissions.id))
+      .leftJoin(users, eq(killHistory.grantedBy, users.id))
+      .where(eq(killHistory.userId, userId))
+      .orderBy(desc(killHistory.createdAt))
+      .limit(limit);
+
+    return records.map(record => ({
+      id: record.id,
+      userId: record.userId,
+      killType: record.killType,
+      submissionId: record.submissionId,
+      rewardAmount: record.rewardAmount,
+      grantedBy: record.grantedBy,
+      reason: record.reason,
+      metadata: record.metadata,
+      createdAt: record.createdAt,
+      submission: record.submissionCategory ? {
+        category: record.submissionCategory,
+        originalFilename: record.submissionFilename || ''
+      } : undefined,
+      grantedByUser: record.grantedByUsername ? {
+        username: record.grantedByUsername,
+        displayName: record.grantedByDisplayName || ''
+      } : undefined
+    })) as KillHistory[];
+  }
+
+  /**
+   * Получает всю историю киллов (для админки)
+   */
+  async getAllKillHistory(limit: number = 100): Promise<KillHistory[]> {
+    const records = await db
+      .select({
+        id: killHistory.id,
+        userId: killHistory.userId,
+        killType: killHistory.killType,
+        submissionId: killHistory.submissionId,
+        rewardAmount: killHistory.rewardAmount,
+        grantedBy: killHistory.grantedBy,
+        reason: killHistory.reason,
+        metadata: killHistory.metadata,
+        createdAt: killHistory.createdAt,
+        // Join user info
+        username: users.username,
+        displayName: users.displayName,
+        // Join submission info
+        submissionCategory: submissions.category,
+        submissionFilename: submissions.originalFilename,
+      })
+      .from(killHistory)
+      .leftJoin(users, eq(killHistory.userId, users.id))
+      .leftJoin(submissions, eq(killHistory.submissionId, submissions.id))
+      .orderBy(desc(killHistory.createdAt))
+      .limit(limit);
+
+    return records.map(record => ({
+      id: record.id,
+      userId: record.userId,
+      killType: record.killType,
+      submissionId: record.submissionId,
+      rewardAmount: record.rewardAmount,
+      grantedBy: record.grantedBy,
+      reason: record.reason,
+      metadata: record.metadata,
+      createdAt: record.createdAt,
+      user: record.username ? {
+        username: record.username,
+        displayName: record.displayName || ''
+      } : undefined,
+      submission: record.submissionCategory ? {
+        category: record.submissionCategory,
+        originalFilename: record.submissionFilename || ''
+      } : undefined
+    })) as KillHistory[];
+  }
+
+  /**
+   * Получает запись о килле по ID сабмишина
+   */
+  async getKillHistoryBySubmission(submissionId: string): Promise<KillHistory | undefined> {
+    const result = await db
+      .select()
+      .from(killHistory)
+      .where(eq(killHistory.submissionId, submissionId))
+      .limit(1) as KillHistory[];
+    
+    return result[0] || undefined;
+  }
+
+  /**
+   * Получает статистику киллов пользователя
+   */
+  async getUserKillStats(userId: string): Promise<{
+    goldKills: number;
+    silverKills: number;
+    bronzeKills: number;
+    totalKills: number;
+    lastKillDate: Date | null;
+  }> {
+    const user = await this.getUser(userId);
+    if (!user) {
+      return {
+        goldKills: 0,
+        silverKills: 0,
+        bronzeKills: 0,
+        totalKills: 0,
+        lastKillDate: null
+      };
+    }
+
+    // Получаем последний килл
+    const lastKill = await db
+      .select()
+      .from(killHistory)
+      .where(eq(killHistory.userId, userId))
+      .orderBy(desc(killHistory.createdAt))
+      .limit(1) as KillHistory[];
+
+    return {
+      goldKills: user.goldKills,
+      silverKills: user.silverKills,
+      bronzeKills: user.bronzeKills,
+      totalKills: user.totalKills,
+      lastKillDate: lastKill[0]?.createdAt || null
+    };
+  }
+
+  // ОБНОВИТЬ МЕТОД getUserStats ЧТОБЫ ВКЛЮЧАТЬ КИЛЛЫ
+  async getUserStats(userId: string): Promise<{
+    totalSubmissions: number;
+    approvedSubmissions: number;
+    pendingSubmissions: number;
+    rejectedSubmissions: number;
+    totalEarnings: number;
+    isAdmin: boolean;
+    goldKills: number;      // 🆕
+    silverKills: number;    // 🆕
+    bronzeKills: number;    // 🆕
+    totalKills: number;     // 🆕
+  }> {
+    const userSubmissions = await this.getSubmissionsByUserId(userId);
+    const user = await this.getUser(userId);
+    
+    const stats = {
+      totalSubmissions: userSubmissions.length,
+      approvedSubmissions: userSubmissions.filter(s => s.status === 'approved').length,
+      pendingSubmissions: userSubmissions.filter(s => s.status === 'pending').length,
+      rejectedSubmissions: userSubmissions.filter(s => s.status === 'rejected').length,
+      isAdmin: user?.isAdmin || false,
+      totalEarnings: userSubmissions
+        .filter(s => s.status === 'approved' && s.reward)
+        .reduce((sum, s) => sum + (s.reward || 0), 0),
+      // 🆕 Добавляем статистику киллов
+      goldKills: user?.goldKills || 0,
+      silverKills: user?.silverKills || 0,
+      bronzeKills: user?.bronzeKills || 0,
+      totalKills: user?.totalKills || 0,
+    };
+    
+    return stats;
+  }
   // ===== USER OPERATIONS =====
   
   async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user || undefined;
+    const result = await db.select().from(users).where(eq(users.id, id)) as User[];
+    return result[0] || undefined;
   }
 
-  async getAllUsers(): Promise<User[]> {
-    return await db
-      .select()
-      .from(users)
-      .orderBy(desc(users.createdAt));
-  }
+
+async getAllUsers(): Promise<User[]> {
+  
+  const result = await db
+    .select({
+      id: users.id,
+      epicGamesId: users.epicGamesId,
+      username: users.username,
+      displayName: users.displayName,
+      email: users.email,
+      balance: users.balance,
+      isAdmin: users.isAdmin,
+      
+      // 🆕 Kill fields - ДОБАВИТЬ ЭТИ СТРОКИ
+      goldKills: users.goldKills,
+      silverKills: users.silverKills,
+      bronzeKills: users.bronzeKills,
+      totalKills: users.totalKills,
+      
+      // Telegram fields
+      telegramUsername: users.telegramUsername,
+      telegramChatId: users.telegramChatId,
+      telegramPhotoUrl: users.telegramPhotoUrl,
+      telegramFirstName: users.telegramFirstName,
+      telegramLastName: users.telegramLastName,
+      
+      // Discord fields
+      discordUsername: users.discordUsername,
+      discordId: users.discordId,
+      discordEmail: users.discordEmail,
+      discordAvatar: users.discordAvatar,
+      
+      // Subscription screenshot fields
+      subscriptionScreenshotUrl: users.subscriptionScreenshotUrl,
+      subscriptionScreenshotStatus: users.subscriptionScreenshotStatus,
+      subscriptionScreenshotUploadedAt: users.subscriptionScreenshotUploadedAt,
+      subscriptionScreenshotReviewedAt: users.subscriptionScreenshotReviewedAt,
+      subscriptionScreenshotReviewedBy: users.subscriptionScreenshotReviewedBy,
+      subscriptionScreenshotRejectionReason: users.subscriptionScreenshotRejectionReason,
+      subscriptionScreenshotCloudinaryPublicId: users.subscriptionScreenshotCloudinaryPublicId,
+      
+      // Premium fields
+      premiumTier: users.premiumTier,
+      premiumStartDate: users.premiumStartDate,
+      premiumEndDate: users.premiumEndDate,
+      premiumAutoRenew: users.premiumAutoRenew,
+      premiumSource: users.premiumSource,
+      premiumExternalId: users.premiumExternalId,
+      premiumLastChecked: users.premiumLastChecked,
+      premiumGiftedBy: users.premiumGiftedBy,
+      
+      // Timestamps
+      createdAt: users.createdAt,
+      updatedAt: users.updatedAt,
+    })
+    .from(users)
+    .orderBy(desc(users.createdAt));
+
+  return result as User[];
+}
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user || undefined;
+    const result = await db.select().from(users).where(eq(users.username, username)) as User[];
+    return result[0] || undefined;
   }
 
   async getUserByEpicGamesId(epicGamesId: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.epicGamesId, epicGamesId));
-    return user || undefined;
+    const result = await db.select().from(users).where(eq(users.epicGamesId, epicGamesId)) as User[];
+    return result[0] || undefined;
   }
 
   async getUserByDiscordId(discordId: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.discordId, discordId));
-    return user || undefined;
+    const result = await db.select().from(users).where(eq(users.discordId, discordId)) as User[];
+    return result[0] || undefined;
   }
 
   async getUserByTelegramId(telegramChatId: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.telegramChatId, telegramChatId));
-    return user || undefined;
+    const result = await db.select().from(users).where(eq(users.telegramChatId, telegramChatId)) as User[];
+    return result[0] || undefined;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db
+    const result = await db
       .insert(users)
       .values(insertUser)
-      .returning();
-    return user;
+      .returning() as User[];
+    return result[0];
   }
 
   async updateUser(id: string, updates: Partial<User>): Promise<User> {
-    const [user] = await db
+    const result = await db
       .update(users)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(users.id, id))
-      .returning();
-    return user;
+      .returning() as User[];
+    return result[0];
   }
 
   // ===== DISCORD OAUTH OPERATIONS =====
@@ -218,7 +542,7 @@ export class DatabaseStorage implements IStorage {
     discordEmail?: string;
     discordAvatar?: string;
   }): Promise<User> {
-    const [user] = await db
+    const result = await db
       .update(users)
       .set({
         discordId: discordData.discordId,
@@ -228,14 +552,14 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(users.id, userId))
-      .returning();
+      .returning() as User[];
     
     console.log(`Discord linked for user ${userId}: ${discordData.discordUsername} (${discordData.discordId})`);
-    return user;
+    return result[0];
   }
 
   async unlinkDiscordAccount(userId: string): Promise<User> {
-    const [user] = await db
+    const result = await db
       .update(users)
       .set({
         discordId: null,
@@ -245,10 +569,10 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(users.id, userId))
-      .returning();
+      .returning() as User[];
     
     console.log(`Discord unlinked for user ${userId}`);
-    return user;
+    return result[0];
   }
 
   // ===== TELEGRAM OAUTH OPERATIONS =====
@@ -260,7 +584,7 @@ export class DatabaseStorage implements IStorage {
     telegramLastName?: string;
     telegramPhotoUrl?: string;
   }): Promise<User> {
-    const [user] = await db
+    const result = await db
       .update(users)
       .set({
         telegramChatId: telegramData.telegramChatId,
@@ -271,14 +595,14 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(users.id, userId))
-      .returning();
+      .returning() as User[];
     
     console.log(`Telegram linked for user ${userId}: ${telegramData.telegramUsername} (${telegramData.telegramChatId})`);
-    return user;
+    return result[0];
   }
 
   async unlinkTelegramAccount(userId: string): Promise<User> {
-    const [user] = await db
+    const result = await db
       .update(users)
       .set({
         telegramChatId: null,
@@ -289,10 +613,10 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(users.id, userId))
-      .returning();
+      .returning() as User[];
     
     console.log(`Telegram unlinked for user ${userId}`);
-    return user;
+    return result[0];
   }
 
   // ===== TELEGRAM VERIFICATION OPERATIONS =====
@@ -302,22 +626,21 @@ export class DatabaseStorage implements IStorage {
     code: string;
     expiresAt: Date;
   }): Promise<TelegramVerification> {
-    // Delete any existing verifications for this user
     await db
       .delete(telegramVerifications)
       .where(eq(telegramVerifications.userId, data.userId));
 
-    const [verification] = await db
+    const result = await db
       .insert(telegramVerifications)
       .values(data)
-      .returning();
+      .returning() as TelegramVerification[];
     
     console.log(`Created Telegram verification code ${data.code} for user ${data.userId} (expires: ${data.expiresAt.toISOString()})`);
-    return verification;
+    return result[0];
   }
 
   async getTelegramVerification(code: string): Promise<TelegramVerification | undefined> {
-    const [verification] = await db
+    const result = await db
       .select()
       .from(telegramVerifications)
       .where(
@@ -325,15 +648,15 @@ export class DatabaseStorage implements IStorage {
           eq(telegramVerifications.code, code.toUpperCase()),
           sql`${telegramVerifications.expiresAt} > NOW()`
         )
-      );
+      ) as TelegramVerification[];
     
-    if (verification) {
-      console.log(`Found valid verification code ${code} for user ${verification.userId}`);
+    if (result[0]) {
+      console.log(`Found valid verification code ${code} for user ${result[0].userId}`);
     } else {
       console.log(`Verification code ${code} not found or expired`);
     }
     
-    return verification || undefined;
+    return result[0] || undefined;
   }
 
   async deleteTelegramVerification(code: string): Promise<void> {
@@ -362,11 +685,11 @@ export class DatabaseStorage implements IStorage {
   // ===== BALANCE OPERATIONS =====
   
   async createBalanceTransaction(insertTransaction: InsertBalanceTransaction): Promise<BalanceTransaction> {
-    const [transaction] = await db
+    const result = await db
       .insert(balanceTransactions)
       .values(insertTransaction)
-      .returning();
-    return transaction;
+      .returning() as BalanceTransaction[];
+    return result[0];
   }
 
   async getUserBalanceTransactions(userId: string, limit: number = 20): Promise<BalanceTransaction[]> {
@@ -375,7 +698,7 @@ export class DatabaseStorage implements IStorage {
       .from(balanceTransactions)
       .where(eq(balanceTransactions.userId, userId))
       .orderBy(desc(balanceTransactions.createdAt))
-      .limit(limit);
+      .limit(limit) as BalanceTransaction[];
   }
 
   async updateUserBalance(
@@ -393,14 +716,14 @@ export class DatabaseStorage implements IStorage {
     
     const newBalance = currentUser.balance + deltaAmount;
     
-    const [user] = await db
+    const result = await db
       .update(users)
       .set({ 
         balance: newBalance,
         updatedAt: new Date()
       })
       .where(eq(users.id, id))
-      .returning();
+      .returning() as User[];
     
     await this.createBalanceTransaction({
       userId: id,
@@ -411,17 +734,17 @@ export class DatabaseStorage implements IStorage {
       sourceId
     });
     
-    return user;
+    return result[0];
   }
 
   // ===== PREMIUM OPERATIONS =====
 
   async createPremiumHistory(insertHistory: InsertPremiumHistory): Promise<PremiumHistory> {
-    const [history] = await db
+    const result = await db
       .insert(premiumHistory)
       .values(insertHistory)
-      .returning();
-    return history;
+      .returning() as PremiumHistory[];
+    return result[0];
   }
 
   async getPremiumHistory(userId: string): Promise<PremiumHistory[]> {
@@ -429,7 +752,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(premiumHistory)
       .where(eq(premiumHistory.userId, userId))
-      .orderBy(desc(premiumHistory.createdAt));
+      .orderBy(desc(premiumHistory.createdAt)) as PremiumHistory[];
   }
 
   async getPremiumUsers(): Promise<User[]> {
@@ -437,7 +760,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(users)
       .where(sql`${users.premiumTier} != 'none'`)
-      .orderBy(users.premiumEndDate);
+      .orderBy(users.premiumEndDate) as User[];
   }
 
   async expireOldPremiums(): Promise<number> {
@@ -451,7 +774,7 @@ export class DatabaseStorage implements IStorage {
           sql`${users.premiumTier} != 'none'`,
           sql`${users.premiumEndDate} < ${now}`
         )
-      );
+      ) as User[];
     
     if (expiredUsers.length === 0) {
       return 0;
@@ -492,11 +815,11 @@ export class DatabaseStorage implements IStorage {
   // ===== WITHDRAWAL OPERATIONS =====
   
   async createWithdrawalRequest(insertRequest: InsertWithdrawalRequest): Promise<WithdrawalRequest> {
-    const [request] = await db
+    const result = await db
       .insert(withdrawalRequests)
       .values(insertRequest)
-      .returning();
-    return request;
+      .returning() as WithdrawalRequest[];
+    return result[0];
   }
 
   async getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]> {
@@ -504,46 +827,46 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(withdrawalRequests)
       .where(eq(withdrawalRequests.userId, userId))
-      .orderBy(desc(withdrawalRequests.createdAt));
+      .orderBy(desc(withdrawalRequests.createdAt)) as WithdrawalRequest[];
   }
 
   async getAllWithdrawalRequests(): Promise<WithdrawalRequest[]> {
     return await db
       .select()
       .from(withdrawalRequests)
-      .orderBy(desc(withdrawalRequests.createdAt));
+      .orderBy(desc(withdrawalRequests.createdAt)) as WithdrawalRequest[];
   }
 
   async getWithdrawalRequest(id: string): Promise<WithdrawalRequest | undefined> {
-    const [request] = await db
+    const result = await db
       .select()
       .from(withdrawalRequests)
-      .where(eq(withdrawalRequests.id, id));
-    return request || undefined;
+      .where(eq(withdrawalRequests.id, id)) as WithdrawalRequest[];
+    return result[0] || undefined;
   }
 
   async updateWithdrawalRequest(id: string, updates: Partial<WithdrawalRequest>): Promise<WithdrawalRequest> {
-    const [request] = await db
+    const result = await db
       .update(withdrawalRequests)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(withdrawalRequests.id, id))
-      .returning();
-    return request;
+      .returning() as WithdrawalRequest[];
+    return result[0];
   }
 
   // ===== SUBMISSION OPERATIONS =====
   
   async createSubmission(insertSubmission: InsertSubmission): Promise<Submission> {
-    const [submission] = await db
+    const result = await db
       .insert(submissions)
       .values(insertSubmission)
-      .returning();
-    return submission;
+      .returning() as Submission[];
+    return result[0];
   }
 
   async getSubmission(id: string): Promise<Submission | undefined> {
-    const [submission] = await db.select().from(submissions).where(eq(submissions.id, id));
-    return submission || undefined;
+    const result = await db.select().from(submissions).where(eq(submissions.id, id)) as Submission[];
+    return result[0] || undefined;
   }
 
   async getSubmissionsByUserId(userId: string): Promise<Submission[]> {
@@ -551,7 +874,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(submissions)
       .where(eq(submissions.userId, userId))
-      .orderBy(desc(submissions.createdAt));
+      .orderBy(desc(submissions.createdAt)) as Submission[];
   }
 
   async getAllSubmissionsWithUsers(): Promise<Submission[]> {
@@ -616,7 +939,7 @@ export class DatabaseStorage implements IStorage {
     return await db
       .select()
       .from(submissions)
-      .orderBy(desc(submissions.createdAt));
+      .orderBy(desc(submissions.createdAt)) as Submission[];
   }
 
   async updateSubmissionStatus(
@@ -626,7 +949,7 @@ export class DatabaseStorage implements IStorage {
     reward?: number, 
     rejectionReason?: string
   ): Promise<Submission> {
-    const [submission] = await db
+    const result = await db
       .update(submissions)
       .set({
         status,
@@ -637,8 +960,8 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(submissions.id, id))
-      .returning();
-    return submission;
+      .returning() as Submission[];
+    return result[0];
   }
 
   // ===== ADMIN OPERATIONS =====
@@ -649,18 +972,18 @@ export class DatabaseStorage implements IStorage {
       adminId: insertAction.adminId || 'system'
     };
 
-    const [action] = await db
+    const result = await db
       .insert(adminActions)
       .values(actionData)
-      .returning();
-    return action;
+      .returning() as AdminAction[];
+    return result[0];
   }
 
   async getAdminActions(): Promise<AdminAction[]> {
     return await db
       .select()
       .from(adminActions)
-      .orderBy(desc(adminActions.createdAt));
+      .orderBy(desc(adminActions.createdAt)) as AdminAction[];
   }
 
   async getAdminActionsWithUsers(): Promise<AdminAction[]> {
@@ -706,7 +1029,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(users)
       .where(eq(users.subscriptionScreenshotStatus, 'pending'))
-      .orderBy(desc(users.subscriptionScreenshotUploadedAt));
+      .orderBy(desc(users.subscriptionScreenshotUploadedAt)) as User[];
   }
 
   async updateUserSubscriptionScreenshot(id: string, updates: {
@@ -718,37 +1041,37 @@ export class DatabaseStorage implements IStorage {
     subscriptionScreenshotRejectionReason?: string;
     subscriptionScreenshotCloudinaryPublicId?: string;
   }): Promise<User> {
-    const [user] = await db
+    const result = await db
       .update(users)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(users.id, id))
-      .returning();
-    return user;
+      .returning() as User[];
+    return result[0];
   }
 
   // ===== TOURNAMENT OPERATIONS =====
   
   async createTournament(insertTournament: InsertTournament): Promise<Tournament> {
-    const [tournament] = await db
+    const result = await db
       .insert(tournaments)
       .values(insertTournament)
-      .returning();
-    return tournament;
+      .returning() as Tournament[];
+    return result[0];
   }
 
   async getTournament(id: string): Promise<Tournament | undefined> {
-    const [tournament] = await db
+    const result = await db
       .select()
       .from(tournaments)
-      .where(eq(tournaments.id, id));
-    return tournament || undefined;
+      .where(eq(tournaments.id, id)) as Tournament[];
+    return result[0] || undefined;
   }
 
   async getAllTournaments(): Promise<Tournament[]> {
     return await db
       .select()
       .from(tournaments)
-      .orderBy(desc(tournaments.createdAt));
+      .orderBy(desc(tournaments.createdAt)) as Tournament[];
   }
 
   async getActiveTournaments(): Promise<Tournament[]> {
@@ -756,16 +1079,16 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(tournaments)
       .where(sql`${tournaments.status} != 'cancelled' AND ${tournaments.status} != 'completed'`)
-      .orderBy(tournaments.startDate);
+      .orderBy(tournaments.startDate) as Tournament[];
   }
 
   async updateTournament(id: string, updates: Partial<Tournament>): Promise<Tournament> {
-    const [tournament] = await db
+    const result = await db
       .update(tournaments)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(tournaments.id, id))
-      .returning();
-    return tournament;
+      .returning() as Tournament[];
+    return result[0];
   }
 
   async deleteTournament(id: string): Promise<void> {
@@ -825,15 +1148,15 @@ export class DatabaseStorage implements IStorage {
   // ===== TOURNAMENT REGISTRATION OPERATIONS =====
   
   async registerForTournament(insertRegistration: InsertTournamentRegistration): Promise<TournamentRegistration> {
-    const [registration] = await db
+    const result = await db
       .insert(tournamentRegistrations)
       .values(insertRegistration)
-      .returning();
-    return registration;
+      .returning() as TournamentRegistration[];
+    return result[0];
   }
 
   async getTournamentRegistration(tournamentId: string, userId: string): Promise<TournamentRegistration | undefined> {
-    const [registration] = await db
+    const result = await db
       .select()
       .from(tournamentRegistrations)
       .where(
@@ -841,8 +1164,8 @@ export class DatabaseStorage implements IStorage {
           eq(tournamentRegistrations.tournamentId, tournamentId),
           eq(tournamentRegistrations.userId, userId)
         )
-      );
-    return registration || undefined;
+      ) as TournamentRegistration[];
+    return result[0] || undefined;
   }
 
   async getTournamentRegistrations(tournamentId: string): Promise<TournamentRegistration[]> {
@@ -850,7 +1173,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(tournamentRegistrations)
       .where(eq(tournamentRegistrations.tournamentId, tournamentId))
-      .orderBy(desc(tournamentRegistrations.registeredAt));
+      .orderBy(desc(tournamentRegistrations.registeredAt)) as TournamentRegistration[];
   }
 
   async getUserTournamentRegistrations(userId: string): Promise<TournamentRegistration[]> {
@@ -858,7 +1181,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(tournamentRegistrations)
       .where(eq(tournamentRegistrations.userId, userId))
-      .orderBy(desc(tournamentRegistrations.registeredAt));
+      .orderBy(desc(tournamentRegistrations.registeredAt)) as TournamentRegistration[];
   }
 
   async cancelTournamentRegistration(id: string): Promise<void> {

@@ -3,10 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { 
   X, 
   TrendingUp, 
@@ -22,11 +19,11 @@ import {
   Gift,
   Trophy,
   Wallet,
-  MessageSquare,
   AlertTriangle,
   Info,
   Zap,
-  Crown
+  Crown,
+  Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -73,15 +70,7 @@ interface BalanceModalProps {
   onRefreshUser: () => Promise<void>;
 }
 
-interface NotificationProps {
-  isOpen: boolean;
-  type: 'success' | 'error' | 'warning' | 'info';
-  title: string;
-  message: string;
-  onClose: () => void;
-}
-
-function NotificationModal({ isOpen, type, title, message, onClose }: NotificationProps) {
+function NotificationModal({ isOpen, type, title, message, onClose }: { isOpen: boolean; type: 'success' | 'error' | 'warning' | 'info'; title: string; message: string; onClose: () => void }) {
   if (!isOpen) return null;
 
   const getIcon = () => {
@@ -111,20 +100,18 @@ function NotificationModal({ isOpen, type, title, message, onClose }: Notificati
   };
 
   return (
-    <div className="fixed bg-black/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4" style={{ top: 0, left: 0, right: 0, bottom: 0, position: 'fixed' }}>
+    <div className="fixed bg-black/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4" style={{ top: 0, left: 0, right: 0, bottom: 0 }}>
       <div className={cn("bg-card rounded-2xl border shadow-2xl max-w-md w-full", getBorderColor())}>
         <div className="p-6">
           <div className="flex items-start gap-4">
             {getIcon()}
             <div className="flex-1">
-              <h3 className="text-lg font-semibold font-gaming mb-2">{title}</h3>
+              <h3 className="text-lg font-semibold mb-2">{title}</h3>
               <p className="text-sm text-muted-foreground">{message}</p>
             </div>
           </div>
           <div className="mt-6 flex justify-end">
-            <Button onClick={onClose} className="font-gaming">
-              Понятно
-            </Button>
+            <Button onClick={onClose}>Понятно</Button>
           </div>
         </div>
       </div>
@@ -138,17 +125,24 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
+  const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
 
-  const [notification, setNotification] = useState<{
-    isOpen: boolean;
-    type: 'success' | 'error' | 'warning' | 'info';
-    title: string;
-    message: string;
-  }>({
+  const [notification, setNotification] = useState({
     isOpen: false,
-    type: 'info',
+    type: 'info' as 'success' | 'error' | 'warning' | 'info',
     title: '',
     message: ''
+  });
+
+  const [withdrawalForm, setWithdrawalForm] = useState({
+    amount: '',
+    method: 'crypto' as 'card' | 'crypto' | 'paypal' | '',
+    cardNumber: '',
+    cardHolder: '',
+    cardCountry: 'RU',
+    walletAddress: '',
+    currency: 'USDT',
+    email: ''
   });
 
   const showNotification = (type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
@@ -159,25 +153,9 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
     setNotification(prev => ({ ...prev, isOpen: false }));
   };
 
-  const [withdrawalForm, setWithdrawalForm] = useState({
-    amount: '',
-    method: 'crypto' as 'card' | 'crypto' | 'paypal' | '',
-    telegramUsername: '',
-    cardNumber: '',
-    cardHolder: '',
-    cardCountry: 'RU',
-    walletAddress: '',
-    currency: 'USDT',
-    email: ''
-  });
-  const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
-
   const hasContactMethod = user.telegramUsername || user.discordUsername;
-
-  // Fixed premium check - check if user has ANY premium tier (not 'none')
   const hasPremium = user.premiumTier && user.premiumTier !== 'none';
 
-  // Calculate withdrawal amount with premium bonus
   const calculateWithdrawal = (amount: number) => {
     const baseAmount = amount;
     const premiumBonus = hasPremium ? Math.round(amount * 0.1) : 0;
@@ -211,9 +189,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
       if (!token) return;
 
       const response = await fetch(`/api/user/${user.id}/balance/transactions`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       if (response.ok) {
@@ -233,9 +209,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
       if (!token) return;
 
       const response = await fetch(`/api/user/${user.id}/withdrawals`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       if (response.ok) {
@@ -247,18 +221,71 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
     }
   };
 
-  const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formattedValue = formatCardNumber(e.target.value);
-    setWithdrawalForm(prev => ({ ...prev, cardNumber: formattedValue }));
+  const getTransactionIcon = (transaction: BalanceTransaction) => {
+    switch (transaction.type) {
+      case 'earning':
+        return <Trophy className="h-4 w-4 text-yellow-500" />;
+      case 'bonus':
+        return <Gift className="h-4 w-4 text-green-500" />;
+      case 'withdrawal_request':
+        return <ArrowUpRight className="h-4 w-4 text-red-500" />;
+      case 'withdrawal_completed':
+        return <ArrowDownRight className="h-4 w-4 text-red-600" />;
+      default:
+        return <Wallet className="h-4 w-4 text-gray-500" />;
+    }
+  };
+
+  const getWithdrawalStatusIcon = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return <Clock className="h-4 w-4 text-yellow-500" />;
+      case 'processing':
+        return <TrendingUp className="h-4 w-4 text-blue-500" />;
+      case 'completed':
+        return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'rejected':
+        return <XCircle className="h-4 w-4 text-red-500" />;
+      default:
+        return <Clock className="h-4 w-4 text-gray-500" />;
+    }
+  };
+
+  const getMethodIcon = (method: string) => {
+    switch (method) {
+      case 'card':
+        return <CreditCard className="h-4 w-4" />;
+      case 'crypto':
+        return <Bitcoin className="h-4 w-4" />;
+      case 'paypal':
+        return <Mail className="h-4 w-4" />;
+      default:
+        return <Wallet className="h-4 w-4" />;
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    const statusMap: Record<string, string> = {
+      pending: 'Ожидание',
+      processing: 'Обработка',
+      completed: 'Выполнено',
+      rejected: 'Отклонено'
+    };
+    return statusMap[status] || status;
+  };
+
+  const getMethodText = (method: string) => {
+    const methodMap: Record<string, string> = {
+      card: 'Банковская карта',
+      crypto: 'Криптовалюта',
+      paypal: 'PayPal'
+    };
+    return methodMap[method] || method;
   };
 
   const handleWithdrawalSubmit = async () => {
     if (!hasContactMethod) {
-      showNotification(
-        'warning', 
-        'Требуется привязка контакта', 
-        'Для вывода средств необходимо привязать Telegram или Discord аккаунт в настройках профиля'
-      );
+      showNotification('warning', 'Требуется привязка контакта', 'Для вывода средств необходимо привязать Telegram или Discord аккаунт в настройках профиля');
       return;
     }
 
@@ -276,13 +303,13 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
     }
 
     setIsSubmittingWithdrawal(true);
-    
+
     try {
       const token = getAuthToken();
       if (!token) return;
 
       let methodData = {};
-      
+
       switch (withdrawalForm.method) {
         case 'card':
           if (!withdrawalForm.cardNumber || !withdrawalForm.cardHolder || !withdrawalForm.cardCountry) {
@@ -340,9 +367,9 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
       if (response.ok) {
         const withdrawal = calculateWithdrawal(amount);
         showNotification(
-          'success', 
-          'Заявка создана', 
-          hasPremium 
+          'success',
+          'Заявка создана',
+          hasPremium
             ? `Заявка на вывод создана успешно! Сумма вывода: ${withdrawal.baseAmount} ₽ + ${withdrawal.premiumBonus} ₽ (Premium бонус) = ${withdrawal.finalAmount} ₽`
             : 'Заявка на вывод создана успешно'
         );
@@ -350,7 +377,6 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
         setWithdrawalForm({
           amount: '',
           method: '',
-          telegramUsername: '',
           cardNumber: '',
           cardHolder: '',
           cardCountry: 'RU',
@@ -358,7 +384,7 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
           currency: 'USDT',
           email: ''
         });
-        
+
         await Promise.all([
           loadTransactions(),
           loadWithdrawals(),
@@ -376,196 +402,169 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
     }
   };
 
-  const getTransactionIcon = (transaction: BalanceTransaction) => {
-    switch (transaction.type) {
-      case 'earning':
-        return <Trophy className="h-4 w-4 text-yellow-500" />;
-      case 'bonus':
-        return <Gift className="h-4 w-4 text-green-500" />;
-      case 'withdrawal_request':
-        return <ArrowUpRight className="h-4 w-4 text-red-500" />;
-      case 'withdrawal_completed':
-        return <ArrowDownRight className="h-4 w-4 text-red-600" />;
-      default:
-        return <Wallet className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getWithdrawalStatusIcon = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return <Clock className="h-4 w-4 text-yellow-500" />;
-      case 'processing':
-        return <TrendingUp className="h-4 w-4 text-blue-500" />;
-      case 'completed':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'rejected':
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getMethodIcon = (method: string) => {
-    switch (method) {
-      case 'card':
-        return <CreditCard className="h-4 w-4" />;
-      case 'crypto':
-        return <Bitcoin className="h-4 w-4" />;
-      case 'paypal':
-        return <Mail className="h-4 w-4" />;
-      default:
-        return <Wallet className="h-4 w-4" />;
-    }
-  };
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'Ожидание';
-      case 'processing':
-        return 'Обработка';
-      case 'completed':
-        return 'Выполнено';
-      case 'rejected':
-        return 'Отклонено';
-      default:
-        return status;
-    }
-  };
-
-  const getMethodText = (method: string) => {
-    switch (method) {
-      case 'card':
-        return 'Банковская карта';
-      case 'crypto':
-        return 'Криптовалюта';
-      case 'paypal':
-        return 'PayPal';
-      default:
-        return method;
-    }
-  };
-
-  if (!isOpen) return null;
-
-  // Calculate final withdrawal amount for display
   const currentWithdrawal = withdrawalForm.amount ? calculateWithdrawal(parseInt(withdrawalForm.amount)) : null;
+
+  if (!isOpen || !user) return null;
 
   return (
     <>
-      {/* Main Balance Modal */}
-      <div className="fixed bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4" style={{ top: 0, left: 0, right: 0, bottom: 0, position: 'fixed', pointerEvents: 'all' }}>
-        <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-border">
-            <div className="flex items-center gap-3">
-              <Wallet className="h-6 w-6 text-primary" />
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-2xl font-bold font-gaming">Баланс</h2>
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-2xl w-full max-h-[90vh] overflow-hidden rounded-3xl p-0 border-0 bg-gradient-to-b from-background to-background/95">
+          
+          <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 via-transparent to-emerald-500/5 pointer-events-none" />
+
+          <div className="relative border-b border-border/50 bg-background/60 backdrop-blur-2xl">
+            <div className="p-6">
+              <div className="flex items-start justify-between mb-6">
+                <div className="flex items-center gap-4">
+                  <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-green-500 via-emerald-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/20">
+                    <Wallet className="h-7 w-7 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-semibold mb-1">Баланс</h2>
+                    <p className="text-sm text-muted-foreground">Управление средствами</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-green-500/15 via-emerald-500/10 to-teal-500/15 border border-green-500/20 p-6">
+                <div className="absolute top-0 right-0 h-24 w-24 bg-green-500/10 rounded-full blur-3xl" />
+                <div className="relative z-10">
+                  <p className="text-sm text-green-600/80 font-medium mb-2">Доступные средства</p>
+                  <div className="flex items-baseline gap-2">
+                    <p className="text-4xl font-bold text-green-600">{user.balance.toLocaleString()}</p>
+                    <p className="text-lg text-green-600/60">₽</p>
+                  </div>
                   {hasPremium && (
-                    <Badge className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white border-0">
-                      <Crown className="h-3 w-3 mr-1" />
-                      Premium
-                    </Badge>
+                    <div className="mt-3 flex items-center gap-2">
+                      <Badge className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white border-0">
+                        <Crown className="h-3 w-3 mr-1" />
+                        Premium +10%
+                      </Badge>
+                    </div>
                   )}
                 </div>
-                <p className="text-3xl font-bold text-primary">{user.balance} ₽</p>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative group">
-                <Button
+
+              <div className="mt-4 flex items-center gap-2 relative group">
+                <button
                   onClick={() => setIsWithdrawalModalOpen(true)}
-                  className="font-gaming"
                   disabled={user.balance < 1000}
+                  className={cn(
+                    "flex-1 h-11 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2 relative overflow-hidden",
+                    user.balance < 1000
+                      ? "bg-muted/30 text-muted-foreground/60 cursor-not-allowed"
+                      : "bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:shadow-md hover:shadow-green-500/20 active:scale-95"
+                  )}
                 >
-                  Вывести
-                </Button>
+                  {user.balance >= 1000 && (
+                    <div className="absolute inset-0 bg-gradient-to-r from-green-400/0 via-white/10 to-green-400/0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  )}
+                  <div className="relative flex items-center gap-2">
+                    <ArrowUpRight className="h-4 w-4" />
+                    Вывести средства
+                  </div>
+                </button>
                 {user.balance < 1000 && (
-                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
+                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-muted/80 text-muted-foreground text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10 backdrop-blur-sm border border-border/50">
                     Минимальная сумма вывода: 1000 ₽
-                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-muted/80"></div>
                   </div>
                 )}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onClose}
-                className="hover:bg-muted rounded-full w-8 h-8 p-0"
-              >
-                <X className="h-4 w-4" />
-              </Button>
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex border-b border-border">
-            <button
-              onClick={() => setActiveTab('transactions')}
-              className={cn(
-                "flex-1 py-3 px-4 text-sm font-medium transition-colors",
-                activeTab === 'transactions' 
-                  ? "text-primary border-b-2 border-primary bg-primary/5" 
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              История операций
-            </button>
-            <button
-              onClick={() => setActiveTab('withdrawal')}
-              className={cn(
-                "flex-1 py-3 px-4 text-sm font-medium transition-colors",
-                activeTab === 'withdrawal' 
-                  ? "text-primary border-b-2 border-primary bg-primary/5" 
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Заявки на вывод
-            </button>
+          <div className="relative border-b border-border/50 bg-background/30">
+            <div className="flex">
+              <button
+                onClick={() => setActiveTab('transactions')}
+                className={cn(
+                  "flex-1 py-4 px-4 text-sm font-medium transition-all border-b-2",
+                  activeTab === 'transactions'
+                    ? "text-green-600 border-green-500 bg-green-500/5"
+                    : "text-muted-foreground border-transparent hover:text-foreground"
+                )}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Trophy className="h-4 w-4" />
+                  История операций
+                </div>
+              </button>
+              <button
+                onClick={() => setActiveTab('withdrawal')}
+                className={cn(
+                  "flex-1 py-4 px-4 text-sm font-medium transition-all border-b-2",
+                  activeTab === 'withdrawal'
+                    ? "text-green-600 border-green-500 bg-green-500/5"
+                    : "text-muted-foreground border-transparent hover:text-foreground"
+                )}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <ArrowUpRight className="h-4 w-4" />
+                  Заявки на вывод
+                </div>
+              </button>
+            </div>
           </div>
 
-          {/* Content */}
-          <div className="p-6 max-h-96 overflow-y-auto">
+          <div className="relative overflow-y-auto max-h-[calc(90vh-320px)] p-6 space-y-3">
             {activeTab === 'transactions' && (
               <div className="space-y-3">
                 {isLoading ? (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                    <p className="text-muted-foreground mt-2">Загрузка...</p>
+                  <div className="flex items-center justify-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <Loader2 className="h-8 w-8 text-green-500 animate-spin" />
+                      <p className="text-muted-foreground">Загрузка...</p>
+                    </div>
                   </div>
                 ) : transactions.length === 0 ? (
-                  <div className="text-center py-8">
-                    <Wallet className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <div className="h-12 w-12 rounded-full bg-muted/30 flex items-center justify-center mb-3">
+                      <Wallet className="h-6 w-6 text-muted-foreground" />
+                    </div>
                     <p className="text-muted-foreground">Операций пока нет</p>
                   </div>
                 ) : (
                   transactions.map((transaction) => (
-                    <div key={transaction.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        {getTransactionIcon(transaction)}
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{transaction.description}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {new Date(transaction.createdAt).toLocaleDateString('ru-RU', {
-                              day: '2-digit',
-                              month: '2-digit',
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
+                    <div key={transaction.id} className={cn(
+                      "group relative overflow-hidden rounded-xl border border-border/50 p-4 transition-all",
+                      transaction.type === 'withdrawal_request'
+                        ? "hover:border-red-500/30 hover:bg-red-500/5"
+                        : "hover:border-green-500/30 hover:bg-green-500/5"
+                    )}>
+                      <div className={cn(
+                        "absolute top-0 right-0 h-12 w-12 rounded-full blur-xl group-hover:opacity-100 opacity-0 transition-opacity",
+                        transaction.type === 'withdrawal_request'
+                          ? "bg-red-500/10"
+                          : "bg-green-500/10"
+                      )} />
+                      <div className="relative z-10 flex items-center justify-between">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className="h-9 w-9 rounded-lg bg-muted/50 flex items-center justify-center flex-shrink-0">
+                            {getTransactionIcon(transaction)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">{transaction.description}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(transaction.createdAt).toLocaleDateString('ru-RU', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0 ml-3">
+                          <p className={cn(
+                            "font-bold whitespace-nowrap text-sm",
+                            transaction.amount > 0 ? "text-green-600" : "text-red-600"
+                          )}>
+                            {transaction.amount > 0 ? '+' : ''}{transaction.amount} ₽
                           </p>
                         </div>
-                      </div>
-                      <div className="text-right flex-shrink-0 ml-3">
-                        <p className={cn(
-                          "font-bold whitespace-nowrap",
-                          transaction.amount > 0 ? "text-green-600" : "text-red-600"
-                        )}>
-                          {transaction.amount > 0 ? '+' : ''}{transaction.amount} ₽
-                        </p>
                       </div>
                     </div>
                   ))
@@ -576,258 +575,282 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
             {activeTab === 'withdrawal' && (
               <div className="space-y-3">
                 {withdrawals.length === 0 ? (
-                  <div className="text-center py-8">
-                    <ArrowUpRight className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <div className="h-12 w-12 rounded-full bg-muted/30 flex items-center justify-center mb-3">
+                      <ArrowUpRight className="h-6 w-6 text-muted-foreground" />
+                    </div>
                     <p className="text-muted-foreground">Заявок на вывод пока нет</p>
                   </div>
                 ) : (
                   withdrawals.map((withdrawal) => (
-                    <div key={withdrawal.id} className="p-4 bg-muted/30 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          {getWithdrawalStatusIcon(withdrawal.status)}
-                          <div className="flex flex-col">
-                            <span className="font-medium whitespace-nowrap">{withdrawal.amount} ₽</span>
-                            {withdrawal.premiumBonus && withdrawal.premiumBonus > 0 && (
-                              <span className="text-xs text-green-600 flex items-center gap-1">
-                                <Crown className="h-3 w-3" />
-                                +{withdrawal.premiumBonus} ₽ (Premium) = {withdrawal.finalAmount} ₽
-                              </span>
-                            )}
+                    <div key={withdrawal.id} className={cn(
+                      "group relative overflow-hidden rounded-xl border border-border/50 p-4 transition-all",
+                      withdrawal.status === 'rejected'
+                        ? "hover:border-red-500/30 hover:bg-red-500/5"
+                        : "hover:border-green-500/30 hover:bg-green-500/5"
+                    )}>
+                      <div className={cn(
+                        "absolute top-0 right-0 h-12 w-12 rounded-full blur-xl group-hover:opacity-100 opacity-0 transition-opacity",
+                        withdrawal.status === 'rejected'
+                          ? "bg-red-500/10"
+                          : "bg-green-500/10"
+                      )} />
+                      <div className="relative z-10 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="h-9 w-9 rounded-lg bg-muted/50 flex items-center justify-center flex-shrink-0">
+                              {getWithdrawalStatusIcon(withdrawal.status)}
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="font-medium text-sm">{withdrawal.amount} ₽</span>
+                              {withdrawal.premiumBonus && withdrawal.premiumBonus > 0 && (
+                                <span className="text-xs text-green-600 flex items-center gap-1 mt-0.5">
+                                  <Crown className="h-3 w-3" />
+                                  +{withdrawal.premiumBonus} ₽ = {withdrawal.finalAmount} ₽
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <Badge variant="secondary" className="text-xs">
-                            {getStatusText(withdrawal.status)}
-                          </Badge>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <Badge variant="secondary" className="text-xs">
+                              {getStatusText(withdrawal.status)}
+                            </Badge>
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              {getMethodIcon(withdrawal.method)}
+                              <span className="whitespace-nowrap">{getMethodText(withdrawal.method)}</span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground flex-shrink-0 ml-3">
-                          {getMethodIcon(withdrawal.method)}
-                          <span className="whitespace-nowrap">{getMethodText(withdrawal.method)}</span>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>
+                            {new Date(withdrawal.createdAt).toLocaleDateString('ru-RU', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
                         </div>
+                        {withdrawal.rejectionReason && (
+                          <p className={cn(
+                            "text-xs mt-2",
+                            withdrawal.status === 'rejected' ? "text-red-600" : withdrawal.status === 'completed' ? "text-green-600" : "text-muted-foreground"
+                          )}>
+                            {withdrawal.status === 'rejected' ? '❌ ' : withdrawal.status === 'completed' ? '✓ ' : ''}
+                            {withdrawal.rejectionReason}
+                          </p>
+                        )}
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(withdrawal.createdAt).toLocaleDateString('ru-RU', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </p>
-                      {withdrawal.rejectionReason && (
-                        <>
-                          {withdrawal.status === 'rejected' ? (
-                            <p className="text-sm text-red-600 mt-2">
-                              Причина отклонения: {withdrawal.rejectionReason}
-                            </p>
-                          ) : withdrawal.status === 'completed' ? (
-                            <p className="text-sm text-green-600 mt-2">
-                              Вывод проведен: {withdrawal.rejectionReason}
-                            </p>
-                          ) : (
-                            <p className="text-sm text-muted-foreground mt-2">
-                              Примечание: {withdrawal.rejectionReason}
-                            </p>
-                          )}
-                        </>
-                      )}
                     </div>
                   ))
                 )}
               </div>
             )}
           </div>
-        </div>
-      </div>
+        </DialogContent>
+      </Dialog>
 
-      {/* Withdrawal Modal */}
       {isWithdrawalModalOpen && (
-        <div className="fixed bg-black/90 backdrop-blur-sm z-[110] flex items-center justify-center p-4" style={{ top: 0, left: 0, right: 0, bottom: 0, position: 'fixed' }}>
-          <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="flex items-center justify-between p-6 border-b border-border">
-              <div className="flex items-center gap-2">
-                <h3 className="text-xl font-bold font-gaming">Вывод средств</h3>
-                {hasPremium && (
-                  <Badge className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white border-0">
-                    <Crown className="h-3 w-3 mr-1" />
-                    +10%
-                  </Badge>
-                )}
+        <Dialog open={isWithdrawalModalOpen} onOpenChange={setIsWithdrawalModalOpen}>
+          <DialogContent className="max-w-xl w-full max-h-[90vh] overflow-y-auto rounded-3xl p-0 border-0 bg-gradient-to-b from-background to-background/95">
+            
+            <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 via-transparent to-emerald-500/5 pointer-events-none" />
+
+            <div className="relative border-b border-border/50 bg-background/60 backdrop-blur-2xl">
+              <div className="p-6">
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
+                    <ArrowUpRight className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold">Вывод средств</h3>
+                    <p className="text-sm text-muted-foreground">Выберите способ и сумму</p>
+                  </div>
+                </div>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsWithdrawalModalOpen(false)}
-                className="hover:bg-muted rounded-full w-8 h-8 p-0"
-              >
-                <X className="h-4 w-4" />
-              </Button>
             </div>
 
-            <div className="p-6 space-y-6">
-              {/* Contact Warning */}
+            <div className="relative p-6 space-y-6 overflow-y-auto max-h-[calc(90vh-120px)]">
               {!hasContactMethod && (
-                <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl animate-in slide-in-from-top">
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
                     <div className="text-sm">
-                      <p className="font-medium text-yellow-600 mb-1">Требуется привязка контакта</p>
-                      <p className="text-yellow-600/80">
-                        Для вывода средств необходимо привязать Telegram или Discord в настройках профиля
-                      </p>
+                      <p className="font-medium text-yellow-700 mb-1">Требуется привязка контакта</p>
+                      <p className="text-yellow-700/80">Привяжите Telegram или Discord в профиле для вывода</p>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Premium Bonus Info */}
               {hasPremium && (
-                <div className="p-4 bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/20 rounded-lg">
+                <div className="p-4 bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/20 rounded-xl">
                   <div className="flex items-start gap-3">
                     <Crown className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
                     <div className="text-sm">
-                      <p className="font-medium text-yellow-600 mb-1">Premium бонус активен!</p>
-                      <p className="text-yellow-600/80">
-                        Вы получаете +10% к сумме вывода благодаря Premium статусу ({user.premiumTier})
-                      </p>
+                      <p className="font-medium text-yellow-700 mb-1">Premium бонус активен</p>
+                      <p className="text-yellow-700/80">Получите +10% к выводу ({user.premiumTier})</p>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Balance Info */}
-              <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground">Доступно для вывода</p>
-                  <p className="text-2xl font-bold text-primary">{user.balance} ₽</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Минимальная сумма вывода: 1000 ₽
-                  </p>
-                </div>
-              </div>
-
-              {/* Amount */}
               <div>
-                <Label className="text-sm font-medium mb-2 block">Сумма вывода</Label>
-                <Input
-                  type="number"
-                  placeholder="1000"
-                  min="1000"
-                  max={user.balance}
-                  value={withdrawalForm.amount}
-                  onChange={(e) => setWithdrawalForm(prev => ({ ...prev, amount: e.target.value }))}
-                  className="w-full"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  От 1000 до {user.balance} ₽
+                <Label className="text-sm font-medium mb-3 block">Сумма вывода</Label>
+                <div className="relative">
+                  <Input
+                    type="number"
+                    placeholder="1000"
+                    min="1000"
+                    max={user.balance}
+                    value={withdrawalForm.amount}
+                    onChange={(e) => setWithdrawalForm(prev => ({ ...prev, amount: e.target.value }))}
+                    className="w-full h-12 rounded-xl pl-4 pr-12 text-lg font-medium"
+                  />
+                  <span className="absolute right-4 top-1/2 transform -translate-y-1/2 text-muted-foreground font-medium">₽</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Минимум: 1000 ₽ • Максимум: {user.balance} ₽
                 </p>
                 {currentWithdrawal && currentWithdrawal.baseAmount >= 1000 && hasPremium && (
-                  <div className="mt-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
-                    <div className="flex items-center justify-between text-sm">
-                      <span>Базовая сумма:</span>
-                      <span className="font-medium">{currentWithdrawal.baseAmount} ₽</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm text-green-600">
-                      <span className="flex items-center gap-1">
-                        <Crown className="h-3 w-3" />
-                        Premium бонус (+10%):
-                      </span>
-                      <span className="font-medium">+{currentWithdrawal.premiumBonus} ₽</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm font-bold border-t border-green-500/20 mt-2 pt-2">
-                      <span>Итого к выводу:</span>
-                      <span className="text-green-600">{currentWithdrawal.finalAmount} ₽</span>
+                  <div className="mt-3 p-3 bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/20 rounded-xl">
+                    <div className="space-y-2 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Базовая сумма:</span>
+                        <span className="font-semibold">{currentWithdrawal.baseAmount} ₽</span>
+                      </div>
+                      <div className="flex items-center justify-between text-green-600">
+                        <span className="flex items-center gap-1">
+                          <Crown className="h-3 w-3" />
+                          Premium бонус (+10%):
+                        </span>
+                        <span className="font-semibold">+{currentWithdrawal.premiumBonus} ₽</span>
+                      </div>
+                      <div className="flex items-center justify-between font-bold border-t border-green-500/20 pt-2 text-green-600">
+                        <span>К выводу:</span>
+                        <span>{currentWithdrawal.finalAmount} ₽</span>
+                      </div>
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Method */}
               <div>
                 <Label className="text-sm font-medium mb-3 block">Способ вывода</Label>
-                <RadioGroup 
-                  value={withdrawalForm.method} 
-                  onValueChange={(value) => setWithdrawalForm(prev => ({ ...prev, method: value as any }))}
-                  className="space-y-3"
-                >
-                  <div className="flex items-center space-x-3 p-3 border-2 border-green-500/30 rounded-lg hover:bg-green-500/5 bg-green-500/5">
-                    <RadioGroupItem value="crypto" id="crypto" />
-                    <label htmlFor="crypto" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <Bitcoin className="h-5 w-5 text-green-500" />
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">Криптовалюта (USDT)</span>
-                          <Badge variant="default" className="bg-green-500 hover:bg-green-600 text-white text-xs">
+                <div className="space-y-2">
+                  <div
+                    className={cn(
+                      "relative overflow-hidden rounded-xl border-2 p-4 cursor-pointer transition-all",
+                      withdrawalForm.method === 'crypto'
+                        ? 'border-green-500/50 bg-green-500/10'
+                        : 'border-border/50 hover:border-green-500/30 hover:bg-green-500/5'
+                    )}
+                    onClick={() => setWithdrawalForm(prev => ({ ...prev, method: 'crypto' }))}
+                  >
+                    <div className="absolute top-0 right-0 h-12 w-12 bg-green-500/10 rounded-full blur-xl" />
+                    <div className="relative z-10 flex items-start gap-3">
+                      <div className={cn(
+                        "h-5 w-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5",
+                        withdrawalForm.method === 'crypto' ? 'border-green-500 bg-green-500' : 'border-border'
+                      )}>
+                        {withdrawalForm.method === 'crypto' && <div className="h-2 w-2 bg-white rounded-full" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Bitcoin className="h-4 w-4 text-green-500" />
+                          <span className="font-semibold text-sm">Криптовалюта (USDT)</span>
+                          <Badge className="bg-green-500/20 text-green-700 border-0 text-xs">
                             <Zap className="h-3 w-3 mr-1" />
                             Быстро
                           </Badge>
                         </div>
-                        <div className="text-xs text-green-600 font-medium mt-0.5">
-                          💰 Без комиссии
+                        <p className="text-xs text-green-600/80">💰 Без комиссии • 5-30 минут</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className={cn(
+                      "relative overflow-hidden rounded-xl border-2 p-4 cursor-pointer transition-all",
+                      withdrawalForm.method === 'card'
+                        ? 'border-green-500/50 bg-green-500/10'
+                        : 'border-border/50 hover:border-green-500/30 hover:bg-green-500/5'
+                    )}
+                    onClick={() => setWithdrawalForm(prev => ({ ...prev, method: 'card' }))}
+                  >
+                    <div className="relative z-10 flex items-start gap-3">
+                      <div className={cn(
+                        "h-5 w-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5",
+                        withdrawalForm.method === 'card' ? 'border-green-500 bg-green-500' : 'border-border'
+                      )}>
+                        {withdrawalForm.method === 'card' && <div className="h-2 w-2 bg-white rounded-full" />}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <CreditCard className="h-4 w-4" />
+                          <span className="font-semibold text-sm">Банковская карта</span>
                         </div>
+                        <p className="text-xs text-muted-foreground">Возможны задержки</p>
                       </div>
-                    </label>
+                    </div>
                   </div>
-                  
-                  <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/30">
-                    <RadioGroupItem value="card" id="card" />
-                    <label htmlFor="card" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <CreditCard className="h-4 w-4" />
-                      <div>
-                        <div>Банковская карта</div>
-                        <div className="text-xs text-muted-foreground">Возможны задержки</div>
+
+                  <div
+                    className={cn(
+                      "relative overflow-hidden rounded-xl border-2 p-4 cursor-pointer transition-all",
+                      withdrawalForm.method === 'paypal'
+                        ? 'border-green-500/50 bg-green-500/10'
+                        : 'border-border/50 hover:border-green-500/30 hover:bg-green-500/5'
+                    )}
+                    onClick={() => setWithdrawalForm(prev => ({ ...prev, method: 'paypal' }))}
+                  >
+                    <div className="relative z-10 flex items-start gap-3">
+                      <div className={cn(
+                        "h-5 w-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5",
+                        withdrawalForm.method === 'paypal' ? 'border-green-500 bg-green-500' : 'border-border'
+                      )}>
+                        {withdrawalForm.method === 'paypal' && <div className="h-2 w-2 bg-white rounded-full" />}
                       </div>
-                    </label>
-                  </div>
-                  
-                  <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/30">
-                    <RadioGroupItem value="paypal" id="paypal" />
-                    <label htmlFor="paypal" className="flex items-center gap-2 cursor-pointer flex-1">
-                      <Mail className="h-4 w-4" />
-                      <div>
-                        <div>PayPal</div>
-                        <div className="text-xs text-muted-foreground">Возможны задержки</div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Mail className="h-4 w-4" />
+                          <span className="font-semibold text-sm">PayPal</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Возможны задержки</p>
                       </div>
-                    </label>
+                    </div>
                   </div>
-                </RadioGroup>
+                </div>
               </div>
 
-              {/* Method-specific fields */}
-
               {withdrawalForm.method === 'card' && (
-                <div className="space-y-4">
+                <div className="space-y-4 p-4 rounded-xl bg-muted/30 border border-border/50">
                   <div>
                     <Label className="text-sm font-medium mb-2 block">Страна карты</Label>
-                    <Select
+                    <select
                       value={withdrawalForm.cardCountry}
-                      onValueChange={(value) => setWithdrawalForm(prev => ({ ...prev, cardCountry: value }))}
+                      onChange={(e) => setWithdrawalForm(prev => ({ ...prev, cardCountry: e.target.value }))}
+                      className="w-full h-11 rounded-lg border border-border/50 bg-background px-3 text-sm"
                     >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="z-[120]">
-                        <SelectItem value="RU">Россия</SelectItem>
-                        <SelectItem value="UA">Украина</SelectItem>
-                        <SelectItem value="EU">Страны ЕС</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      <option value="RU">🇷🇺 Россия</option>
+                      <option value="UA">🇺🇦 Украина</option>
+                      <option value="EU">🇪🇺 Страны ЕС</option>
+                    </select>
                   </div>
                   <div>
                     <Label className="text-sm font-medium mb-2 block">Номер карты</Label>
                     <Input
                       placeholder="1234 5678 9012 3456"
                       value={withdrawalForm.cardNumber}
-                      onChange={handleCardNumberChange}
+                      onChange={(e) => setWithdrawalForm(prev => ({ ...prev, cardNumber: formatCardNumber(e.target.value) }))}
                       className={cn(
-                        "font-mono",
+                        "font-mono h-11",
                         withdrawalForm.cardNumber && !isValidCardNumber(withdrawalForm.cardNumber) && "border-red-500"
                       )}
                     />
                     {withdrawalForm.cardNumber && !isValidCardNumber(withdrawalForm.cardNumber) && (
-                      <p className="text-xs text-red-500 mt-1">
-                        Введите 16 цифр номера карты
-                      </p>
+                      <p className="text-xs text-red-500 mt-1">Введите 16 цифр</p>
                     )}
                   </div>
                   <div>
@@ -836,77 +859,102 @@ export default function BalanceModal({ isOpen, onClose, user, getAuthToken, onRe
                       placeholder="IVAN PETROV"
                       value={withdrawalForm.cardHolder}
                       onChange={(e) => setWithdrawalForm(prev => ({ ...prev, cardHolder: e.target.value.toUpperCase() }))}
+                      className="h-11"
                     />
                   </div>
                 </div>
               )}
 
               {withdrawalForm.method === 'crypto' && (
-                <div className="space-y-4">
-                  <div className="p-3 bg-green-500/10 rounded-lg border border-green-500/20">
-                    <div className="flex items-start gap-3">
-                      <Bitcoin className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
-                      <div className="text-sm">
-                        <p className="font-medium text-green-600 mb-1">Tether USD (USDT TRC20)</p>
-                        <p className="text-green-600/80">
-                          Вывод осуществляется только в USDT через сеть TRC20. Обработка занимает от 5 до 30 минут.
-                        </p>
-                      </div>
+                <div className="space-y-3 p-4 rounded-xl bg-green-500/10 border border-green-500/20">
+                  <div className="flex items-start gap-3">
+                    <Bitcoin className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm">
+                      <p className="font-semibold text-green-700 mb-1">Tether USD (USDT TRC20)</p>
+                      <p className="text-green-700/80">Обработка: 5-30 минут. Проверьте адрес дважды!</p>
                     </div>
                   </div>
-                  <div>
-                    <Label className="text-sm font-medium mb-2 block">USDT TRC20 адрес кошелька</Label>
-                    <Input
-                      placeholder="TRX7n2uyWwaTEtbWDCojkH2ZTCkd (пример)"
-                      value={withdrawalForm.walletAddress}
-                      onChange={(e) => setWithdrawalForm(prev => ({ ...prev, walletAddress: e.target.value }))}
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Проверьте правильность USDT TRC20 адреса. Неверный адрес может привести к потере средств.
-                    </p>
-                  </div>
+                  <Input
+                    placeholder="TRX7n2uyWwaTEtbWDCojkH2ZTCkd (пример)"
+                    value={withdrawalForm.walletAddress}
+                    onChange={(e) => setWithdrawalForm(prev => ({ ...prev, walletAddress: e.target.value }))}
+                    className="h-11 font-mono text-xs"
+                  />
                 </div>
               )}
 
               {withdrawalForm.method === 'paypal' && (
-                <div>
-                  <Label className="text-sm font-medium mb-2 block">Email PayPal</Label>
+                <div className="space-y-3 p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
+                  <Label className="text-sm font-medium">Email PayPal</Label>
                   <Input
                     type="email"
                     placeholder="your@email.com"
                     value={withdrawalForm.email}
                     onChange={(e) => setWithdrawalForm(prev => ({ ...prev, email: e.target.value }))}
+                    className="h-11"
                   />
                 </div>
               )}
 
-              {/* Submit */}
-              <Button
-                onClick={handleWithdrawalSubmit}
-                disabled={
-                  !hasContactMethod ||
-                  !withdrawalForm.amount || 
-                  !withdrawalForm.method || 
-                  isSubmittingWithdrawal ||
-                  parseInt(withdrawalForm.amount || '0') < 1000 ||
-                  parseInt(withdrawalForm.amount || '0') > user.balance ||
-                  (withdrawalForm.method === 'card' && !isValidCardNumber(withdrawalForm.cardNumber))
-                }
-                className="w-full font-gaming"
-                size="lg"
-              >
-                {isSubmittingWithdrawal ? 'Создание заявки...' : 'Создать заявку на вывод'}
-              </Button>
-
-              <p className="text-xs text-muted-foreground text-center">
-                Заявка будет рассмотрена в течение 24 часов. После создания заявки средства будут заморожены на вашем балансе.
-              </p>
+              <div className="space-y-3 pt-2">
+                <button
+                  onClick={handleWithdrawalSubmit}
+                  disabled={
+                    !hasContactMethod ||
+                    !withdrawalForm.amount ||
+                    !withdrawalForm.method ||
+                    isSubmittingWithdrawal ||
+                    parseInt(withdrawalForm.amount || '0') < 1000 ||
+                    parseInt(withdrawalForm.amount || '0') > user.balance ||
+                    (withdrawalForm.method === 'card' && !isValidCardNumber(withdrawalForm.cardNumber))
+                  }
+                  className={cn(
+                    "w-full h-12 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 relative group overflow-hidden",
+                    !hasContactMethod ||
+                    !withdrawalForm.amount ||
+                    !withdrawalForm.method ||
+                    isSubmittingWithdrawal ||
+                    parseInt(withdrawalForm.amount || '0') < 1000 ||
+                    parseInt(withdrawalForm.amount || '0') > user.balance ||
+                    (withdrawalForm.method === 'card' && !isValidCardNumber(withdrawalForm.cardNumber))
+                      ? "bg-muted/30 text-muted-foreground/60 cursor-not-allowed"
+                      : "bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:shadow-md hover:shadow-green-500/20 active:scale-95"
+                  )}
+                >
+                  {!(
+                    !hasContactMethod ||
+                    !withdrawalForm.amount ||
+                    !withdrawalForm.method ||
+                    isSubmittingWithdrawal ||
+                    parseInt(withdrawalForm.amount || '0') < 1000 ||
+                    parseInt(withdrawalForm.amount || '0') > user.balance ||
+                    (withdrawalForm.method === 'card' && !isValidCardNumber(withdrawalForm.cardNumber))
+                  ) && (
+                    <div className="absolute inset-0 bg-gradient-to-r from-green-400/0 via-white/10 to-green-400/0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  )}
+                  <div className="relative flex items-center gap-2">
+                    {isSubmittingWithdrawal ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Обработка...
+                      </>
+                    ) : (
+                      <>
+                        <ArrowUpRight className="h-4 w-4" />
+                        Создать заявку на вывод
+                      </>
+                    )}
+                  </div>
+                </button>
+                <p className="text-xs text-muted-foreground text-center">
+                  Заявка будет рассмотрена в течение 24 часов
+                </p>
+              </div>
             </div>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
 
-      {/* Notification Modal */}
       <NotificationModal
         isOpen={notification.isOpen}
         type={notification.type}

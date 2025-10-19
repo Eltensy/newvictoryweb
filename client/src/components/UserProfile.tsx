@@ -14,7 +14,8 @@ import {
   Loader2,
   Copy,
   ExternalLink,
-  X
+  X,
+  Eye
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { PremiumStatusCard } from './PremiumBadge';
@@ -37,8 +38,22 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     pendingSubmissions: 0,
     totalEarnings: 0,
     isAdmin: false,
+    goldKills: 0,
+    silverKills: 0,
+    bronzeKills: 0,
+    totalKills: 0,
   });
   const [loadingStats, setLoadingStats] = useState(false);
+  
+  // Kill stats state
+  const [killStats, setKillStats] = useState({
+    goldKills: 0,
+    silverKills: 0,
+    bronzeKills: 0,
+    totalKills: 0,
+    lastKillDate: null as Date | null,
+  });
+  const [loadingKills, setLoadingKills] = useState(false);
   
   const [linkedTelegram, setLinkedTelegram] = useState<string | null>(null);
   const [linkedDiscord, setLinkedDiscord] = useState<string | null>(null);
@@ -63,6 +78,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
       try {
         const t = getAuthToken();
 
+        // Загружаем статистику сабмишинов
         setLoadingStats(true);
         const statsRes = await fetch(`/api/user/${user.id}/stats`, {
           headers: { Authorization: `Bearer ${t}` },
@@ -70,9 +86,21 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
         const statsData = await statsRes.json();
         setStats(statsData);
         setLoadingStats(false);
+
+        // Загружаем статистику киллов
+        setLoadingKills(true);
+        const killStatsRes = await fetch(`/api/user/${user.id}/kill-stats`, {
+          headers: { Authorization: `Bearer ${t}` },
+        });
+        if (killStatsRes.ok) {
+          const killStatsData = await killStatsRes.json();
+          setKillStats(killStatsData);
+        }
+        setLoadingKills(false);
       } catch (err) {
         console.error(err);
         setLoadingStats(false);
+        setLoadingKills(false);
       }
     };
     fetchData();
@@ -87,7 +115,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
       const t = getAuthToken();
       if (!t) throw new Error("Нет токена авторизации");
 
-      // Get verification code from server
       const initRes = await fetch('/api/auth/telegram/init', {
         headers: { Authorization: `Bearer ${t}` }
       });
@@ -100,7 +127,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
       const data = await initRes.json();
       setTelegramLinkData(data);
       
-      // Start polling for verification status
       setIsCheckingTelegramStatus(true);
       const pollInterval = setInterval(async () => {
         try {
@@ -146,7 +172,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
         }
       }, 3000);
       
-      // Stop polling after 5 minutes
       setTimeout(() => {
         clearInterval(pollInterval);
         setIsCheckingTelegramStatus(false);
@@ -208,7 +233,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     }
   };
 
-  // Discord OAuth linking
   const handleLinkDiscord = async () => {
     if (!user) return;
     setIsLinkingDiscord(true);
@@ -315,6 +339,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
         
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-purple-500/5 pointer-events-none" />
         
+        {/* Header */}
         <div className="relative border-b border-border/50 bg-background/60 backdrop-blur-2xl">
           <div className="p-6">
             <div className="flex items-start justify-between mb-4">
@@ -332,6 +357,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
               </div>
             </div>
 
+            {/* Balance Card */}
             <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-green-500/10 via-emerald-500/10 to-teal-500/10 border border-green-500/20 p-4">
               <div className="relative z-10 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -349,8 +375,10 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
           </div>
         </div>
 
-        <div className="relative overflow-y-auto max-h-[calc(90vh-180px)] p-6 pb-8 space-y-6 -mt-[20px]">
+        {/* Content */}
+        <div className="relative overflow-y-auto max-h-[calc(90vh-220px)] p-6 space-y-6">
           
+          {/* Premium Status */}
           {!premiumLoading && premiumStatus && premiumStatus.tier !== 'none' && (
             <div className="animate-in slide-in-from-bottom-4 duration-500">
               <PremiumStatusCard
@@ -363,29 +391,30 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
             </div>
           )}
 
+          {/* Stats Grid */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-green-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-green-500/5">
+            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-green-500/30 transition-all duration-300">
               <div className="absolute top-0 right-0 h-16 w-16 bg-green-500/5 rounded-full blur-2xl group-hover:bg-green-500/10 transition-colors" />
               <Trophy className="h-5 w-5 text-green-600 mb-2" />
               <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.approvedSubmissions}</div>
               <div className="text-xs text-muted-foreground">Одобрено</div>
             </div>
 
-            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-yellow-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-yellow-500/5">
+            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-yellow-500/30 transition-all duration-300">
               <div className="absolute top-0 right-0 h-16 w-16 bg-yellow-500/5 rounded-full blur-2xl group-hover:bg-yellow-500/10 transition-colors" />
               <Clock className="h-5 w-5 text-yellow-600 mb-2" />
               <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.pendingSubmissions}</div>
               <div className="text-xs text-muted-foreground">Ожидают</div>
             </div>
 
-            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-blue-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/5">
+            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-blue-500/30 transition-all duration-300">
               <div className="absolute top-0 right-0 h-16 w-16 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors" />
               <Target className="h-5 w-5 text-blue-600 mb-2" />
               <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.totalSubmissions}</div>
               <div className="text-xs text-muted-foreground">Всего</div>
             </div>
 
-            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-purple-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-purple-500/5">
+            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-purple-500/30 transition-all duration-300">
               <div className="absolute top-0 right-0 h-16 w-16 bg-purple-500/5 rounded-full blur-2xl group-hover:bg-purple-500/10 transition-colors" />
               <Wallet className="h-5 w-5 text-purple-600 mb-2" />
               <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.totalEarnings}</div>
@@ -393,6 +422,84 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
             </div>
           </div>
 
+          {/* Kill Stats Section */}
+          {!loadingKills && killStats.totalKills > 0 && (
+            <div className="space-y-3 animate-in slide-in-from-bottom-4 duration-500">
+              <h3 className="text-sm font-medium text-muted-foreground">Статистика киллов</h3>
+              
+              {/* Total Kills Banner */}
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-yellow-500/10 via-orange-500/10 to-red-500/10 border border-yellow-500/20 p-4">
+                <div className="absolute top-0 right-0 h-32 w-32 bg-yellow-500/10 rounded-full blur-3xl" />
+                <div className="relative z-10 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-12 w-12 rounded-xl bg-yellow-500/20 flex items-center justify-center">
+                      <Trophy className="h-6 w-6 text-yellow-600" />
+                    </div>
+                    <div>
+                      <div className="text-xs text-yellow-600/80 font-medium">Всего киллов</div>
+                      <div className="text-3xl font-bold tabular-nums">{killStats.totalKills}</div>
+                    </div>
+                  </div>
+                  {killStats.lastKillDate && (
+                    <div className="text-right">
+                      <div className="text-xs text-muted-foreground">Последний</div>
+                      <div className="text-xs font-medium">
+                        {new Date(killStats.lastKillDate).toLocaleDateString('ru-RU')}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Individual Kill Types */}
+              <div className="grid grid-cols-3 gap-3">
+                {/* Gold Kills */}
+                <div className="group relative overflow-hidden rounded-2xl border border-yellow-500/30 bg-yellow-500/5 p-4 hover:border-yellow-500/50 hover:bg-yellow-500/10 transition-all duration-300">
+                  <div className="absolute top-0 right-0 h-16 w-16 bg-yellow-500/10 rounded-full blur-2xl" />
+                  <div className="relative z-10 text-center">
+                    <div className="text-4xl mb-2">🥇</div>
+                    <div className="text-2xl font-bold tabular-nums mb-1">{killStats.goldKills}</div>
+                    <div className="text-xs text-yellow-700 font-medium">Gold Kill</div>
+                  </div>
+                </div>
+
+                {/* Silver Kills */}
+                <div className="group relative overflow-hidden rounded-2xl border border-gray-400/30 bg-gray-400/5 p-4 hover:border-gray-400/50 hover:bg-gray-400/10 transition-all duration-300">
+                  <div className="absolute top-0 right-0 h-16 w-16 bg-gray-400/10 rounded-full blur-2xl" />
+                  <div className="relative z-10 text-center">
+                    <div className="text-4xl mb-2">🥈</div>
+                    <div className="text-2xl font-bold tabular-nums mb-1">{killStats.silverKills}</div>
+                    <div className="text-xs text-gray-700 font-medium">Silver Kill</div>
+                  </div>
+                </div>
+
+                {/* Bronze Kills */}
+                <div className="group relative overflow-hidden rounded-2xl border border-orange-600/30 bg-orange-600/5 p-4 hover:border-orange-600/50 hover:bg-orange-600/10 transition-all duration-300">
+                  <div className="absolute top-0 right-0 h-16 w-16 bg-orange-600/10 rounded-full blur-2xl" />
+                  <div className="relative z-10 text-center">
+                    <div className="text-4xl mb-2">🥉</div>
+                    <div className="text-2xl font-bold tabular-nums mb-1">{killStats.bronzeKills}</div>
+                    <div className="text-xs text-orange-700 font-medium">Bronze Kill</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Kill Progress Info */}
+              <div className="rounded-2xl border border-border/50 p-4 bg-muted/30">
+                <div className="flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Trophy className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="flex-1 text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground mb-1">Как получить киллы?</p>
+                    <p>Киллы выдаются автоматически при одобрении заявок категорий Gold Kill, Silver Kill и Bronze Kill. Используйте их для участия в специальных турнирах и розыгрышах!</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Social Integrations */}
           <div className="space-y-3">
             {/* Telegram Bot Link */}
             <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-blue-500/30 transition-colors">
@@ -530,6 +637,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
             </div>
           </div>
 
+          {/* Logout Button */}
           <Button 
             variant="outline" 
             className="w-full h-11 rounded-xl border-border/50 hover:bg-red-500/5 hover:border-red-500/30 hover:text-red-600 transition-all" 

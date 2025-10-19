@@ -1,4 +1,4 @@
-// client/src/components/AdminTournamentsTab.tsx
+// client/src/components/AdminTournamentsTab.tsx - ПОЛНАЯ ВЕРСИЯ С ПРИЗОВЫМ ФОНДОМ
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Trophy, Plus, Edit, Trash2, Users, Calendar, Coins, Eye, Gift } from 'lucide-react';
+import { Trophy, Plus, Edit, Trash2, Users, Calendar, Coins, Eye, Gift, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface Tournament {
@@ -24,6 +24,7 @@ interface Tournament {
   currentParticipants: number;
   status: string;
   imageUrl: string | null;
+  prizeDistribution?: Record<string, number>;
 }
 
 interface TournamentRegistration {
@@ -56,6 +57,11 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
 
   // Prize distribution state
   const [prizeDistribution, setPrizeDistribution] = useState<Record<string, number>>({});
+  
+  // Prize inputs for create form
+  const [prizeInputs, setPrizeInputs] = useState<Array<{ place: number; amount: number }>>([
+    { place: 1, amount: 0 }
+  ]);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -63,7 +69,6 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
     description: '',
     mapUrl: '',
     rules: '',
-    prize: 0,
     entryFee: 0,
     registrationStartDate: '',
     registrationEndDate: '',
@@ -79,7 +84,6 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       description: '',
       mapUrl: '',
       rules: '',
-      prize: 0,
       entryFee: 0,
       registrationStartDate: '',
       registrationEndDate: '',
@@ -87,7 +91,38 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       endDate: '',
       maxParticipants: '',
     });
+    setPrizeInputs([{ place: 1, amount: 0 }]);
     setImageFile(null);
+  };
+
+  const addPrizePlace = () => {
+    const nextPlace = prizeInputs.length + 1;
+    setPrizeInputs([...prizeInputs, { place: nextPlace, amount: 0 }]);
+  };
+
+  const removePrizePlace = (index: number) => {
+    if (prizeInputs.length > 1) {
+      setPrizeInputs(prizeInputs.filter((_, i) => i !== index));
+    }
+  };
+
+  const updatePrizeAmount = (index: number, amount: string) => {
+    const newInputs = [...prizeInputs];
+    newInputs[index].amount = parseInt(amount) || 0;
+    setPrizeInputs(newInputs);
+  };
+
+  const getTotalPrizeDistribution = () => {
+    return prizeInputs.reduce((sum, prize) => sum + prize.amount, 0);
+  };
+
+  const getPlaceEmoji = (place: number) => {
+    switch(place) {
+      case 1: return '🥇';
+      case 2: return '🥈';
+      case 3: return '🥉';
+      default: return `${place}.`;
+    }
   };
 
   const fetchTournamentParticipants = async (tournamentId: string) => {
@@ -197,6 +232,17 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       return;
     }
 
+    // Validate prize distribution
+    const totalPrize = getTotalPrizeDistribution();
+    if (totalPrize === 0) {
+      toast({
+        title: 'Ошибка',
+        description: 'Укажите призовой фонд',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setActionLoading(true);
     try {
       const formDataToSend = new FormData();
@@ -204,7 +250,17 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       if (formData.description) formDataToSend.append('description', formData.description);
       if (formData.mapUrl) formDataToSend.append('mapUrl', formData.mapUrl);
       if (formData.rules) formDataToSend.append('rules', formData.rules);
-      formDataToSend.append('prize', formData.prize.toString());
+      
+      // Build prize distribution object
+      const prizeDistributionObj: Record<string, number> = {};
+      prizeInputs.forEach(prize => {
+        if (prize.amount > 0) {
+          prizeDistributionObj[prize.place.toString()] = prize.amount;
+        }
+      });
+      
+      formDataToSend.append('prizeDistribution', JSON.stringify(prizeDistributionObj));
+      formDataToSend.append('prize', totalPrize.toString());
       formDataToSend.append('entryFee', formData.entryFee.toString());
       formDataToSend.append('registrationStartDate', new Date(formData.registrationStartDate).toISOString());
       formDataToSend.append('registrationEndDate', new Date(formData.registrationEndDate).toISOString());
@@ -334,8 +390,15 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
     }
   };
 
-  const getTotalPrizeDistribution = () => {
+  const getTotalPrizeDistributionForDialog = () => {
     return Object.values(prizeDistribution).reduce((sum, amount) => sum + (amount || 0), 0);
+  };
+
+  const formatPrizeDistribution = (distribution?: Record<string, number>) => {
+    if (!distribution) return [];
+    return Object.entries(distribution)
+      .map(([place, amount]) => ({ place: parseInt(place), amount }))
+      .sort((a, b) => a.place - b.place);
   };
 
   if (loading) {
@@ -396,19 +459,63 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* Prize Distribution Section */}
+                  <div className="space-y-3 p-4 bg-muted/30 rounded-lg border-2 border-gaming-warning/20">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-base font-semibold flex items-center gap-2">
+                        <Trophy className="h-4 w-4 text-gaming-warning" />
+                        Распределение призового фонда *
+                      </Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={addPrizePlace}
+                        disabled={prizeInputs.length >= 10}
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        Добавить место
+                      </Button>
+                    </div>
+                    
                     <div className="space-y-2">
-                      <Label htmlFor="prize">Призовой фонд (₽) *</Label>
-                      <Input
-                        id="prize"
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                        value={formData.prize}
-                        onChange={(e) => setFormData({ ...formData, prize: parseInt(e.target.value) || 0 })}
-                      />
+                      {prizeInputs.map((prize, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <div className="w-12 h-10 rounded bg-primary/10 flex items-center justify-center font-bold text-sm">
+                            {getPlaceEmoji(prize.place)}
+                          </div>
+                          <Input
+                            type="number"
+                            min="0"
+                            placeholder="Сумма приза"
+                            value={prize.amount || ''}
+                            onChange={(e) => updatePrizeAmount(index, e.target.value)}
+                            className="flex-1"
+                          />
+                          <span className="text-sm text-muted-foreground w-8">₽</span>
+                          {prizeInputs.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => removePrizePlace(index)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
                     </div>
 
+                    <div className="pt-2 border-t flex items-center justify-between">
+                      <span className="text-sm font-medium">Итого призовой фонд:</span>
+                      <span className="text-lg font-bold text-gaming-success">
+                        {getTotalPrizeDistribution().toLocaleString()} ₽
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="entryFee">Взнос (₽)</Label>
                       <Input
@@ -420,18 +527,18 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                         onChange={(e) => setFormData({ ...formData, entryFee: parseInt(e.target.value) || 0 })}
                       />
                     </div>
-                  </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="maxParticipants">Макс. участников</Label>
-                    <Input
-                      id="maxParticipants"
-                      type="number"
-                      min="1"
-                      placeholder="Без ограничений"
-                      value={formData.maxParticipants}
-                      onChange={(e) => setFormData({ ...formData, maxParticipants: e.target.value })}
-                    />
+                    <div className="space-y-2">
+                      <Label htmlFor="maxParticipants">Макс. участников</Label>
+                      <Input
+                        id="maxParticipants"
+                        type="number"
+                        min="1"
+                        placeholder="Без ограничений"
+                        value={formData.maxParticipants}
+                        onChange={(e) => setFormData({ ...formData, maxParticipants: e.target.value })}
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -597,12 +704,31 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        <div className="flex items-center gap-1 text-sm">
-                          <Trophy className="h-3 w-3 text-gaming-warning" />
-                          <span className="text-gaming-success font-medium">
-                            {tournament.prize.toLocaleString()} ₽
-                          </span>
-                        </div>
+                        {tournament.prizeDistribution ? (
+                          <>
+                            <div className="text-xs text-muted-foreground">Распределение:</div>
+                            {formatPrizeDistribution(tournament.prizeDistribution).slice(0, 3).map(({ place, amount }) => (
+                              <div key={place} className="flex items-center gap-1 text-xs">
+                                <span>{getPlaceEmoji(place)}</span>
+                                <span className="text-gaming-success font-medium">
+                                  {amount.toLocaleString()} ₽
+                                </span>
+                              </div>
+                            ))}
+                            {Object.keys(tournament.prizeDistribution).length > 3 && (
+                              <div className="text-xs text-muted-foreground">
+                                +{Object.keys(tournament.prizeDistribution).length - 3} мест
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="flex items-center gap-1 text-sm">
+                            <Trophy className="h-3 w-3 text-gaming-warning" />
+                            <span className="text-gaming-success font-medium">
+                              {tournament.prize.toLocaleString()} ₽
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-1 text-sm">
                           <Coins className="h-3 w-3 text-muted-foreground" />
                           <span className="text-muted-foreground">
@@ -717,11 +843,11 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                 <div className="border-t pt-4">
                   <div className="flex items-center justify-between text-lg font-bold">
                     <span>Итого к выдаче:</span>
-                    <span className={getTotalPrizeDistribution() > (selectedTournament?.prize || 0) ? 'text-destructive' : 'text-gaming-success'}>
-                      {getTotalPrizeDistribution().toLocaleString()} ₽
+                    <span className={getTotalPrizeDistributionForDialog() > (selectedTournament?.prize || 0) ? 'text-destructive' : 'text-gaming-success'}>
+                      {getTotalPrizeDistributionForDialog().toLocaleString()} ₽
                     </span>
                   </div>
-                  {getTotalPrizeDistribution() > (selectedTournament?.prize || 0) && (
+                  {getTotalPrizeDistributionForDialog() > (selectedTournament?.prize || 0) && (
                     <p className="text-sm text-destructive mt-2">
                       Сумма призов превышает призовой фонд турнира
                     </p>
@@ -745,7 +871,7 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
             </Button>
             <Button
               onClick={handleDistributePrizes}
-              disabled={actionLoading || loadingParticipants || getTotalPrizeDistribution() === 0}
+              disabled={actionLoading || loadingParticipants || getTotalPrizeDistributionForDialog() === 0}
               className="flex-1"
             >
               {actionLoading ? 'Выдача...' : 'Выдать призы'}

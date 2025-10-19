@@ -7,8 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Eye, DollarSign, Users, Shield, Trophy, Loader2, Target } from "lucide-react";
-import { Clipboard, Check } from "lucide-react";
+import { Eye, DollarSign, Users, Shield, Trophy, Loader2, Target, Clipboard, Check } from "lucide-react";
 import { User } from "@/types/admin";
 
 interface UsersTableProps {
@@ -16,6 +15,36 @@ interface UsersTableProps {
   loading: boolean;
   onUpdateBalance: (userId: string, amount: number, reason: string) => Promise<void>;
   actionLoading: boolean;
+}
+
+function CopyButton({ value }: { value?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!value) return null;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="p-1 rounded hover:bg-muted transition-colors"
+      title="Скопировать"
+    >
+      {copied ? (
+        <Check className="h-4 w-4 text-green-500" />
+      ) : (
+        <Clipboard className="h-4 w-4 text-muted-foreground" />
+      )}
+    </button>
+  );
 }
 
 export function UsersTable({ users, loading, onUpdateBalance, actionLoading }: UsersTableProps) {
@@ -46,36 +75,6 @@ export function UsersTable({ users, loading, onUpdateBalance, actionLoading }: U
     );
   }
 
-  function CopyButton({ value }: { value?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  if (!value) return null;
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (err) {
-      console.error("Failed to copy:", err);
-    }
-  };
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="p-1 rounded hover:bg-muted transition-colors"
-      title="Скопировать"
-    >
-      {copied ? (
-        <Check className="h-4 w-4 text-green-500" />
-      ) : (
-        <Clipboard className="h-4 w-4 text-muted-foreground" />
-      )}
-    </button>
-  );
-}
-
   return (
     <Card>
       <CardHeader>
@@ -85,7 +84,7 @@ export function UsersTable({ users, loading, onUpdateBalance, actionLoading }: U
       <CardContent>
         <div className="space-y-4">
           {/* Statistics Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <Card className="p-4">
               <div className="flex items-center space-x-2">
                 <Users className="h-4 w-4 text-gaming-primary" />
@@ -117,6 +116,37 @@ export function UsersTable({ users, loading, onUpdateBalance, actionLoading }: U
                 </div>
               </div>
             </Card>
+            
+            {/* Kill Statistics Card */}
+                <Card className="p-4 bg-gradient-to-br from-yellow-500/10 to-orange-500/10 border-yellow-500/20">
+                  <div className="flex items-center space-x-2">
+                    <Trophy className="h-4 w-4 text-yellow-500" />
+                    <div>
+                      <p className="text-sm font-medium">Всего киллов</p>
+                      <p className="text-2xl font-bold">
+                        {users.reduce((sum, u) => {
+                          const totalKills = u.totalKills || (u.stats?.totalKills) || 0;
+                          return sum + totalKills;
+                        }, 0)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-2 text-xs">
+                    <span className="text-yellow-600">🥇 {users.reduce((sum, u) => {
+                      const gold = u.goldKills || (u.stats?.goldKills) || 0;
+                      return sum + gold;
+                    }, 0)}</span>
+                    <span className="text-gray-500">🥈 {users.reduce((sum, u) => {
+                      const silver = u.silverKills || (u.stats?.silverKills) || 0;
+                      return sum + silver;
+                    }, 0)}</span>
+                    <span className="text-orange-600">🥉 {users.reduce((sum, u) => {
+                      const bronze = u.bronzeKills || (u.stats?.bronzeKills) || 0;
+                      return sum + bronze;
+                    }, 0)}</span>
+                  </div>
+                </Card>
+            
             <Card className="p-4">
               <div className="flex items-center space-x-2">
                 <Trophy className="h-4 w-4 text-gaming-secondary" />
@@ -193,6 +223,9 @@ export function UsersTable({ users, loading, onUpdateBalance, actionLoading }: U
                       {user.balance} ₽
                     </Badge>
                   </TableCell>
+                  
+                  {/* Kill Stats Cell */}
+
                   <TableCell>
                     {user.stats ? (
                       <div className="text-sm space-y-1">
@@ -346,7 +379,6 @@ export function UsersTable({ users, loading, onUpdateBalance, actionLoading }: U
                       </Dialog>
 
                       {/* User Details Dialog */}
-                      {/* User Details Dialog */}
                       <Dialog>
                         <DialogTrigger asChild>
                           <Button variant="outline" size="sm">
@@ -443,6 +475,51 @@ export function UsersTable({ users, loading, onUpdateBalance, actionLoading }: U
                                 </div>
                               </div>
                             )}
+
+      
+{ (
+  <div className="space-y-3">
+    <h3 className="text-sm font-medium text-muted-foreground">Статистика киллов</h3>
+    
+    <div className="space-y-3">
+      {/* Total Kills */}
+      <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-yellow-500/30 transition-all duration-300">
+        <div className="absolute top-0 right-0 h-16 w-16 bg-yellow-500/5 rounded-full blur-2xl group-hover:bg-yellow-500/10 transition-colors" />
+        <div className="relative flex items-center gap-3">
+          <Trophy className="h-5 w-5 text-yellow-600" />
+          <div>
+            <div className="text-2xl font-bold tabular-nums">{user.totalKills}</div>
+            <div className="text-xs text-muted-foreground">Всего киллов</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Medal Stats - 3 equal columns */}
+      <div className="grid grid-cols-3 gap-3">
+        {/* Gold Kills */}
+        <div className="group relative overflow-hidden rounded-2xl border border-yellow-500/30 bg-yellow-500/5 p-4 hover:border-yellow-500/50 transition-all duration-300 text-center">
+          <div className="text-3xl mb-1">🥇</div>
+          <div className="text-xl font-bold tabular-nums mb-1">{user.goldKills || 0}</div>
+          <div className="text-xs text-muted-foreground">Gold</div>
+        </div>
+
+        {/* Silver Kills */}
+        <div className="group relative overflow-hidden rounded-2xl border border-gray-400/30 bg-gray-400/5 p-4 hover:border-gray-400/50 transition-all duration-300 text-center">
+          <div className="text-3xl mb-1">🥈</div>
+          <div className="text-xl font-bold tabular-nums mb-1">{user.silverKills || 0}</div>
+          <div className="text-xs text-muted-foreground">Silver</div>
+        </div>
+
+        {/* Bronze Kills */}
+        <div className="group relative overflow-hidden rounded-2xl border border-orange-600/30 bg-orange-600/5 p-4 hover:border-orange-600/50 transition-all duration-300 text-center">
+          <div className="text-3xl mb-1">🥉</div>
+          <div className="text-xl font-bold tabular-nums mb-1">{user.bronzeKills || 0}</div>
+          <div className="text-xs text-muted-foreground">Bronze</div>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
                             {/* User Details */}
                             <div className="space-y-3">
@@ -611,6 +688,14 @@ export function UsersTable({ users, loading, onUpdateBalance, actionLoading }: U
               ))}
             </TableBody>
           </Table>
+
+          {users.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Users className="h-16 w-16 mx-auto mb-4 text-muted-foreground/50" />
+              <p className="text-lg font-medium mb-2">Пользователи не найдены</p>
+              <p className="text-sm">Пользователи появятся здесь после регистрации</p>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

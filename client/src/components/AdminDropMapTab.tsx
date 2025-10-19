@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger  } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -23,7 +23,8 @@ import {
   Link as LinkIcon,
   Copy,
   UserPlus,
-  Upload
+  Upload,
+  ExternalLink
 } from 'lucide-react';
 
 interface AdminDropMapTabProps {
@@ -901,610 +902,191 @@ export default function AdminDropMapTab({ authToken }: AdminDropMapTabProps) {
         </TabsList>
 
         <TabsContent value="maps">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Активные карты</CardTitle>
-                <Dialog open={showMapDialog} onOpenChange={setShowMapDialog}>
-                  <DialogTrigger asChild>
-                    <Button>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Создать карту
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Новая карта</DialogTitle>
-                      <DialogDescription>
-                        Создайте карту на основе шаблона
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div>
-                        <Label>Шаблон карты</Label>
-                        <Select
-                          value={mapForm.templateId}
-                          onValueChange={(value) => setMapForm({ ...mapForm, templateId: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Выберите шаблон" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {templates.map((t) => (
-                              <SelectItem key={t.id} value={t.id}>
-                                {t.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label>Турнир (опционально)</Label>
-                        <Select
-                          value={mapForm.tournamentId}
-                          onValueChange={(value) => setMapForm({ ...mapForm, tournamentId: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Выберите турнир" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Без турнира</SelectItem>
-                            {tournaments.map((t) => (
-                              <SelectItem key={t.id} value={t.id}>
-                                {t.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label>Макс. игроков на локации</Label>
-                        <Input
-                          type="number"
-                          min="1"
-                          max="10"
-                          value={mapForm.maxPlayersPerSpot}
-                          onChange={(e) => setMapForm({ ...mapForm, maxPlayersPerSpot: parseInt(e.target.value) })}
-                        />
-                      </div>
-                      <Button onClick={handleCreateDropMap} disabled={loading} className="w-full">
-                        {loading ? 'Создание...' : 'Создать карту'}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loading && <div className="text-center py-4">Загрузка...</div>}
-              {!loading && dropmaps.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  Нет созданных карт
-                </div>
-              )}
-              {!loading && dropmaps.length > 0 && (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Название</TableHead>
-                      <TableHead>Статус</TableHead>
-                      <TableHead>Действия</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {dropmaps.map((dropmap) => (
-                      <TableRow key={dropmap.id}>
-                        <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                            <span>{dropmap.customName || dropmap.template?.name || 'Неизвестно'}</span>
-                            <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                                setEditNameForm({ 
-                                id: dropmap.id, 
-                                name: dropmap.customName || dropmap.template?.name || '' 
-                                });
-                                setShowEditNameDialog(true);
-                            }}
-                            >
-                            <Edit className="h-3 w-3" />
-                            </Button>
-                        </div>
-                        </TableCell>
-                        <TableCell>
-                        <Badge variant={dropmap.mode === 'tournament' ? 'default' : 'secondary'}>
-                            {dropmap.mode === 'tournament' ? 'турнирная' : 'кастомная'}
-                          </Badge>
-                      </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setSelectedDropmap(dropmap);
-                                setActiveTab('details');
-                              }}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleToggleLock(dropmap.id, dropmap.isLocked)}
-                            >
-                              {dropmap.isLocked ? (
-                                <Unlock className="h-4 w-4" />
-                              ) : (
-                                <Lock className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
+  <Card>
+    <CardHeader>
+      <div className="flex items-center justify-between">
+        <CardTitle>Активные карты</CardTitle>
+        <Dialog open={showMapDialog} onOpenChange={setShowMapDialog}>
+          <DialogTrigger asChild>
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              Создать карту
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Новая карта</DialogTitle>
+              <DialogDescription>
+                Создайте карту на основе шаблона
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>Шаблон карты</Label>
+                <Select
+                  value={mapForm.templateId}
+                  onValueChange={(value) => setMapForm({ ...mapForm, templateId: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите шаблон" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
                     ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="details">
-          {selectedDropmap && (
-            <div className="space-y-6">
-              {/* Map Editor Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Редактор локаций</CardTitle>
-                  <CardDescription>
-                    Рисуйте локации прямо на карте
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-4">
-                    <div className="flex gap-4 items-end">
-                      <div className="flex-1">
-                        <Label>Название локации</Label>
-                        <Input
-                          value={spotForm.name}
-                          onChange={(e) => setSpotForm({ ...spotForm, name: e.target.value })}
-                          placeholder="Введите название..."
-                          disabled={!isDrawing}
-                        />
-                      </div>
-                      <div className="w-32">
-                        <Label>Цвет</Label>
-                        <Input
-                          type="color"
-                          value={spotForm.color}
-                          onChange={(e) => setSpotForm({ ...spotForm, color: e.target.value })}
-                          disabled={!isDrawing}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 flex-wrap">
-                      <Button
-                        onClick={() => {
-                          setIsDrawing(!isDrawing);
-                          if (isDrawing) {
-                            setCurrentPoints([]);
-                          }
-                        }}
-                        variant={isDrawing ? 'destructive' : 'default'}
-                      >
-                        {isDrawing ? 'Отменить рисование' : 'Начать рисование'}
-                      </Button>
-                      
-                      {isDrawing && (
-                        <>
-                          <Button 
-                            onClick={() => setCurrentPoints(currentPoints.slice(0, -1))} 
-                            variant="outline"
-                            disabled={currentPoints.length === 0}
-                          >
-                            <Undo className="h-4 w-4 mr-2" />
-                            Отменить точку
-                          </Button>
-                          <Button 
-                            onClick={() => setCurrentPoints([])} 
-                            variant="outline"
-                            disabled={currentPoints.length === 0}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Очистить
-                          </Button>
-                          <Button
-                            onClick={handleSaveSpot}
-                            disabled={currentPoints.length < 3 || !spotForm.name.trim() || loading}
-                            className="bg-green-600 hover:bg-green-700"
-                          >
-                            <Save className="h-4 w-4 mr-2" />
-                            Сохранить локацию ({currentPoints.length} точек)
-                          </Button>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="text-sm text-muted-foreground bg-muted p-3 rounded">
-                      {isDrawing ? (
-                        <>
-                          <p>• Кликайте по карте чтобы добавить точки</p>
-                          <p>• Минимум 3 точки для создания локации</p>
-                        </>
-                      ) : (
-                        <p>Нажмите "Начать рисование" чтобы создать новую локацию</p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="border rounded-lg overflow-hidden bg-gray-900">
-                    <canvas
-  ref={canvasRef}
-  width={canvasSize.width}
-  height={canvasSize.height}
-  onClick={handleCanvasClick}
-  className="cursor-crosshair mx-auto"
-  style={{ 
-    display: 'block', 
-    maxWidth: '1000px',
-    width: '100%', 
-    height: 'auto',
-    border: '2px solid rgba(59, 130, 246, 0.3)'
-  }}
-/>
-                  </div>
-
-                  {territories.length > 0 && (
-                    <div>
-                      <h3 className="font-semibold mb-3">Созданные локации ({territories.length})</h3>
-                      <div className="space-y-2">
-                        {territories.map((territory) => (
-                          <div
-                            key={territory.id}
-                            className="flex items-center justify-between p-3 bg-muted rounded-lg"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div
-                                className="w-6 h-6 rounded"
-                                style={{ backgroundColor: territory.color }}
-                              />
-                              <div>
-                                <div className="font-medium">{territory.name}</div>
-                                <div className="text-sm text-muted-foreground">
-                                  {territory.points?.length || 0} точек
-                                  {territory.owner && ` • ${territory.owner.displayName}`}
-                                </div>
-                              </div>
-                            </div>
-                            <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={async () => {
-                                    if (confirm(`Удалить локацию "${territory.name}"? Это действие необратимо и удалит все связанные клеймы.`)) {
-                                    await handleDeleteTerritory(territory.id);
-                                    }
-                                }}
-                                disabled={loading}
-                                >
-                                <Trash2 className="h-4 w-4" />
-                                </Button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Players Management Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <Users className="h-5 w-5" />
-                        Управление игроками
-                      </CardTitle>
-                      <CardDescription>
-                        Добавляйте игроков вручную или импортируйте из турнира
-                      </CardDescription>
-                    </div>
-                    <div className="flex gap-2">
-                      <Dialog open={showPlayersDialog} onOpenChange={setShowPlayersDialog}>
-                        <DialogTrigger asChild>
-                          <Button size="sm">
-                            <UserPlus className="h-4 w-4 mr-2" />
-                            Добавить игроков
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Добавить игроков</DialogTitle>
-                            <DialogDescription>
-                              Выберите игроков для добавления в список
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="space-y-4">
-                            <div className="max-h-96 overflow-y-auto space-y-2">
-                              {allUsers.map((user) => (
-                                <label
-                                  key={user.id}
-                                  className="flex items-center gap-2 p-2 hover:bg-muted rounded cursor-pointer"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedUsers.includes(user.id)}
-                                    onChange={(e) => {
-                                      if (e.target.checked) {
-                                        setSelectedUsers([...selectedUsers, user.id]);
-                                      } else {
-                                        setSelectedUsers(selectedUsers.filter(id => id !== user.id));
-                                      }
-                                    }}
-                                  />
-                                  <span>{user.displayName || user.username}</span>
-                                </label>
-                              ))}
-                            </div>
-                            <Button
-                              onClick={handleAddPlayers}
-                              disabled={selectedUsers.length === 0 || loading}
-                              className="w-full"
-                            >
-                              Добавить выбранных ({selectedUsers.length})
-                            </Button>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
-
-                      <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
-                        <DialogTrigger asChild>
-                          <Button size="sm" variant="outline">
-                            <Upload className="h-4 w-4 mr-2" />
-                            Импорт из турнира
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Импорт игроков</DialogTitle>
-                            <DialogDescription>
-                              Импортируйте игроков из турнира по позициям или топ-N
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="space-y-4">
-                            <div>
-                              <Label>Турнир</Label>
-                              <Select
-                                value={importForm.tournamentId}
-                                onValueChange={(value) => setImportForm({ ...importForm, tournamentId: value })}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Выберите турнир" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {tournaments.map((t) => (
-                                    <SelectItem key={t.id} value={t.id}>
-                                      {t.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div>
-                              <Label>Топ N игроков</Label>
-                              <Input
-                                type="number"
-                                min="1"
-                                value={importForm.topN}
-                                onChange={(e) => setImportForm({ ...importForm, topN: e.target.value, positions: '' })}
-                                placeholder="Например: 10"
-                              />
-                            </div>
-                            <div className="text-center text-sm text-muted-foreground">или</div>
-                            <div>
-                              <Label>Конкретные позиции</Label>
-                              <Input
-                                value={importForm.positions}
-                                onChange={(e) => setImportForm({ ...importForm, positions: e.target.value, topN: '' })}
-                                placeholder="Например: 1,2,3,10"
-                              />
-                            </div>
-                            <Button
-                              onClick={handleImportPlayers}
-                              disabled={!importForm.tournamentId || loading}
-                              className="w-full"
-                            >
-                              Импортировать
-                            </Button>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {eligiblePlayers.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      Нет добавленных игроков
-                    </div>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Игрок</TableHead>
-                          <TableHead>Источник</TableHead>
-                          <TableHead>Добавлен</TableHead>
-                          <TableHead className="text-right">Действия</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {eligiblePlayers.map((player) => (
-                          <TableRow key={player.id}>
-                            <TableCell className="font-medium">
-                              {player.user?.displayName || player.displayName}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">
-                                {player.sourceType === 'manual' ? 'Вручную' : 
-                                 player.sourceType === 'tournament_import' ? 'Турнир' : 
-                                 player.sourceType || 'Неизвестно'}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              {new Date(player.addedAt).toLocaleDateString()}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => {
-                                  if (confirm('Удалить игрока?')) {
-                                    handleRemovePlayer(player.userId);
-                                  }
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Invite Codes Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <LinkIcon className="h-5 w-5" />
-                        Инвайт-коды
-                      </CardTitle>
-                      <CardDescription>
-                        Создавайте коды для неавторизованных игроков
-                      </CardDescription>
-                    </div>
-                    <Dialog open={showInviteDialog} onOpenChange={setShowInviteDialog}>
-                      <DialogTrigger asChild>
-                        <Button size="sm">
-                          <Plus className="h-4 w-4 mr-2" />
-                          Создать код
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Создать инвайт-код</DialogTitle>
-                          <DialogDescription>
-                            Код для одноразового доступа к карте
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-4">
-                          <div>
-                            <Label>Имя игрока</Label>
-                            <Input
-                              value={inviteForm.displayName}
-                              onChange={(e) => setInviteForm({ ...inviteForm, displayName: e.target.value })}
-                              placeholder="Введите имя..."
-                            />
-                          </div>
-                          <div>
-                            <Label>Срок действия (дней)</Label>
-                            <Input
-                              type="number"
-                              min="1"
-                              max="365"
-                              value={inviteForm.expiresInDays}
-                              onChange={(e) => setInviteForm({ ...inviteForm, expiresInDays: parseInt(e.target.value) })}
-                            />
-                          </div>
-                          <Button
-                            onClick={handleCreateInviteCode}
-                            disabled={!inviteForm.displayName.trim() || loading}
-                            className="w-full"
-                          >
-                            Создать код
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {inviteCodes.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      Нет созданных кодов
-                    </div>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Код</TableHead>
-                          <TableHead>Игрок</TableHead>
-                          <TableHead>Статус</TableHead>
-                          <TableHead>Истекает</TableHead>
-                          <TableHead className="text-right">Действия</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {inviteCodes.map((invite) => (
-                          <TableRow key={invite.id}>
-                            <TableCell className="font-mono text-sm">
-                              {invite.code}
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="ml-2"
-                                onClick={() => {
-                                  const url = `${window.location.origin}/dropmap/invite/${invite.code}`;
-                                  navigator.clipboard.writeText(url);
-                                  toast({
-                                    title: 'Скопировано',
-                                    description: 'Ссылка скопирована в буфер обмена',
-                                  });
-                                }}
-                              >
-                                <Copy className="h-3 w-3" />
-                              </Button>
-                            </TableCell>
-                            <TableCell>{invite.displayName}</TableCell>
-                            <TableCell>
-                              {invite.isUsed ? (
-                                <Badge variant="secondary">Использован</Badge>
-                              ) : (
-                                <Badge variant="default">Активен</Badge>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {invite.expiresAt ? new Date(invite.expiresAt).toLocaleDateString() : 'Никогда'}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => {
-                                  if (confirm('Удалить код?')) {
-                                    handleDeleteInvite(invite.code);
-                                  }
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
-                </CardContent>
-              </Card>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Турнир (опционально)</Label>
+                <Select
+                  value={mapForm.tournamentId}
+                  onValueChange={(value) => setMapForm({ ...mapForm, tournamentId: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите турнир" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Без турнира</SelectItem>
+                    {tournaments.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Макс. игроков на локации</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={mapForm.maxPlayersPerSpot}
+                  onChange={(e) => setMapForm({ ...mapForm, maxPlayersPerSpot: parseInt(e.target.value) })}
+                />
+              </div>
+              <Button onClick={handleCreateDropMap} disabled={loading} className="w-full">
+                {loading ? 'Создание...' : 'Создать карту'}
+              </Button>
             </div>
-          )}
+          </DialogContent>
+        </Dialog>
+      </div>
+    </CardHeader>
+    <CardContent>
+      {loading && <div className="text-center py-4">Загрузка...</div>}
+      {!loading && dropmaps.length === 0 && (
+        <div className="text-center py-8 text-muted-foreground">
+          Нет созданных карт
+        </div>
+      )}
+      {!loading && dropmaps.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Название</TableHead>
+              <TableHead>Статус</TableHead>
+              <TableHead>Прямая ссылка</TableHead>
+              <TableHead>Действия</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {dropmaps.map((dropmap) => (
+              <TableRow key={dropmap.id}>
+                <TableCell className="font-medium">
+                  <div className="flex items-center gap-2">
+                    <span>{dropmap.customName || dropmap.template?.name || 'Неизвестно'}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditNameForm({ 
+                          id: dropmap.id, 
+                          name: dropmap.customName || dropmap.template?.name || '' 
+                        });
+                        setShowEditNameDialog(true);
+                      }}
+                    >
+                      <Edit className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={dropmap.mode === 'tournament' ? 'default' : 'secondary'}>
+                      {dropmap.mode === 'tournament' ? 'турнирная' : 'кастомная'}
+                    </Badge>
+                    {dropmap.isLocked && (
+                      <Badge variant="destructive">
+                        <Lock className="h-3 w-3 mr-1" />
+                        Locked
+                      </Badge>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs bg-muted px-2 py-1 rounded">
+                      /dropmap/{dropmap.id.slice(0, 8)}...
+                    </code>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => copyDropMapLink(dropmap.id)}
+                      title="Скопировать ссылку"
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex gap-2">
+                    {/* Открыть карту */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => window.open(`/dropmap/${dropmap.id}`, '_blank')}
+                      title="Открыть в новой вкладке"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </Button>
+                    
+                    {/* Редактировать */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setSelectedDropmap(dropmap);
+                        setActiveTab('details');
+                      }}
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                    
+                    {/* Блокировка/Разблокировка */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleToggleLock(dropmap.id, dropmap.isLocked)}
+                    >
+                      {dropmap.isLocked ? (
+                        <Unlock className="h-4 w-4" />
+                      ) : (
+                        <Lock className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </CardContent>
+  </Card>
         </TabsContent>
       </Tabs>
     </div>
