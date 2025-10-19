@@ -7,6 +7,8 @@ import { z } from "zod";
 
 // ===== ENUMS =====
 
+export const killTypeEnum = pgEnum('kill_type', ['gold', 'silver', 'bronze']);
+
 // Core application enums
 export const submissionStatusEnum = pgEnum('submission_status', ['pending', 'approved', 'rejected']);
 export const submissionCategoryEnum = pgEnum('submission_category', ['gold-kill', 'silver-kill', 'bronze-kill', 'victory', 'funny']);
@@ -47,11 +49,13 @@ export const tournamentRegistrationStatusEnum = pgEnum('tournament_registration_
 
 export const premiumTierEnum = pgEnum('premium_tier', [
   'none',
-  'basic',      // Базовый премиум (текущая функциональность)
-  'gold',       // Золотой премиум (будущее расширение)
-  'platinum',   // Платиновый премиум (будущее расширение)
-  'vip'         // VIP премиум (будущее расширение)
+  'basic',
+  'gold',
+  'platinum',
+  'vip'
 ]);
+
+export const dropMapModeEnum = pgEnum('dropmap_mode', ['tournament', 'practice']);
 
 // ===== CORE TABLES =====
 
@@ -65,6 +69,11 @@ export const users = pgTable("users", {
   balance: integer("balance").notNull().default(0),
   isAdmin: boolean("is_admin").notNull().default(false),
 
+  goldKills: integer("gold_kills").notNull().default(0),
+  silverKills: integer("silver_kills").notNull().default(0),
+  bronzeKills: integer("bronze_kills").notNull().default(0),
+  totalKills: integer("total_kills").notNull().default(0),
+
   // Telegram OAuth fields
   telegramUsername: text("telegram_username"),
   telegramChatId: text("telegram_chat_id"),
@@ -74,7 +83,7 @@ export const users = pgTable("users", {
   
   // Discord OAuth fields
   discordUsername: text("discord_username"),
-  discordId: text("discord_id").unique(), // Discord user ID
+  discordId: text("discord_id").unique(),
   discordEmail: text("discord_email"),
   discordAvatar: text("discord_avatar"),
   
@@ -91,10 +100,10 @@ export const users = pgTable("users", {
   premiumStartDate: timestamp("premium_start_date"),
   premiumEndDate: timestamp("premium_end_date"),
   premiumAutoRenew: boolean("premium_auto_renew").default(false).notNull(),
-  premiumSource: varchar("premium_source", { length: 50 }), // 'boosty', 'patreon', 'admin', 'manual'
-  premiumExternalId: varchar("premium_external_id", { length: 255 }), // ID from Boosty/Patreon
+  premiumSource: varchar("premium_source", { length: 50 }),
+  premiumExternalId: varchar("premium_external_id", { length: 255 }),
   premiumLastChecked: timestamp("premium_last_checked"),
-  premiumGiftedBy: uuid("premium_gifted_by").references(() => users.id),
+  premiumGiftedBy: uuid("premium_gifted_by").references((): any => users.id),
   
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -113,7 +122,6 @@ export const premiumHistory = pgTable("premium_history", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-
 export const telegramVerifications = pgTable("telegram_verifications", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -121,16 +129,18 @@ export const telegramVerifications = pgTable("telegram_verifications", {
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
-
-// Добавить в секцию RELATIONS
-export const telegramVerificationsRelations = relations(telegramVerifications, ({ one }) => ({
-  user: one(users, {
-    fields: [telegramVerifications.userId],
-    references: [users.id],
-  }),
-}));
-
-// Tournaments table (после users)
+export const killHistory = pgTable("kill_history", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  killType: killTypeEnum("kill_type").notNull(),
+  submissionId: uuid("submission_id").references(() => submissions.id, { onDelete: 'set null' }),
+  rewardAmount: integer("reward_amount").notNull(),
+  grantedBy: uuid("granted_by").references(() => users.id, { onDelete: 'set null' }),
+  reason: text("reason"),
+  metadata: jsonb("metadata"), // Дополнительные данные (категория сабмишина, и т.д.)
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+// Tournaments table
 export const tournaments = pgTable("tournaments", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -138,34 +148,29 @@ export const tournaments = pgTable("tournaments", {
   mapUrl: text("map_url"),
   rules: text("rules"),
   
-  // Financial
   prize: integer("prize").notNull().default(0),
   entryFee: integer("entry_fee").notNull().default(0),
+  prizeDistribution: jsonb("prize_distribution"),
   
-  // Dates
   registrationStartDate: timestamp("registration_start_date").notNull(),
   registrationEndDate: timestamp("registration_end_date").notNull(),
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date"),
   
-  // Participants
   maxParticipants: integer("max_participants"),
   currentParticipants: integer("current_participants").notNull().default(0),
   
-  // Status
   status: tournamentStatusEnum("status").notNull().default('upcoming'),
   
-  // Media
   imageUrl: text("image_url"),
   cloudinaryPublicId: varchar("cloudinary_public_id", { length: 255 }),
   
-  // Metadata
   createdBy: uuid("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-// Tournament registrations table (после users и tournaments)
+// Tournament registrations table
 export const tournamentRegistrations = pgTable("tournament_registrations", {
   id: uuid("id").primaryKey().defaultRandom(),
   tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id, { onDelete: 'cascade' }),
@@ -175,11 +180,9 @@ export const tournamentRegistrations = pgTable("tournament_registrations", {
   teamName: varchar("team_name", { length: 100 }),
   additionalInfo: text("additional_info"),
   
-  // Payment
   paidAmount: integer("paid_amount"),
   paidAt: timestamp("paid_at"),
   
-  // Timestamps
   registeredAt: timestamp("registered_at").notNull().defaultNow(),
   cancelledAt: timestamp("cancelled_at"),
 });
@@ -208,7 +211,7 @@ export const submissions = pgTable("submissions", {
   cloudinaryUrl: text("cloudinary_url"),
 });
 
-// ===== NOTIFICATIONS SYSTEM =====
+// Notifications table
 export const notifications = pgTable("notifications", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -257,47 +260,73 @@ export const adminActions = pgTable("admin_actions", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// ===== TERRITORY SYSTEM TABLES =====
+// ===== DROPMAP & TERRITORY SYSTEM =====
+
+// DropMap Settings (создается ПЕРЕД territories!)
+export const dropMapSettings = pgTable('drop_map_settings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  description: text('description'),
+  mapImageUrl: text('map_image_url'),
+  
+  createdFrom: uuid('created_from').references((): any => dropMapSettings.id, { onDelete: 'set null' }),
+  
+  mode: dropMapModeEnum('mode').notNull().default('practice'),
+  allowReclaim: boolean('allow_reclaim').notNull().default(false),
+  isLocked: boolean('is_locked').notNull().default(false),
+  
+  createdBy: uuid('created_by').references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Territory Shapes
 export const territoryShapes = pgTable("territory_shapes", {
   id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(), // "Север", "Центр", "Юг" и т.д.
-  points: jsonb("points").notNull(), // Координаты границ
-  defaultColor: text("default_color").notNull().default("#000000"), // Черный по умолчанию
-  description: text("description"),
-  createdBy: uuid("created_by").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-// Territory Templates Table
-export const territoryTemplates = pgTable("territory_templates", {
-  id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
+  points: jsonb("points").notNull(),
+  defaultColor: text("default_color").notNull().default("#000000"),
   description: text("description"),
-  mapImageUrl: text("map_image_url"),
-  shapeIds: jsonb("shape_ids").notNull().default("[]"), // [id1, id2, ...]
-  isActive: boolean("is_active").default(false).notNull(),
-  tournamentId: uuid("tournament_id").references(() => tournaments.id), // НОВОЕ
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// Territories Table
-export const territories = pgTable("territories", {
+// Territory Templates
+export const territoryTemplates = pgTable("territory_templates", {
   id: uuid("id").defaultRandom().primaryKey(),
-  templateId: uuid("template_id").references(() => territoryTemplates.id, { onDelete: 'cascade' }).notNull(),
-  shapeId: uuid("shape_id").references(() => territoryShapes.id).notNull(),
   name: text("name").notNull(),
-  points: jsonb("points"), // Made nullable - points come from shape
-  color: text("color").notNull(),
-  ownerId: uuid("owner_id").references(() => users.id),
-  claimedAt: timestamp("claimed_at"),
-  isActive: boolean("is_active").default(true).notNull(),
-  priority: integer("priority").notNull().default(1),
+  description: text("description"),
+  mapImageUrl: text("map_image_url"),
+  shapeIds: jsonb("shape_ids").notNull().default("[]"),
+  isActive: boolean("is_active").default(false).notNull(),
+  tournamentId: uuid("tournament_id").references(() => tournaments.id),
+  createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
-// Territory Claims History Table
+
+// Territories (ТЕПЕРЬ после dropMapSettings!)
+export const territories = pgTable("territories", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  mapId: uuid("map_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
+  
+  name: text("name").notNull(),
+  points: jsonb("points").notNull(),
+  color: text("color").notNull().default("#808080"),
+  
+  ownerId: uuid("owner_id").references(() => users.id, { onDelete: 'set null' }),
+  claimedAt: timestamp("claimed_at"),
+  
+  maxPlayers: integer("max_players").notNull().default(1),
+  description: text("description"),
+  isActive: boolean("is_active").default(true).notNull(),
+  
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Territory Claims History
 export const territoryClaims = pgTable("territory_claims", {
   id: uuid("id").defaultRandom().primaryKey(),
   territoryId: uuid("territory_id").references(() => territories.id, { onDelete: 'cascade' }).notNull(),
@@ -309,7 +338,7 @@ export const territoryClaims = pgTable("territory_claims", {
   reason: text("reason"),
 });
 
-// Territory Queue Table
+// Territory Queue
 export const territoryQueue = pgTable("territory_queue", {
   id: uuid("id").defaultRandom().primaryKey(),
   territoryId: uuid("territory_id").references(() => territories.id, { onDelete: 'cascade' }).notNull(),
@@ -348,23 +377,81 @@ export const territoryNotifications = pgTable("territory_notifications", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// ===== RELATIONS ===== (ПОСЛЕ ВСЕХ ТАБЛИЦ!)
+// DropMap Eligible Players
+export const dropMapEligiblePlayers = pgTable("dropmap_eligible_players", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  settingsId: uuid("settings_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  displayName: text("display_name").notNull(),
+  sourceType: varchar("source_type", { length: 50 }),
+  sourceDetails: jsonb("source_details"),
+  addedBy: uuid("added_by").references(() => users.id),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
 
-export const territoryShapesRelations = relations(territoryShapes, ({ one, many }) => ({
+// DropMap Invite Codes
+export const dropMapInviteCodes = pgTable("dropmap_invite_codes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  settingsId: uuid("settings_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
+  code: varchar("code", { length: 50 }).notNull().unique(),
+  displayName: text("display_name").notNull(),
+  isUsed: boolean("is_used").default(false).notNull(),
+  usedAt: timestamp("used_at"),
+  territoryId: uuid("territory_id").references(() => territories.id),
+  expiresAt: timestamp("expires_at"),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ===== RELATIONS =====
+
+export const killHistoryRelations = relations(killHistory, ({ one }) => ({
+  user: one(users, {
+    fields: [killHistory.userId],
+    references: [users.id],
+  }),
+  submission: one(submissions, {
+    fields: [killHistory.submissionId],
+    references: [submissions.id],
+  }),
+  grantedByUser: one(users, {
+    fields: [killHistory.grantedBy],
+    references: [users.id],
+  }),
+}));
+
+export const telegramVerificationsRelations = relations(telegramVerifications, ({ one }) => ({
+  user: one(users, {
+    fields: [telegramVerifications.userId],
+    references: [users.id],
+  }),
+}));
+
+export const premiumHistoryRelations = relations(premiumHistory, ({ one }) => ({
+  user: one(users, {
+    fields: [premiumHistory.userId],
+    references: [users.id],
+  }),
+  grantedByUser: one(users, {
+    fields: [premiumHistory.grantedBy],
+    references: [users.id],
+  }),
+}));
+
+export const territoryShapesRelations = relations(territoryShapes, ({ one }) => ({
   creator: one(users, {
     fields: [territoryShapes.createdBy],
     references: [users.id],
   }),
-  territories: many(territories),
 }));
 
-export const usersRelations = relations(users, ({ many }) => ({
+export const usersRelations = relations(users, ({ many, one }) => ({
   submissions: many(submissions),
-  reviewedSubmissions: many(submissions, { relationName: "reviewer" }),
+  reviewedSubmissions: many(submissions),
   adminActions: many(adminActions),
   balanceTransactions: many(balanceTransactions),
   withdrawalRequests: many(withdrawalRequests),
-  processedWithdrawals: many(withdrawalRequests, { relationName: "processedBy" }),
+  processedWithdrawals: many(withdrawalRequests),
   notifications: many(notifications),
   tournamentRegistrations: many(tournamentRegistrations),
   createdTournaments: many(tournaments),
@@ -373,9 +460,17 @@ export const usersRelations = relations(users, ({ many }) => ({
   territoryQueue: many(territoryQueue),
   territoryStats: many(userTerritoryStats),
   territoryNotifications: many(territoryNotifications),
-  createdTemplates: many(territoryTemplates, { relationName: "creator" }),
-  assignedClaims: many(territoryClaims, { relationName: "assigner" }),
-  reviewedQueue: many(territoryQueue, { relationName: "reviewer" }),
+  createdTemplates: many(territoryTemplates),
+  assignedClaims: many(territoryClaims),
+  reviewedQueue: many(territoryQueue),
+  premiumHistory: many(premiumHistory),
+  giftedPremiumTo: many(users),
+  premiumGiftedByUser: one(users, {
+    fields: [users.premiumGiftedBy],
+    references: [users.id],
+  }),
+  killHistory: many(killHistory), // 🆕
+  grantedKills: many(killHistory), // 🆕
 }));
 
 export const tournamentsRelations = relations(tournaments, ({ one, many }) => ({
@@ -384,6 +479,7 @@ export const tournamentsRelations = relations(tournaments, ({ one, many }) => ({
     references: [users.id],
   }),
   registrations: many(tournamentRegistrations),
+  templates: many(territoryTemplates),
 }));
 
 export const tournamentRegistrationsRelations = relations(tournamentRegistrations, ({ one }) => ({
@@ -397,7 +493,7 @@ export const tournamentRegistrationsRelations = relations(tournamentRegistration
   }),
 }));
 
-export const submissionsRelations = relations(submissions, ({ one }) => ({
+export const submissionsRelations = relations(submissions, ({ one, many }) => ({
   user: one(users, {
     fields: [submissions.userId],
     references: [users.id],
@@ -405,8 +501,8 @@ export const submissionsRelations = relations(submissions, ({ one }) => ({
   reviewer: one(users, {
     fields: [submissions.reviewedBy],
     references: [users.id],
-    relationName: "reviewer",
   }),
+  killHistory: many(killHistory), // 🆕
 }));
 
 export const notificationsRelations = relations(notifications, ({ one }) => ({
@@ -438,13 +534,11 @@ export const withdrawalRequestsRelations = relations(withdrawalRequests, ({ one 
   processedByAdmin: one(users, {
     fields: [withdrawalRequests.processedBy],
     references: [users.id],
-    relationName: "processedBy",
   }),
 }));
 
-export const territoryTemplatesRelations = relations(territoryTemplates, ({ one, many }) => ({
-  territories: many(territories),
-  tournament: one(tournaments, { // НОВОЕ
+export const territoryTemplatesRelations = relations(territoryTemplates, ({ one }) => ({
+  tournament: one(tournaments, {
     fields: [territoryTemplates.tournamentId],
     references: [tournaments.id],
   }),
@@ -453,14 +547,11 @@ export const territoryTemplatesRelations = relations(territoryTemplates, ({ one,
     references: [users.id],
   }),
 }));
+
 export const territoriesRelations = relations(territories, ({ one, many }) => ({
-  template: one(territoryTemplates, {
-    fields: [territories.templateId],
-    references: [territoryTemplates.id],
-  }),
-  shape: one(territoryShapes, { // НОВОЕ
-    fields: [territories.shapeId],
-    references: [territoryShapes.id],
+  map: one(dropMapSettings, {
+    fields: [territories.mapId],
+    references: [dropMapSettings.id],
   }),
   owner: one(users, {
     fields: [territories.ownerId],
@@ -469,7 +560,9 @@ export const territoriesRelations = relations(territories, ({ one, many }) => ({
   claims: many(territoryClaims),
   queueEntries: many(territoryQueue),
   notifications: many(territoryNotifications),
+  inviteCodes: many(dropMapInviteCodes),
 }));
+
 export const territoryClaimsRelations = relations(territoryClaims, ({ one }) => ({
   territory: one(territories, {
     fields: [territoryClaims.territoryId],
@@ -479,10 +572,9 @@ export const territoryClaimsRelations = relations(territoryClaims, ({ one }) => 
     fields: [territoryClaims.userId],
     references: [users.id],
   }),
-  assignedBy: one(users, {
+  assignedByUser: one(users, {
     fields: [territoryClaims.assignedBy],
     references: [users.id],
-    relationName: "assigner",
   }),
 }));
 
@@ -495,10 +587,9 @@ export const territoryQueueRelations = relations(territoryQueue, ({ one }) => ({
     fields: [territoryQueue.userId],
     references: [users.id],
   }),
-  reviewedBy: one(users, {
+  reviewedByUser: one(users, {
     fields: [territoryQueue.reviewedBy],
     references: [users.id],
-    relationName: "reviewer",
   }),
 }));
 
@@ -524,6 +615,50 @@ export const userTerritoryStatsRelations = relations(userTerritoryStats, ({ one 
   }),
 }));
 
+export const dropMapSettingsRelations = relations(dropMapSettings, ({ one, many }) => ({
+  creator: one(users, {
+    fields: [dropMapSettings.createdBy],
+    references: [users.id],
+  }),
+  copiedFrom: one(dropMapSettings, {
+    fields: [dropMapSettings.createdFrom],
+    references: [dropMapSettings.id],
+  }),
+  eligiblePlayers: many(dropMapEligiblePlayers),
+  inviteCodes: many(dropMapInviteCodes),
+  territories: many(territories),
+}));
+
+export const dropMapEligiblePlayersRelations = relations(dropMapEligiblePlayers, ({ one }) => ({
+  settings: one(dropMapSettings, {
+    fields: [dropMapEligiblePlayers.settingsId],
+    references: [dropMapSettings.id],
+  }),
+  user: one(users, {
+    fields: [dropMapEligiblePlayers.userId],
+    references: [users.id],
+  }),
+  addedByUser: one(users, {
+    fields: [dropMapEligiblePlayers.addedBy],
+    references: [users.id],
+  }),
+}));
+
+export const dropMapInviteCodesRelations = relations(dropMapInviteCodes, ({ one }) => ({
+  settings: one(dropMapSettings, {
+    fields: [dropMapInviteCodes.settingsId],
+    references: [dropMapSettings.id],
+  }),
+  territory: one(territories, {
+    fields: [dropMapInviteCodes.territoryId],
+    references: [territories.id],
+  }),
+  creator: one(users, {
+    fields: [dropMapInviteCodes.createdBy],
+    references: [users.id],
+  }),
+}));
+
 // ===== ZOD SCHEMAS =====
 
 export const createTerritoryShapeSchema = z.object({
@@ -541,7 +676,7 @@ export const createTemplateWithShapesSchema = z.object({
   description: z.string().optional(),
   mapImageUrl: z.string().url().optional(),
   shapeIds: z.array(z.string().uuid()),
-  tournamentId: z.string().uuid().optional(), // НОВОЕ
+  tournamentId: z.string().uuid().optional(),
 });
 
 export const instantiateTemplateSchema = z.object({
@@ -560,21 +695,18 @@ export const grantPremiumSchema = z.object({
   source: z.enum(['admin', 'manual', 'boosty', 'patreon']).default('admin'),
 });
 
-
 export const updatePremiumSchema = z.object({
   tier: z.enum(['none', 'basic', 'gold', 'platinum', 'vip']).optional(),
   endDate: z.coerce.date().optional(),
   autoRenew: z.boolean().optional(),
 });
 
-// User schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
 });
 
-// Submission schemas
 export const insertSubmissionSchema = createInsertSchema(submissions, {
   fileSize: z.number().min(1).max(50 * 1024 * 1024),
   category: z.enum(["gold-kill", "silver-kill", "bronze-kill", "victory", "funny"]),
@@ -589,7 +721,11 @@ export const insertSubmissionSchema = createInsertSchema(submissions, {
   rejectionReason: true,
 });
 
-// Tournament schemas (ОДНО объявление!)
+export const insertKillHistorySchema = createInsertSchema(killHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertTournamentSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().optional(),
@@ -597,6 +733,7 @@ export const insertTournamentSchema = z.object({
   rules: z.string().optional(),
   prize: z.number().min(0),
   entryFee: z.number().min(0),
+  prizeDistribution: z.record(z.string(), z.number().positive()).optional(),
   registrationStartDate: z.coerce.date(),
   registrationEndDate: z.coerce.date(),
   startDate: z.coerce.date(),
@@ -614,6 +751,7 @@ export const updateTournamentSchema = z.object({
   rules: z.string().optional(),
   prize: z.number().min(0).optional(),
   entryFee: z.number().min(0).optional(),
+  prizeDistribution: z.record(z.string(), z.number().positive()).optional(),
   registrationStartDate: z.coerce.date().optional(),
   registrationEndDate: z.coerce.date().optional(),
   startDate: z.coerce.date().optional(),
@@ -627,17 +765,14 @@ export const registerForTournamentSchema = z.object({
   additionalInfo: z.string().max(500).optional(),
 });
 
-// Notification schemas
 export const insertNotificationSchema = createInsertSchema(notifications);
 export const insertTerritoryNotificationSchema = createInsertSchema(territoryNotifications);
 
-// Admin action schemas
 export const insertAdminActionSchema = createInsertSchema(adminActions).omit({
   id: true,
   createdAt: true,
 });
 
-// Territory schemas
 export const insertTerritoryTemplateSchema = createInsertSchema(territoryTemplates, {
   name: z.string().min(1).max(100),
   description: z.string().optional(),
@@ -656,7 +791,6 @@ export const insertTerritorySchema = createInsertSchema(territories, {
     y: z.number(),
   })).min(3, "Territory must have at least 3 points"),
   color: z.string().regex(/^#[0-9A-F]{6}$/i, "Invalid hex color"),
-  priority: z.number().min(1).max(10),
 }).omit({
   id: true,
   createdAt: true,
@@ -665,8 +799,6 @@ export const insertTerritorySchema = createInsertSchema(territories, {
 
 export const insertTerritoryClaimSchema = createInsertSchema(territoryClaims);
 export const insertTerritoryQueueSchema = createInsertSchema(territoryQueue);
-
-// ===== VALIDATION SCHEMAS =====
 
 export const reviewSubmissionSchema = z.object({
   status: z.enum(['approved', 'rejected']),
@@ -727,7 +859,6 @@ export const processWithdrawalSchema = z.object({
   rejectionReason: z.string().optional()
 });
 
-// Territory API validation schemas
 export const createTerritoryTemplateRequestSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().optional(),
@@ -784,7 +915,59 @@ export const reviewTerritoryQueueSchema = z.object({
   message: "Review notes are required when rejecting queue entry."
 });
 
+export const createDropMapSettingsSchema = z.object({
+  name: z.string().min(1).max(100),
+  description: z.string().optional(),
+  mapImageUrl: z.string().url().optional(),
+  mode: z.enum(['tournament', 'practice']).default('practice'),
+  allowReclaim: z.boolean().default(true),
+});
+
+export const updateDropMapSettingsSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().optional(),
+  allowReclaim: z.boolean().optional(),
+  isLocked: z.boolean().optional(),
+});
+
+export const addDropMapPlayersSchema = z.object({
+  userIds: z.array(z.string().uuid()).min(1),
+});
+
+export const importDropMapPlayersSchema = z.object({
+  tournamentId: z.string().uuid(),
+  positions: z.array(z.number().min(1)).optional(),
+  topN: z.number().min(1).optional(),
+});
+
+export const createDropMapInviteSchema = z.object({
+  displayName: z.string().min(1).max(100),
+  expiresInDays: z.number().min(1).max(365).default(30),
+});
+
+export const claimWithInviteSchema = z.object({
+  code: z.string(),
+  territoryId: z.string().uuid(),
+});
+
 // ===== TYPES =====
+
+export type KillHistory = typeof killHistory.$inferSelect & {
+  user?: {
+    username: string;
+    displayName: string;
+  };
+  grantedByUser?: {
+    username: string;
+    displayName: string;
+  };
+  submission?: {
+    category: string;
+    originalFilename: string;
+  };
+};
+export type InsertKillHistory = typeof killHistory.$inferInsert;
+
 export type TelegramVerification = typeof telegramVerifications.$inferSelect;
 export type InsertTelegramVerification = typeof telegramVerifications.$inferInsert;
 
@@ -838,6 +1021,7 @@ export type Tournament = typeof tournaments.$inferSelect & {
     username: string;
     displayName: string;
   };
+  prizeDistribution?: Record<string, number>;
 };
 export type InsertTournament = z.infer<typeof insertTournamentSchema>;
 
@@ -894,61 +1078,33 @@ export type InsertTerritoryNotification = typeof territoryNotifications.$inferIn
 
 export type UserTerritoryStats = typeof userTerritoryStats.$inferSelect;
 
+export type DropMapSettings = typeof dropMapSettings.$inferSelect;
+export type InsertDropMapSettings = typeof dropMapSettings.$inferInsert;
 
+export type DropMapEligiblePlayer = typeof dropMapEligiblePlayers.$inferSelect;
+export type InsertDropMapEligiblePlayer = typeof dropMapEligiblePlayers.$inferInsert;
 
-export function isPremiumActive(user: User): boolean {
-  if (!user.premiumTier || user.premiumTier === 'none') return false;
-  if (!user.premiumEndDate) return false;
-  return new Date(user.premiumEndDate) > new Date();
-}
+export type DropMapInviteCode = typeof dropMapInviteCodes.$inferSelect;
+export type InsertDropMapInviteCode = typeof dropMapInviteCodes.$inferInsert;
 
-// Get premium tier display name
-export function getPremiumTierName(tier: string): string {
-  switch (tier) {
-    case 'basic': return 'Premium';
-    case 'gold': return 'Gold Premium';
-    case 'platinum': return 'Platinum Premium';
-    case 'vip': return 'VIP Premium';
-    default: return 'None';
-  }
-}
+export type DropMapWithDetails = DropMapSettings & {
+  template: TerritoryTemplateWithShapes;
+  tournament?: {
+    id: string;
+    name: string;
+    status: string;
+  };
+  eligiblePlayers: (DropMapEligiblePlayer & {
+    user: {
+      id: string;
+      username: string;
+      displayName: string;
+    };
+  })[];
+  territories: TerritoryWithShape[];
+  inviteCodes: DropMapInviteCode[];
+};
 
-// Get premium tier color
-export function getPremiumTierColor(tier: string): string {
-  switch (tier) {
-    case 'basic': return '#3B82F6'; // Blue
-    case 'gold': return '#F59E0B';   // Gold
-    case 'platinum': return '#A78BFA'; // Purple
-    case 'vip': return '#EF4444';    // Red
-    default: return '#6B7280';       // Gray
-  }
-}
-
-// Get premium tier features
-export function getPremiumTierFeatures(tier: string): string[] {
-  const baseFeatures = [
-    '🏆 Закрытые турниры',
-    '💰 +10% к обмену золота',
-    '🎯 Пропуск квалификаций',
-    '🚀 Ранний доступ',
-    '👑 VIP статус и чат',
-  ];
-  
-  switch (tier) {
-    case 'basic':
-      return baseFeatures;
-    case 'gold':
-      return [...baseFeatures, '⭐ Золотой значок', '🎁 Эксклюзивные награды'];
-    case 'platinum':
-      return [...baseFeatures, '💎 Платиновый значок', '🎁 Эксклюзивные награды', '🔥 Приоритетная поддержка'];
-    case 'vip':
-      return [...baseFeatures, '👑 VIP значок', '🎁 Эксклюзивные награды', '🔥 Приоритетная поддержка', '🌟 Личный менеджер'];
-    default:
-      return [];
-  }
-}
-
-// Additional stats type for territory statistics
 export type TerritoryStats = {
   currentTerritories: number;
   queueEntries: number;
@@ -956,7 +1112,6 @@ export type TerritoryStats = {
   territoriesRevoked: number;
 };
 
-// Extended types with relations
 export type TerritoryWithOwner = Territory & {
   owner?: {
     id: string;
@@ -996,170 +1151,94 @@ export type QueueEntryWithDetails = TerritoryQueue & {
   };
 };
 
-// shared/schema.ts - добавить в конец файла после территорий
+// ===== UTILITY FUNCTIONS =====
 
-// ===== DROPMAP SYSTEM (расширение территориальной системы) =====
+export function isPremiumActive(user: User): boolean {
+  if (!user.premiumTier || user.premiumTier === 'none') return false;
+  if (!user.premiumEndDate) return false;
+  return new Date(user.premiumEndDate) > new Date();
+}
 
-export const dropMapModeEnum = pgEnum('dropmap_mode', ['tournament', 'practice']);
+export function getPremiumTierName(tier: string): string {
+  switch (tier) {
+    case 'basic': return 'Premium';
+    case 'gold': return 'Gold Premium';
+    case 'platinum': return 'Platinum Premium';
+    case 'vip': return 'VIP Premium';
+    default: return 'None';
+  }
+}
 
-// DropMap Settings (настройки для конкретной карты)
-export const dropMapSettings = pgTable('drop_map_settings', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  templateId: uuid('template_id').notNull().references(() => territoryTemplates.id, { onDelete: 'cascade' }),
-  tournamentId: uuid('tournament_id').references(() => tournaments.id, { onDelete: 'set null' }),
-  customName: text('custom_name'), // <-- ДОБАВЬТЕ ЭТУ СТРОКУ
-  mode: text('mode').notNull().default('tournament'),
-  maxPlayersPerSpot: integer('max_players_per_spot').notNull().default(1),
-  maxContestedSpots: integer('max_contested_spots').notNull().default(0),
-  allowReclaim: boolean('allow_reclaim').notNull().default(false),
-  isLocked: boolean('is_locked').notNull().default(false),
-  createdBy: uuid('created_by').references(() => users.id),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
-// Eligible Players для DropMap
-export const dropMapEligiblePlayers = pgTable("dropmap_eligible_players", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  settingsId: uuid("settings_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
-  userId: uuid("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  displayName: text("display_name").notNull(),
-  sourceType: varchar("source_type", { length: 50 }), // 'manual', 'tournament_import', 'positions'
-  sourceDetails: jsonb("source_details"), // детали импорта
-  addedBy: uuid("added_by").references(() => users.id),
-  addedAt: timestamp("added_at").defaultNow().notNull(),
-});
+export function getPremiumTierColor(tier: string): string {
+  switch (tier) {
+    case 'basic': return '#3B82F6';
+    case 'gold': return '#F59E0B';
+    case 'platinum': return '#A78BFA';
+    case 'vip': return '#EF4444';
+    default: return '#6B7280';
+  }
+}
 
-// Invite Codes для неавторизованных игроков
-export const dropMapInviteCodes = pgTable("dropmap_invite_codes", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  settingsId: uuid("settings_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
-  code: varchar("code", { length: 50 }).notNull().unique(),
-  displayName: text("display_name").notNull(),
-  isUsed: boolean("is_used").default(false).notNull(),
-  usedAt: timestamp("used_at"),
-  territoryId: uuid("territory_id").references(() => territories.id), // какую территорию заклеймил
-  expiresAt: timestamp("expires_at"),
-  createdBy: uuid("created_by").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+// 🆕 УТИЛИТЫ ДЛЯ РАБОТЫ С КИЛЛАМИ
+export function getKillTypeFromCategory(category: string): 'gold' | 'silver' | 'bronze' | null {
+  if (category === 'gold-kill') return 'gold';
+  if (category === 'silver-kill') return 'silver';
+  if (category === 'bronze-kill') return 'bronze';
+  return null;
+}
 
-// Relations
-export const dropMapSettingsRelations = relations(dropMapSettings, ({ one, many }) => ({
-  template: one(territoryTemplates, {
-    fields: [dropMapSettings.templateId],
-    references: [territoryTemplates.id],
-  }),
-  tournament: one(tournaments, {
-    fields: [dropMapSettings.tournamentId],
-    references: [tournaments.id],
-  }),
-  creator: one(users, {
-    fields: [dropMapSettings.createdBy],
-    references: [users.id],
-  }),
-  eligiblePlayers: many(dropMapEligiblePlayers),
-  inviteCodes: many(dropMapInviteCodes),
-}));
+export function getKillDisplayName(killType: 'gold' | 'silver' | 'bronze'): string {
+  switch (killType) {
+    case 'gold': return '🥇 Gold Kill';
+    case 'silver': return '🥈 Silver Kill';
+    case 'bronze': return '🥉 Bronze Kill';
+  }
+}
 
-export const dropMapEligiblePlayersRelations = relations(dropMapEligiblePlayers, ({ one }) => ({
-  settings: one(dropMapSettings, {
-    fields: [dropMapEligiblePlayers.settingsId],
-    references: [dropMapSettings.id],
-  }),
-  user: one(users, {
-    fields: [dropMapEligiblePlayers.userId],
-    references: [users.id],
-  }),
-  addedByUser: one(users, {
-    fields: [dropMapEligiblePlayers.addedBy],
-    references: [users.id],
-  }),
-}));
+export function getKillColor(killType: 'gold' | 'silver' | 'bronze'): string {
+  switch (killType) {
+    case 'gold': return '#FFD700';
+    case 'silver': return '#C0C0C0';
+    case 'bronze': return '#CD7F32';
+  }
+}
 
-export const dropMapInviteCodesRelations = relations(dropMapInviteCodes, ({ one }) => ({
-  settings: one(dropMapSettings, {
-    fields: [dropMapInviteCodes.settingsId],
-    references: [dropMapSettings.id],
-  }),
-  territory: one(territories, {
-    fields: [dropMapInviteCodes.territoryId],
-    references: [territories.id],
-  }),
-  creator: one(users, {
-    fields: [dropMapInviteCodes.createdBy],
-    references: [users.id],
-  }),
-}));
+export function getPremiumTierFeatures(tier: string): string[] {
+  const baseFeatures = [
+    '🏆 Закрытые турниры',
+    '💰 +10% к обмену золота',
+    '🎯 Пропуск квалификаций',
+    '🚀 Ранний доступ',
+    '👑 VIP статус и чат',
+  ];
+  
+  switch (tier) {
+    case 'basic':
+      return baseFeatures;
+    case 'gold':
+      return [...baseFeatures, '⭐ Золотой значок', '🎁 Эксклюзивные награды'];
+    case 'platinum':
+      return [...baseFeatures, '💎 Платиновый значок', '🎁 Эксклюзивные награды', '🔥 Приоритетная поддержка'];
+    case 'vip':
+      return [...baseFeatures, '👑 VIP значок', '🎁 Эксклюзивные награды', '🔥 Приоритетная поддержка', '🌟 Личный менеджер'];
+    default:
+      return [];
+  }
+}
 
-// Zod Schemas для DropMap
-export const createDropMapSettingsSchema = z.object({
-  templateId: z.string().uuid(),
-  tournamentId: z.string().uuid().optional(),
-  mode: z.enum(['tournament', 'practice']).default('practice'),
-  maxPlayersPerSpot: z.number().min(1).max(10).default(1),
-  maxContestedSpots: z.number().min(0).max(50).default(0),
-  allowReclaim: z.boolean().default(true),
-});
+export function getTotalPrizeFromDistribution(distribution?: Record<string, number>): number {
+  if (!distribution) return 0;
+  return Object.values(distribution).reduce((sum, amount) => sum + amount, 0);
+}
 
-export const updateDropMapSettingsSchema = z.object({
-  maxPlayersPerSpot: z.number().min(1).max(10).optional(),
-  maxContestedSpots: z.number().min(0).max(50).optional(),
-  allowReclaim: z.boolean().optional(),
-  isLocked: z.boolean().optional(),
-});
-
-export const addDropMapPlayersSchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1),
-});
-
-export const importDropMapPlayersSchema = z.object({
-  tournamentId: z.string().uuid(),
-  positions: z.array(z.number().min(1)).optional(),
-  topN: z.number().min(1).optional(),
-});
-
-export const createDropMapInviteSchema = z.object({
-  displayName: z.string().min(1).max(100),
-  expiresInDays: z.number().min(1).max(365).default(30),
-});
-
-export const claimWithInviteSchema = z.object({
-  code: z.string(),
-  territoryId: z.string().uuid(),
-});
-
-// Types
-export type DropMapSettings = typeof dropMapSettings.$inferSelect;
-export type InsertDropMapSettings = typeof dropMapSettings.$inferInsert;
-
-export type DropMapEligiblePlayer = typeof dropMapEligiblePlayers.$inferSelect;
-export type InsertDropMapEligiblePlayer = typeof dropMapEligiblePlayers.$inferInsert;
-
-export type DropMapInviteCode = typeof dropMapInviteCodes.$inferSelect;
-export type InsertDropMapInviteCode = typeof dropMapInviteCodes.$inferInsert;
-
-export type DropMapWithDetails = DropMapSettings & {
-  template: TerritoryTemplateWithShapes;
-  tournament?: {
-    id: string;
-    name: string;
-    status: string;
-  };
-  eligiblePlayers: (DropMapEligiblePlayer & {
-    user: {
-      id: string;
-      username: string;
-      displayName: string;
-    };
-  })[];
-  territories: TerritoryWithShape[];
-  inviteCodes: DropMapInviteCode[];
-};
-
+export function formatPrizeDistribution(distribution?: Record<string, number>): Array<{ place: number; amount: number }> {
+  if (!distribution) return [];
+  return Object.entries(distribution)
+    .map(([place, amount]) => ({ place: parseInt(place), amount }))
+    .sort((a, b) => a.place - b.place);
+}
 
 // ===== BACKWARD COMPATIBILITY ALIASES =====
-// These are placed at the very end to ensure all referenced schemas are already defined
-
 export const createTerritoryTemplateSchema = createTerritoryTemplateRequestSchema;
 export const createTerritorySchema = createTerritoryRequestSchema;
 export const claimTerritorySchema = claimTerritoryRequestSchema;

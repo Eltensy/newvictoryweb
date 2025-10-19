@@ -29,6 +29,7 @@ interface TournamentDetail {
   imageUrl: string | null;
   isUserRegistered: boolean;
   userRegistration?: any;
+  prizeDistribution?: Record<string, number>;
   creator: {
     username: string;
     displayName: string;
@@ -45,7 +46,7 @@ interface TournamentDetail {
   }>;
 }
 
-export default function TournamentDetailPage() {
+function TournamentDetailPage() {
   const { id } = useParams();
   const { getAuthToken, user, isLoggedIn } = useAuth();
   const { toast } = useToast();
@@ -241,6 +242,40 @@ export default function TournamentDetailPage() {
     }
   };
 
+  const formatPrizeDistribution = (distribution?: Record<string, number>) => {
+    if (!distribution) return [];
+    return Object.entries(distribution)
+      .map(([place, amount]) => ({ place: parseInt(place), amount }))
+      .sort((a, b) => a.place - b.place);
+  };
+
+  const getPlaceIcon = (place: number) => {
+    switch(place) {
+      case 1: return '🥇';
+      case 2: return '🥈';
+      case 3: return '🥉';
+      default: return '🏅';
+    }
+  };
+
+  const getPlaceColor = (place: number) => {
+    switch(place) {
+      case 1: return 'bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border-yellow-500/30';
+      case 2: return 'bg-gradient-to-r from-gray-400/20 to-gray-500/20 border-gray-400/30';
+      case 3: return 'bg-gradient-to-r from-amber-600/20 to-amber-700/20 border-amber-600/30';
+      default: return 'bg-muted/30 border-muted';
+    }
+  };
+
+  const getPlaceName = (place: number) => {
+    switch(place) {
+      case 1: return 'Первое место';
+      case 2: return 'Второе место';
+      case 3: return 'Третье место';
+      default: return `${place}-е место`;
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -329,6 +364,86 @@ export default function TournamentDetailPage() {
               </CardHeader>
             </Card>
 
+            {/* PRIZE DISTRIBUTION CARD - НОВОЕ */}
+            {tournament.prizeDistribution && Object.keys(tournament.prizeDistribution).length > 0 && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="font-gaming flex items-center gap-2">
+                      <Trophy className="h-5 w-5 text-gaming-warning" />
+                      Призовой фонд
+                    </CardTitle>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-gaming-success">
+                        {tournament.prize.toLocaleString()} ₽
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Общий призовой фонд
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Prize Places */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {formatPrizeDistribution(tournament.prizeDistribution).map(({ place, amount }) => (
+                      <div
+                        key={place}
+                        className={`p-4 rounded-lg border-2 transition-all hover:scale-105 ${getPlaceColor(place)}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex-shrink-0 text-3xl">
+                            {getPlaceIcon(place)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-muted-foreground">
+                              {getPlaceName(place)}
+                            </div>
+                            <div className="text-xl font-bold text-gaming-success">
+                              {amount.toLocaleString()} ₽
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {((amount / tournament.prize) * 100).toFixed(1)}% от фонда
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Prize Distribution Bar */}
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-muted-foreground">
+                      Визуальное распределение призового фонда
+                    </div>
+                    <div className="flex h-4 rounded-full overflow-hidden bg-muted">
+                      {formatPrizeDistribution(tournament.prizeDistribution).map(({ place, amount }, index) => {
+                        const percentage = (amount / tournament.prize) * 100;
+                        const colors = [
+                          'bg-yellow-500',
+                          'bg-gray-400', 
+                          'bg-amber-600',
+                          'bg-blue-500',
+                          'bg-green-500',
+                          'bg-purple-500',
+                          'bg-pink-500',
+                          'bg-indigo-500'
+                        ];
+                        return (
+                          <div
+                            key={place}
+                            className={`${colors[index % colors.length]} transition-all hover:opacity-80 cursor-pointer`}
+                            style={{ width: `${percentage}%` }}
+                            title={`${place} место: ${amount.toLocaleString()} ₽ (${percentage.toFixed(1)}%)`}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Tournament Details */}
             <Card>
               <CardHeader>
@@ -403,7 +518,7 @@ export default function TournamentDetailPage() {
                 <CardContent>
                   <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-foreground">
                     {tournament.rules}
-                    </div>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -591,4 +706,7 @@ export default function TournamentDetailPage() {
         </div>
       </div>
     </div>
-  )};
+  );
+}
+
+export default TournamentDetailPage;
