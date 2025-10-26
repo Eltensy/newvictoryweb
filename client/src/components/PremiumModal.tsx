@@ -199,7 +199,7 @@ export default function PremiumModal({ isOpen, onClose, userPremiumTier = 'none'
 
           {/* Footer */}
           <p className="text-center text-xs text-muted-foreground">
-            Premium статус активируется автоматически в течение 5 минут после оплаты
+            После оплаты привяжите свой Discord к сайту и дождитесь автоматической выдачи Premium. Если статус не выдан, убедитесь в наличии роли Премиум в Discord сервере ContestGG и нажмите кнопку перепроверки в профиле на сайте.
           </p>
         </div>
       </div>

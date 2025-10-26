@@ -1,7 +1,6 @@
 // client/src/components/AdminHeader.tsx
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Shield, RefreshCw, House } from "lucide-react";
+import { RefreshCw, ArrowLeft } from "lucide-react";
 import { TabType } from "@/types/admin";
 
 interface AdminHeaderProps {
@@ -12,32 +11,33 @@ interface AdminHeaderProps {
 
 export function AdminHeader({ activeTab, onRefresh, isLoading }: AdminHeaderProps) {
   return (
-    <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-      <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Shield className="h-8 w-8 text-primary" />
-          <span className="text-xl font-bold font-gaming">Admin Panel</span>
+    <header className="border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex h-14 items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.location.href = "/"}
+              className="h-8 w-8 p-0"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-semibold">Admin Panel</h1>
+              <div className="hidden sm:flex h-1.5 w-1.5 rounded-full bg-green-500" />
+            </div>
+          </div>
+          
           <Button
             variant="ghost"
             size="sm"
             onClick={onRefresh}
             disabled={isLoading}
+            className="h-8 w-8 p-0"
           >
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => window.location.href = "/"}
-          >
-            <House className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="flex items-center gap-4">
-          <Badge variant="secondary" className="font-gaming">
-            Администратор
-          </Badge>
-          <div className="w-8 h-8 rounded-full bg-destructive"></div>
         </div>
       </div>
     </header>

@@ -59,6 +59,11 @@ export function usePremium() {
     fetchPremiumStatus();
   }, [fetchPremiumStatus]);
 
+  const refetch = () => {
+    setLoading(true);
+    return fetchPremiumStatus();
+  };
+
   const hasPremium = premiumStatus?.isActive || false;
   const tier = premiumStatus?.tier || 'none';
   const daysRemaining = premiumStatus?.daysRemaining || 0;
@@ -71,6 +76,7 @@ export function usePremium() {
     daysRemaining,
     isExpiringSoon,
     loading,
+    refetch,
     error,
     refresh: fetchPremiumStatus
   };

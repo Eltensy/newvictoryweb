@@ -1,157 +1,125 @@
-// server/migrations/20251020_add_kill_system.ts
+// server/migrations/20251026_fix_reward_validation.ts
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 
-
 async function runMigration() {
   console.log('\n' + '='.repeat(70));
-  console.log('MIGRATION: Add Kill System - Counters and History');
+  console.log('MIGRATION: Fix Reward Validation (Allow 0 Rewards)');
   console.log('='.repeat(70) + '\n');
 
   try {
-    // ===== STEP 7: MIGRATE EXISTING DATA =====
-    console.log('\nStep 7: Migrating existing approved kill submissions...');
+    // ===== STEP 1: CHECK CURRENT CONSTRAINT =====
+    console.log('Step 1: Checking current reward column constraints...');
     
-    console.log('  7a: Counting existing kill submissions...');
-    const existingKills = await db.execute(sql`
+    const columnCheck = await db.execute(sql`
       SELECT 
-        COUNT(*) FILTER (WHERE category = 'gold-kill') as gold,
-        COUNT(*) FILTER (WHERE category = 'silver-kill') as silver,
-        COUNT(*) FILTER (WHERE category = 'bronze-kill') as bronze,
-        COUNT(*) as total
-      FROM submissions
-      WHERE status = 'approved'
-        AND category IN ('gold-kill', 'silver-kill', 'bronze-kill');
+        column_name, 
+        data_type, 
+        is_nullable,
+        column_default
+      FROM information_schema.columns
+      WHERE table_name = 'submissions'
+        AND column_name = 'reward';
     `);
     
-    const killCounts = existingKills.rows[0];
-    console.log(`  Found ${killCounts?.total || 0} approved kill submissions:`);
-    console.log(`    🥇 Gold: ${killCounts?.gold || 0}`);
-    console.log(`    🥈 Silver: ${killCounts?.silver || 0}`);
-    console.log(`    🥉 Bronze: ${killCounts?.bronze || 0}`);
-
-    if ((killCounts?.total || 0) > 0) {
-      console.log('\n  7b: Updating user kill counters...');
-      
-      // Gold kills
-      await db.execute(sql`
-        UPDATE users u
-        SET gold_kills = (
-          SELECT COUNT(*)
-          FROM submissions s
-          WHERE s.user_id::text = u.id::text
-            AND s.status = 'approved'
-            AND s.category = 'gold-kill'
-        );
-      `);
-      console.log('  ✓ Gold kills counted');
-
-      // Silver kills
-      await db.execute(sql`
-        UPDATE users u
-        SET silver_kills = (
-          SELECT COUNT(*)
-          FROM submissions s
-          WHERE s.user_id::text = u.id::text
-            AND s.status = 'approved'
-            AND s.category = 'silver-kill'
-        );
-      `);
-      console.log('  ✓ Silver kills counted');
-
-      // Bronze kills
-      await db.execute(sql`
-        UPDATE users u
-        SET bronze_kills = (
-          SELECT COUNT(*)
-          FROM submissions s
-          WHERE s.user_id::text = u.id::text
-            AND s.status = 'approved'
-            AND s.category = 'bronze-kill'
-        );
-      `);
-      console.log('  ✓ Bronze kills counted');
-
-      // Total kills
-      await db.execute(sql`
-        UPDATE users
-        SET total_kills = gold_kills + silver_kills + bronze_kills
-        WHERE gold_kills > 0 OR silver_kills > 0 OR bronze_kills > 0;
-      `);
-      console.log('  ✓ Total kills calculated');
-
-      console.log('\n  7c: Creating kill_history records...');
-      const insertedRecords = await db.execute(sql`
-        INSERT INTO kill_history (user_id, kill_type, submission_id, reward_amount, granted_by, reason, created_at)
-        SELECT 
-          s.user_id::uuid,
-          CASE 
-            WHEN s.category = 'gold-kill' THEN 'gold'::kill_type
-            WHEN s.category = 'silver-kill' THEN 'silver'::kill_type
-            WHEN s.category = 'bronze-kill' THEN 'bronze'::kill_type
-          END,
-          s.id::uuid,
-          COALESCE(s.reward, 0),
-          CASE WHEN s.reviewed_by IS NOT NULL THEN s.reviewed_by::uuid ELSE NULL END,
-          'Migrated from existing approved submission',
-          COALESCE(s.reviewed_at, s.created_at)
-        FROM submissions s
-        WHERE s.status = 'approved'
-          AND s.category IN ('gold-kill', 'silver-kill', 'bronze-kill')
-        ON CONFLICT DO NOTHING;
-      `);
-      console.log(`  ✓ Created ${insertedRecords.rowCount || 0} kill_history records`);
+    if (columnCheck.rows.length > 0) {
+      const col = columnCheck.rows[0];
+      console.log(`  Current reward column: ${col.data_type}, nullable: ${col.is_nullable}`);
     } else {
-      console.log('  ℹ No existing kill submissions found, skipping data migration');
+      console.log('  ⚠ Reward column not found');
     }
 
-    // ===== STEP 8: VERIFICATION =====
-    console.log('\nStep 1: Verifying migration...');
+    // ===== STEP 2: REMOVE OLD CHECK CONSTRAINT IF EXISTS =====
+    console.log('\nStep 2: Removing old positive-only check constraint...');
     
-    const stats = await db.execute(sql`
-      SELECT 
-        COUNT(*) as total_users,
-        SUM(gold_kills) as total_gold_kills,
-        SUM(silver_kills) as total_silver_kills,
-        SUM(bronze_kills) as total_bronze_kills,
-        SUM(total_kills) as total_all_kills,
-        (SELECT COUNT(*) FROM kill_history) as kill_history_records
-      FROM users;
+    await db.execute(sql`
+      ALTER TABLE submissions 
+      DROP CONSTRAINT IF EXISTS submissions_reward_check;
     `);
-    
-    const result = stats.rows[0];
-    console.log('\n📊 Migration Statistics:');
-    console.log(`  Total users: ${result?.total_users || 0}`);
-    console.log(`  🥇 Total gold kills: ${result?.total_gold_kills || 0}`);
-    console.log(`  🥈 Total silver kills: ${result?.total_silver_kills || 0}`);
-    console.log(`  🥉 Total bronze kills: ${result?.total_bronze_kills || 0}`);
-    console.log(`  🏆 Total all kills: ${result?.total_all_kills || 0}`);
-    console.log(`  📝 Kill history records: ${result?.kill_history_records || 0}`);
+    console.log('  ✓ Old constraint removed');
 
-    // Verify trigger works
-    console.log('\nStep 2: Testing trigger function...');
-    const testResult = await db.execute(sql`
-      SELECT gold_kills + silver_kills + bronze_kills as calculated,
-             total_kills
-      FROM users
-      WHERE total_kills > 0
-      LIMIT 1;
+    await db.execute(sql`
+      ALTER TABLE submissions 
+      DROP CONSTRAINT IF EXISTS submissions_reward_positive;
+    `);
+    console.log('  ✓ Legacy constraint removed');
+
+    // ===== STEP 3: ADD NEW CONSTRAINT (>= 0) =====
+    console.log('\nStep 3: Adding new constraint (reward >= 0)...');
+    
+    await db.execute(sql`
+      ALTER TABLE submissions 
+      ADD CONSTRAINT submissions_reward_non_negative 
+      CHECK (reward IS NULL OR reward >= 0);
+    `);
+    console.log('  ✓ New constraint added: reward >= 0');
+
+    // ===== STEP 4: VERIFY EXISTING DATA =====
+    console.log('\nStep 4: Verifying existing submissions...');
+    
+    const negativeRewards = await db.execute(sql`
+      SELECT COUNT(*) as count
+      FROM submissions
+      WHERE reward < 0;
     `);
     
-    if (testResult.rows.length > 0) {
-      const test = testResult.rows[0];
-      if (test.calculated === test.total_kills) {
-        console.log('✓ Trigger verification passed');
-      } else {
-        console.log('⚠ Trigger might not be working correctly');
-      }
+    const negCount = negativeRewards.rows[0]?.count || 0;
+    if (negCount > 0) {
+      console.log(`  ⚠ WARNING: Found ${negCount} submissions with negative rewards`);
+      console.log('  These should be reviewed and corrected');
     } else {
-      console.log('ℹ No users with kills to test trigger');
+      console.log('  ✓ No negative rewards found');
+    }
+
+    const zeroRewards = await db.execute(sql`
+      SELECT COUNT(*) as count
+      FROM submissions
+      WHERE reward = 0 AND status = 'approved';
+    `);
+    
+    const zeroCount = zeroRewards.rows[0]?.count || 0;
+    console.log(`  ℹ Found ${zeroCount} approved submissions with 0 reward`);
+
+    const positiveRewards = await db.execute(sql`
+      SELECT COUNT(*) as count
+      FROM submissions
+      WHERE reward > 0 AND status = 'approved';
+    `);
+    
+    const posCount = positiveRewards.rows[0]?.count || 0;
+    console.log(`  ℹ Found ${posCount} approved submissions with positive rewards`);
+
+    // ===== STEP 5: VERIFICATION =====
+    console.log('\nStep 5: Verifying constraint...');
+    
+    const constraintCheck = await db.execute(sql`
+      SELECT 
+        conname as constraint_name,
+        pg_get_constraintdef(oid) as definition
+      FROM pg_constraint
+      WHERE conname = 'submissions_reward_non_negative';
+    `);
+    
+    if (constraintCheck.rows.length > 0) {
+      console.log('\n📊 Active constraint:');
+      constraintCheck.rows.forEach((row: any) => {
+        console.log(`  ✓ ${row.constraint_name}`);
+        console.log(`    ${row.definition}`);
+      });
     }
 
     console.log('\n' + '='.repeat(70));
     console.log('✓ Migration completed successfully!');
     console.log('='.repeat(70) + '\n');
+    console.log('Changes made:');
+    console.log('  ✓ Removed old positive-only constraint');
+    console.log('  ✓ Added new constraint: reward >= 0');
+    console.log('  ✓ Zero rewards are now allowed for approved submissions');
+    console.log('\nNext steps:');
+    console.log('  1. Schema validation updated in code');
+    console.log('  2. Admins can now approve submissions with 0₽ reward');
+    console.log('  3. Useful for non-commercial categories (funny, etc.)');
+    console.log('');
     
     process.exit(0);
 

@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Eye, Check, X, FileVideo, FileImage, Loader2, MessageSquare } from "lucide-react";
+import { Eye, Check, X, FileVideo, FileImage, Loader2, MessageSquare, Trophy, DollarSign, Calendar, Hash } from "lucide-react";
 import { Submission } from "@/types/admin";
 import { FilePreview } from "./FilePreview";
 import { getCategoryIcon, getCategoryLabel, getStatusBadge } from "@/utils/adminUtils";
@@ -31,10 +31,27 @@ export function SubmissionsTable({
   const [rewardAmount, setRewardAmount] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
 
-  const handleApprove = async () => {
-    if (!selectedSubmission) return;
+  // Проверка, требуется ли обязательная награда >1
+  const isVictoryCategory = (category: string) => {
+    return category === 'victory' || category === 'Victory';
+  };
+
+  const isRewardValid = () => {
+    if (!selectedSubmission) return false;
     const reward = Number(rewardAmount);
-    if (!reward || reward <= 0) return;
+    
+    // Для побед требуется награда > 0
+    if (isVictoryCategory(selectedSubmission.category)) {
+      return reward >= 0;
+    }
+    
+    // Для остальных категорий (киллы и т.д.) можно 0
+    return reward >= 0;
+  };
+
+  const handleApprove = async () => {
+    if (!selectedSubmission || !isRewardValid()) return;
+    const reward = Number(rewardAmount);
     
     await onApprove(selectedSubmission.id, reward);
     setSelectedSubmission(null);
@@ -135,123 +152,205 @@ export function SubmissionsTable({
                         <Eye className="h-4 w-4" />
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-                      <DialogHeader>
-                        <DialogTitle className="font-gaming">Просмотр заявки</DialogTitle>
-                        <DialogDescription>
-                          Заявка от пользователя {submission.user?.username || submission.userId}
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-6">
+                    <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl p-0 border-0 bg-gradient-to-b from-background to-background/95 [&>button]:hidden">
+                      
+                      {/* Animated Background */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-purple-500/5 pointer-events-none" />
+                      
+                      {/* Header */}
+                      <div className="relative border-b border-border/50 bg-background/60 backdrop-blur-2xl">
+                        <div className="p-6">
+                          <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-center gap-4">
+                              <div className="relative">
+                                <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/20">
+                                  {getCategoryIcon(submission.category, "h-8 w-8 text-white")}
+                                </div>
+                                {submission.status === 'approved' && (
+                                  <div className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-green-500 border-2 border-background flex items-center justify-center">
+                                    <Check className="h-3 w-3 text-white" />
+                                  </div>
+                                )}
+                                {submission.status === 'rejected' && (
+                                  <div className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-red-500 border-2 border-background flex items-center justify-center">
+                                    <X className="h-3 w-3 text-white" />
+                                  </div>
+                                )}
+                              </div>
+                              <div>
+                                <h2 className="text-xl font-semibold mb-0.5">{getCategoryLabel(submission.category)}</h2>
+                                <p className="text-sm text-muted-foreground">
+                                  от @{submission.user?.username || submission.userId}
+                                </p>
+                                <div className="mt-1">
+                                  {getStatusBadge(submission.status)}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Reward Card (if approved) */}
+                          {submission.status === 'approved' && submission.reward !== undefined && (
+                            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-green-500/10 via-emerald-500/10 to-teal-500/10 border border-green-500/20 p-4">
+                              <div className="relative z-10 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="h-10 w-10 rounded-xl bg-green-500/20 flex items-center justify-center">
+                                    <DollarSign className="h-5 w-5 text-green-600" />
+                                  </div>
+                                  <div>
+                                    <div className="text-xs text-green-600/80 font-medium">Награда выдана</div>
+                                    <div className="text-2xl font-bold tabular-nums">{submission.reward} ₽</div>
+                                  </div>
+                                </div>
+                                {submission.reviewedAt && (
+                                  <div className="text-right">
+                                    <div className="text-xs text-green-600/80 font-medium">Проверено</div>
+                                    <div className="text-xs font-medium">
+                                      {new Date(submission.reviewedAt).toLocaleDateString('ru-RU')}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Rejection Card */}
+                          {submission.status === 'rejected' && submission.rejectionReason && (
+                            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-500/10 via-rose-500/10 to-red-500/10 border border-red-500/20 p-4">
+                              <div className="relative z-10">
+                                <div className="flex items-center gap-3 mb-2">
+                                  <div className="h-10 w-10 rounded-xl bg-red-500/20 flex items-center justify-center">
+                                    <X className="h-5 w-5 text-red-600" />
+                                  </div>
+                                  <div>
+                                    <div className="text-xs text-red-600/80 font-medium">Заявка отклонена</div>
+                                    <div className="text-sm font-medium text-red-700">{submission.rejectionReason}</div>
+                                  </div>
+                                </div>
+                                {submission.reviewedAt && (
+                                  <div className="text-xs text-red-600/80 pl-[52px]">
+                                    {new Date(submission.reviewedAt).toLocaleString('ru-RU')}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Content */}
+                      <div className="relative overflow-y-auto max-h-[calc(90vh-220px)] p-6 space-y-6">
+                        
                         {/* File Preview */}
-                        <FilePreview submission={submission} />
+                        <div>
+                          <h3 className="text-sm font-medium text-muted-foreground mb-3">Предпросмотр файла</h3>
+                          <FilePreview submission={submission} />
+                        </div>
                         
                         {/* Additional Text Section */}
                         {submission.additionalText && (
-                          <div className="bg-card/50 p-4 rounded-lg border">
-                            <div className="flex items-center gap-2 mb-3">
-                              <MessageSquare className="h-5 w-5 text-blue-500" />
-                              <Label className="text-base font-medium">Дополнительный текст:</Label>
-                            </div>
-                            <div className="bg-background/50 p-3 rounded-md border max-w-full">
-                              <p className="text-sm whitespace-pre-wrap break-all ">
-                                {submission.additionalText}
-                              </p>
+                          <div>
+                            <h3 className="text-sm font-medium text-muted-foreground mb-3">Дополнительный текст</h3>
+                            <div className="rounded-2xl border border-border/50 p-4 bg-muted/30">
+                              <div className="flex items-start gap-3">
+                                <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                                  <MessageSquare className="h-4 w-4 text-blue-500" />
+                                </div>
+                                <p className="text-sm whitespace-pre-wrap break-all flex-1">
+                                  {submission.additionalText}
+                                </p>
+                              </div>
                             </div>
                           </div>
                         )}
                         
-                        {/* Submission Details */}
-                        <div className="grid grid-cols-2 gap-4 text-sm bg-card/30 p-4 rounded-lg">
-                          <div>
-                            <strong className="text-foreground">Категория:</strong>
-                            <div className="flex items-center gap-2 mt-1">
-                              {getCategoryIcon(submission.category)}
-                              <span>{getCategoryLabel(submission.category)}</span>
+                        {/* Submission Details Grid */}
+                        <div>
+                          <h3 className="text-sm font-medium text-muted-foreground mb-3">Детали заявки</h3>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-primary/30 transition-all duration-300">
+                              <div className="absolute top-0 right-0 h-16 w-16 bg-primary/5 rounded-full blur-2xl group-hover:bg-primary/10 transition-colors" />
+                              <Trophy className="h-5 w-5 text-primary mb-2" />
+                              <div className="text-xs text-muted-foreground mb-1">Категория</div>
+                              <div className="text-sm font-medium">{getCategoryLabel(submission.category)}</div>
                             </div>
-                          </div>
-                          <div>
-                            <strong className="text-foreground">Тип файла:</strong>
-                            <div className="flex items-center gap-2 mt-1">
+
+                            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-purple-500/30 transition-all duration-300">
+                              <div className="absolute top-0 right-0 h-16 w-16 bg-purple-500/5 rounded-full blur-2xl group-hover:bg-purple-500/10 transition-colors" />
                               {submission.fileType === 'video' ? (
-                                <FileVideo className="h-4 w-4 text-gaming-primary" />
+                                <FileVideo className="h-5 w-5 text-purple-600 mb-2" />
                               ) : (
-                                <FileImage className="h-4 w-4 text-gaming-secondary" />
+                                <FileImage className="h-5 w-5 text-purple-600 mb-2" />
                               )}
-                              <span>{submission.fileType}</span>
+                              <div className="text-xs text-muted-foreground mb-1">Тип файла</div>
+                              <div className="text-sm font-medium">{submission.fileType}</div>
+                            </div>
+
+                            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-blue-500/30 transition-all duration-300">
+                              <div className="absolute top-0 right-0 h-16 w-16 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors" />
+                              <Calendar className="h-5 w-5 text-blue-600 mb-2" />
+                              <div className="text-xs text-muted-foreground mb-1">Дата создания</div>
+                              <div className="text-sm font-medium">{new Date(submission.createdAt).toLocaleString('ru-RU')}</div>
+                            </div>
+
+                            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-orange-500/30 transition-all duration-300">
+                              <div className="absolute top-0 right-0 h-16 w-16 bg-orange-500/5 rounded-full blur-2xl group-hover:bg-orange-500/10 transition-colors" />
+                              <FileImage className="h-5 w-5 text-orange-600 mb-2" />
+                              <div className="text-xs text-muted-foreground mb-1">Размер файла</div>
+                              <div className="text-sm font-medium">{(submission.fileSize / (1024 * 1024)).toFixed(2)} MB</div>
                             </div>
                           </div>
-                          <div>
-                            <strong className="text-foreground">Дата создания:</strong>
-                            <p className="mt-1">{new Date(submission.createdAt).toLocaleString('ru-RU')}</p>
-                          </div>
-                          <div>
-                            <strong className="text-foreground">Размер файла:</strong>
-                            <p className="mt-1">{(submission.fileSize / (1024 * 1024)).toFixed(2)} MB</p>
-                          </div>
-                          <div>
-                            <strong className="text-foreground">Статус:</strong>
-                            <div className="mt-1">{getStatusBadge(submission.status)}</div>
-                          </div>
-                          <div>
-                            <strong className="text-foreground">ID заявки:</strong>
-                            <p className="mt-1 font-mono text-xs">{submission.id}</p>
+                        </div>
+
+                        {/* ID Section */}
+                        <div className="rounded-2xl border border-border/50 p-4 bg-muted/30">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <Hash className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-sm text-muted-foreground">ID заявки</span>
+                            </div>
+                            <Badge variant="outline" className="font-mono text-xs">
+                              {submission.id}
+                            </Badge>
                           </div>
                         </div>
                         
-                        {/* Approval/Rejection Results */}
-                        {submission.status === 'approved' && submission.reward && (
-                          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4 rounded-lg">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Check className="h-5 w-5 text-green-600" />
-                              <strong className="text-green-800 dark:text-green-200">Заявка одобрена</strong>
-                            </div>
-                            <p><strong>Вознаграждение:</strong> {submission.reward} ₽</p>
-                            {submission.reviewedAt && (
-                              <p className="text-sm text-green-700 dark:text-green-300 mt-1">
-                                Проверено: {new Date(submission.reviewedAt).toLocaleString('ru-RU')}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        
-                        {submission.status === 'rejected' && submission.rejectionReason && (
-                          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 rounded-lg">
-                            <div className="flex items-center gap-2 mb-2">
-                              <X className="h-5 w-5 text-red-600" />
-                              <strong className="text-red-800 dark:text-red-200">Заявка отклонена</strong>
-                            </div>
-                            <p><strong>Причина:</strong> {submission.rejectionReason}</p>
-                            {submission.reviewedAt && (
-                              <p className="text-sm text-red-700 dark:text-red-300 mt-1">
-                                Проверено: {new Date(submission.reviewedAt).toLocaleString('ru-RU')}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        
                         {/* Moderation Actions */}
                         {submission.status === 'pending' && (
-                          <div className="space-y-4 border-t pt-4">
+                          <div className="space-y-4 border-t border-border/50 pt-6">
                             <h4 className="font-semibold text-lg font-gaming">Модерация</h4>
+                            
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div>
+                              <div className="space-y-2">
                                 <Label htmlFor="reward" className="text-sm font-medium">
                                   Вознаграждение (₽)
+                                  {isVictoryCategory(submission.category) && (
+                                    <span className="text-red-500 ml-1">*обязательно &gt;0</span>
+                                  )}
                                 </Label>
                                 <Input
                                   id="reward"
                                   type="number"
-                                  placeholder="Введите сумму"
+                                  placeholder={isVictoryCategory(submission.category) ? "Минимум 1 ₽" : "0 или больше"}
                                   value={rewardAmount}
                                   onChange={(e) => setRewardAmount(e.target.value)}
                                   data-testid="input-reward"
-                                  className="mt-1"
-                                  min="1"
+                                  min="0"
                                   max="10000"
+                                  className={!isRewardValid() && rewardAmount !== "" ? "border-red-500" : ""}
                                 />
+                                {isVictoryCategory(submission.category) && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Для побед награда обязательна
+                                  </p>
+                                )}
+                                {!isVictoryCategory(submission.category) && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Для киллов можно указать 0 ₽
+                                  </p>
+                                )}
                               </div>
-                              <div>
+                              <div className="space-y-2">
                                 <Label htmlFor="rejection-reason" className="text-sm font-medium">
                                   Причина отклонения
                                 </Label>
@@ -261,15 +360,15 @@ export function SubmissionsTable({
                                   value={rejectionReason}
                                   onChange={(e) => setRejectionReason(e.target.value)}
                                   data-testid="input-rejection-reason"
-                                  className="mt-1"
                                 />
                               </div>
                             </div>
+                            
                             <div className="flex gap-3 pt-2">
                               <Button
                                 className="flex-1 bg-gaming-success hover:bg-gaming-success/90"
                                 onClick={handleApprove}
-                                disabled={!rewardAmount || Number(rewardAmount) <= 0 || actionLoading}
+                                disabled={!isRewardValid() || rewardAmount === "" || actionLoading}
                                 data-testid="button-approve"
                               >
                                 {actionLoading ? (

@@ -86,6 +86,10 @@ export const users = pgTable("users", {
   discordId: text("discord_id").unique(),
   discordEmail: text("discord_email"),
   discordAvatar: text("discord_avatar"),
+
+  discordPremiumRoleId: varchar("discord_premium_role_id", { length: 255 }),
+  discordPremiumLastChecked: timestamp("discord_premium_last_checked"),
+  discordPremiumActive: boolean("discord_premium_active").default(false).notNull(),
   
   // Subscription screenshot fields
   subscriptionScreenshotUrl: text("subscription_screenshot_url"),
@@ -800,20 +804,23 @@ export const insertTerritorySchema = createInsertSchema(territories, {
 export const insertTerritoryClaimSchema = createInsertSchema(territoryClaims);
 export const insertTerritoryQueueSchema = createInsertSchema(territoryQueue);
 
+
 export const reviewSubmissionSchema = z.object({
   status: z.enum(['approved', 'rejected']),
-  reward: z.number().positive().optional(),
+  reward: z.number().min(0).optional(), // Разрешаем 0 и выше
   rejectionReason: z.string().optional(),
 }).refine((data) => {
   if (data.status === 'approved') {
-    return data.reward !== undefined && data.reward > 0;
+    // Для одобрения требуем наличие reward (может быть 0)
+    return data.reward !== undefined;
   }
   if (data.status === 'rejected') {
+    // Для отклонения требуем причину
     return data.rejectionReason !== undefined && data.rejectionReason.trim().length > 0;
   }
   return true;
 }, {
-  message: "For approved submissions, a positive reward is required. For rejected submissions, a rejection reason is required."
+  message: "For approved submissions, reward is required (can be 0). For rejected submissions, a rejection reason is required."
 });
 
 export const updateUserBalanceSchema = z.object({

@@ -1,3 +1,4 @@
+// client/src/components/AdminPremium.tsx
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -5,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Crown, AlertCircle, TrendingUp, X, Award, History, RefreshCw, Check } from "lucide-react";
+import { Crown, AlertCircle, TrendingUp, X, Award, History, RefreshCw, Check, Users, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import PremiumBadge from "./PremiumBadge";
 import { premiumApiService, PremiumUser, PremiumHistory } from "@/services/premiumApiService";
@@ -28,8 +29,14 @@ export default function AdminPremiumTab({ authToken }: AdminPremiumTabProps) {
   const [loading, setLoading] = useState(false);
   const [showGrantDialog, setShowGrantDialog] = useState(false);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
+  const [showDiscordCheckDialog, setShowDiscordCheckDialog] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [premiumHistory, setPremiumHistory] = useState<PremiumHistory[]>([]);
+  const [discordCheckUserId, setDiscordCheckUserId] = useState('');
+  const [discordCheckResult, setDiscordCheckResult] = useState<any>(null);
+  const [checkingDiscord, setCheckingDiscord] = useState(false);
+  const [checkingAllDiscord, setCheckingAllDiscord] = useState(false);
+  
   const [grantForm, setGrantForm] = useState<GrantPremiumForm>({
     userId: '',
     tier: 'basic',
@@ -74,11 +81,11 @@ export default function AdminPremiumTab({ authToken }: AdminPremiumTabProps) {
       await premiumApiService.grantPremium(
         grantForm.userId,
         grantForm.tier,
-        Number(grantForm.durationDays), // Преобразуем в число
+        Number(grantForm.durationDays),
         grantForm.reason,
         grantForm.source,
         authToken
-        );
+      );
       toast({
         title: "Успешно",
         description: "Premium статус выдан"
@@ -167,6 +174,104 @@ export default function AdminPremiumTab({ authToken }: AdminPremiumTabProps) {
     }
   };
 
+  // 🆕 Проверка Discord Premium для конкретного пользователя
+  const handleCheckDiscordUser = async () => {
+    if (!discordCheckUserId.trim()) {
+      toast({
+        title: "Ошибка",
+        description: "Введите User ID",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setCheckingDiscord(true);
+    setDiscordCheckResult(null);
+    
+    try {
+      const response = await fetch(`/api/user/${discordCheckUserId}/check-discord-premium`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to check Discord premium');
+      }
+
+      const result = await response.json();
+      setDiscordCheckResult(result);
+      
+      toast({
+        title: "Проверка завершена",
+        description: result.premiumActive 
+          ? `✅ Premium активирован (${result.premiumTier})`
+          : "❌ Premium роли не найдено",
+        variant: result.premiumActive ? "default" : "destructive"
+      });
+
+      await fetchPremiumUsers();
+    } catch (error) {
+      console.error('Failed to check Discord premium:', error);
+      toast({
+        title: "Ошибка",
+        description: error instanceof Error ? error.message : "Не удалось проверить Discord premium",
+        variant: "destructive"
+      });
+    } finally {
+      setCheckingDiscord(false);
+    }
+  };
+
+  // 🆕 Проверка всех пользователей с Discord
+  const handleCheckAllDiscordUsers = async () => {
+    if (!confirm('Запустить проверку Discord Premium для всех пользователей? Это может занять несколько минут.')) {
+      return;
+    }
+
+    setCheckingAllDiscord(true);
+    
+    try {
+      const response = await fetch('/api/admin/check-all-discord-premium', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to start Discord check');
+      }
+
+      const result = await response.json();
+      
+      toast({
+        title: "Проверка запущена",
+        description: result.message || "Discord Premium проверка начата в фоновом режиме",
+      });
+
+      // Обновим список через 10 секунд
+      setTimeout(() => {
+        fetchPremiumUsers();
+      }, 10000);
+      
+    } catch (error) {
+      console.error('Failed to check all Discord users:', error);
+      toast({
+        title: "Ошибка",
+        description: error instanceof Error ? error.message : "Не удалось запустить проверку",
+        variant: "destructive"
+      });
+    } finally {
+      setCheckingAllDiscord(false);
+    }
+  };
+
   const stats = {
     total: premiumUsers.length,
     active: premiumUsers.filter(u => !u.isExpired).length,
@@ -214,7 +319,19 @@ export default function AdminPremiumTab({ authToken }: AdminPremiumTabProps) {
       {/* Actions */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-xl font-bold">Premium Пользователи</h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {/* 🆕 Discord Check Button */}
+          <Button 
+            variant="outline"
+            onClick={() => setShowDiscordCheckDialog(true)}
+            className="bg-indigo-500/10 border-indigo-500/30 hover:bg-indigo-500/20"
+          >
+            <svg className="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+            </svg>
+            Проверка Discord
+          </Button>
+
           <Button 
             variant="outline" 
             onClick={handleManualCheck}
@@ -223,6 +340,7 @@ export default function AdminPremiumTab({ authToken }: AdminPremiumTabProps) {
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Проверить истечение
           </Button>
+          
           <Button onClick={() => setShowGrantDialog(true)}>
             <Award className="h-4 w-4 mr-2" />
             Выдать Premium
@@ -324,6 +442,165 @@ export default function AdminPremiumTab({ authToken }: AdminPremiumTabProps) {
           </table>
         </div>
       </div>
+
+      {/* 🆕 Discord Check Dialog */}
+      <Dialog open={showDiscordCheckDialog} onOpenChange={setShowDiscordCheckDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <svg className="h-6 w-6 text-indigo-500" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+              </svg>
+              Проверка Discord Premium
+            </DialogTitle>
+            <DialogDescription>
+              Проверка роли Premium на Discord сервере и синхронизация с сайтом
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            {/* Check All Users */}
+            <div className="p-4 rounded-xl bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20">
+              <div className="flex items-start gap-4">
+                <div className="h-12 w-12 rounded-xl bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
+                  <Users className="h-6 w-6 text-indigo-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold mb-1">Проверить всех пользователей</h3>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Запускает проверку Discord ролей для всех пользователей с привязанным Discord аккаунтом. 
+                    Процесс выполняется в фоновом режиме.
+                  </p>
+                  <Button
+                    onClick={handleCheckAllDiscordUsers}
+                    disabled={checkingAllDiscord}
+                    className="w-full"
+                  >
+                    {checkingAllDiscord ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Проверка запущена...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="h-4 w-4 mr-2" />
+                        Проверить всех
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border"></div>
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">или</span>
+              </div>
+            </div>
+
+            {/* Check Single User */}
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="discord-check-user">Проверить конкретного пользователя</Label>
+                <div className="flex gap-2 mt-2">
+                  <Input
+                    id="discord-check-user"
+                    value={discordCheckUserId}
+                    onChange={(e) => setDiscordCheckUserId(e.target.value)}
+                    placeholder="User ID (UUID)"
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={handleCheckDiscordUser}
+                    disabled={checkingDiscord || !discordCheckUserId.trim()}
+                  >
+                    {checkingDiscord ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Check className="h-4 w-4 mr-2" />
+                        Проверить
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Введите User ID пользователя для проверки его Discord роли
+                </p>
+              </div>
+
+              {/* Check Result */}
+              {discordCheckResult && (
+                <div className={`p-4 rounded-lg border ${
+                  discordCheckResult.premiumActive 
+                    ? 'bg-green-500/10 border-green-500/30' 
+                    : 'bg-red-500/10 border-red-500/30'
+                }`}>
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    {discordCheckResult.premiumActive ? (
+                      <>
+                        <Check className="h-5 w-5 text-green-600" />
+                        Premium активирован
+                      </>
+                    ) : (
+                      <>
+                        <X className="h-5 w-5 text-red-600" />
+                        Premium роли нет
+                      </>
+                    )}
+                  </h4>
+                  <div className="space-y-2 text-sm">
+                    {discordCheckResult.user && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Пользователь:</span>
+                          <span>{discordCheckResult.user.username}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Discord ID:</span>
+                          <span className="font-mono text-xs">{discordCheckResult.user.discordId}</span>
+                        </div>
+                      </>
+                    )}
+                    {discordCheckResult.check && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Роль на сервере:</span>
+                          <span>{discordCheckResult.check.hasDiscordRole ? '✅ Есть' : '❌ Нет'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Premium на сайте:</span>
+                          <span>
+                            {discordCheckResult.check.premiumTier !== 'none' 
+                              ? `✅ ${discordCheckResult.check.premiumTier}` 
+                              : '❌ Нет'}
+                          </span>
+                        </div>
+                        {discordCheckResult.check.premiumEndDate && (
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Истекает:</span>
+                            <span>{new Date(discordCheckResult.check.premiumEndDate).toLocaleDateString('ru-RU')}</span>
+                          </div>
+                        )}
+                        {discordCheckResult.check.premiumSource && (
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Источник:</span>
+                            <span className="capitalize">{discordCheckResult.check.premiumSource}</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Grant Premium Dialog */}
       <Dialog open={showGrantDialog} onOpenChange={setShowGrantDialog}>

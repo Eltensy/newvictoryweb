@@ -986,41 +986,50 @@ async getAllUsers(): Promise<User[]> {
       .orderBy(desc(adminActions.createdAt)) as AdminAction[];
   }
 
-  async getAdminActionsWithUsers(): Promise<AdminAction[]> {
-    const rows = await db
-      .select({
-        id: adminActions.id,
-        adminId: adminActions.adminId,
-        action: adminActions.action,
-        targetType: adminActions.targetType,
-        targetId: adminActions.targetId,
-        details: adminActions.details,
-        createdAt: adminActions.createdAt,
-        username: users.username,
-        displayName: users.displayName,
-        telegramUsername: users.telegramUsername
-      })
-      .from(adminActions)
-      .leftJoin(users, sql`${adminActions.adminId} = ${users.id}::uuid`)
-      .orderBy(desc(adminActions.createdAt));
+  // server/storage.ts
 
-    return rows.map(row => ({
-      id: row.id,
-      adminId: row.adminId,
-      action: row.action,
-      targetType: row.targetType,
-      targetId: row.targetId,
-      details: row.details,
-      createdAt: row.createdAt,
-      admin: row.adminId
+// server/storage.ts - найди метод getAdminActionsWithUsers и замени его на:
+
+async getAdminActionsWithUsers(): Promise<AdminAction[]> {
+  const rows = await db
+    .select({
+      id: adminActions.id,
+      adminId: adminActions.adminId,
+      action: adminActions.action,
+      targetType: adminActions.targetType,
+      targetId: adminActions.targetId,
+      details: adminActions.details,
+      createdAt: adminActions.createdAt,
+      username: users.username,
+      displayName: users.displayName,
+      telegramUsername: users.telegramUsername
+    })
+    .from(adminActions)
+    .leftJoin(users, and(
+      sql`${adminActions.adminId}::text = ${users.id}::text`,
+      sql`${adminActions.adminId} != 'system'`
+    ))
+    .orderBy(desc(adminActions.createdAt));
+
+  return rows.map(row => ({
+    id: row.id,
+    adminId: row.adminId,
+    action: row.action,
+    targetType: row.targetType,
+    targetId: row.targetId,
+    details: row.details,
+    createdAt: row.createdAt,
+    admin: row.adminId === 'system' 
+      ? undefined 
+      : row.username
         ? {
-            username: row.username ?? "",
+            username: row.username,
             displayName: row.displayName ?? "",
             telegramUsername: row.telegramUsername ?? ""
           }
         : undefined
-    }));
-  }
+  }));
+}
 
   // ===== SUBSCRIPTION SCREENSHOT OPERATIONS =====
   

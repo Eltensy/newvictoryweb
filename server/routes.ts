@@ -7,6 +7,7 @@ import { fileTypeFromBuffer } from "file-type";
 import { storage } from "./storage";
 import { promises as fs } from 'fs';
 import { cloudStorage } from './fileStorage.js';
+import { discordPremiumService } from './discordPremiumService';
 import dotenv from "dotenv";
 dotenv.config();
 import { 
@@ -313,6 +314,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
           : undefined
       });
+
+      discordPremiumService.updateUserPremiumFromDiscord(stateData.userId).catch(console.error);
       
       console.log(`✅ Discord linked for user ${stateData.userId}: ${discordUser.username}`);
       res.redirect('/?success=discord_linked');
@@ -962,19 +965,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/admin/actions", async (req, res) => {
-    try {
-      const authResult = await authenticateAdmin(req);
-      if ('error' in authResult) {
-        return res.status(authResult.status).json({ error: authResult.error });
-      }
-
-      const actions = await storage.getAdminActions();
-      res.json(actions);
-    } catch (error) {
-      console.error('Get admin actions error:', error);
-      res.status(500).json({ error: "Internal server error" });
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
     }
-  });
+
+    const actions = await storage.getAdminActionsWithUsers();
+    res.json(actions);
+  } catch (error) {
+    console.error('Get admin actions error:', error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
   // ===== PREMIUM ROUTES =====
 
@@ -1383,6 +1386,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to process withdrawal" });
     }
   });
+
+
+
+  app.post("/api/user/:id/check-discord-premium", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Пользователь может проверить только себя, админ - любого
+    if (authResult.userId !== req.params.id && !authResult.user.isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    await discordPremiumService.updateUserPremiumFromDiscord(req.params.id);
+
+    const updatedUser = await storage.getUser(req.params.id);
+    
+    res.json({
+      success: true,
+      premiumActive: updatedUser?.premiumTier !== 'none',
+      premiumTier: updatedUser?.premiumTier,
+      premiumEndDate: updatedUser?.premiumEndDate,
+      discordPremiumActive: updatedUser?.discordPremiumActive
+    });
+  } catch (error) {
+    console.error('Check Discord premium error:', error);
+    res.status(500).json({ error: "Failed to check Discord premium" });
+  }
+});
+
+// Admin: Force check all Discord users
+app.post("/api/admin/check-all-discord-premium", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    // Запускаем проверку асинхронно
+    discordPremiumService.checkAllDiscordUsers().catch(console.error);
+
+    res.json({
+      success: true,
+      message: "Discord premium check started"
+    });
+  } catch (error) {
+    console.error('Admin check Discord premium error:', error);
+    res.status(500).json({ error: "Failed to start Discord premium check" });
+  }
+});
 
   // ===== SUBSCRIPTION SCREENSHOT =====
 
@@ -1994,6 +2049,7 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
     res.status(500).json({ error: "Failed to create tournament" });
   }
 });
+
 app.post("/api/admin/submission/:id/review", async (req, res) => {
   try {
     const authResult = await authenticateAdmin(req);
@@ -2001,14 +2057,31 @@ app.post("/api/admin/submission/:id/review", async (req, res) => {
       return res.status(authResult.status).json({ error: authResult.error });
     }
 
+    // Парсим reward правильно - может быть 0, число или undefined
+    let parsedReward: number | undefined = undefined;
+    if (req.body.reward !== undefined && req.body.reward !== null && req.body.reward !== '') {
+      const rewardNum = Number(req.body.reward);
+      if (!isNaN(rewardNum)) {
+        parsedReward = rewardNum;
+      }
+    }
+
     const reviewData = {
       status: req.body.status,
-      reward: req.body.reward ? Number(req.body.reward) : undefined,
+      reward: parsedReward,
       rejectionReason: req.body.rejectionReason
     };
 
+    console.log('📝 Review data:', {
+      status: reviewData.status,
+      reward: reviewData.reward,
+      rawReward: req.body.reward,
+      rejectionReason: reviewData.rejectionReason
+    });
+
     const validation = reviewSubmissionSchema.safeParse(reviewData);
     if (!validation.success) {
+      console.error('❌ Validation failed:', validation.error.errors);
       return res.status(400).json({ 
         error: "Invalid review data", 
         details: validation.error.errors 
@@ -2017,8 +2090,8 @@ app.post("/api/admin/submission/:id/review", async (req, res) => {
 
     const { status, reward, rejectionReason } = validation.data;
     
-    if (status === 'approved' && (!reward || reward <= 0)) {
-      return res.status(400).json({ error: "Valid reward amount required for approved submissions" });
+    if (status === 'approved' && reward === undefined) {
+      return res.status(400).json({ error: "Reward amount required for approved submissions" });
     }
     
     if (status === 'rejected' && !rejectionReason?.trim()) {
@@ -2033,7 +2106,7 @@ app.post("/api/admin/submission/:id/review", async (req, res) => {
       rejectionReason
     );
 
-    if (status === 'approved' && reward) {
+    if (status === 'approved' && reward !== undefined) {
       // Выдаем баланс
       await storage.updateUserBalance(submission.userId, reward);
       
@@ -2070,7 +2143,7 @@ app.post("/api/admin/submission/:id/review", async (req, res) => {
         details: JSON.stringify({ 
           reward, 
           submissionId: submission.id,
-          killType: killType || 'none' // 🆕 Добавляем тип килла в детали
+          killType: killType || 'none'
         })
       });
     } else if (status === 'rejected') {

@@ -5,7 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Loader2, Eye } from "lucide-react";
+import { Loader2, Eye, Shield, User, FileText, ExternalLink } from "lucide-react";
 import { AdminAction } from "@/types/admin";
 import { getActionIcon, getActionLabel, parseActionDetails } from "@/utils/adminUtils";
 
@@ -17,10 +17,35 @@ interface AdminLogsTableProps {
 export function AdminLogsTable({ logs, loading }: AdminLogsTableProps) {
   const [selectedAction, setSelectedAction] = useState<AdminAction | null>(null);
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
+  const [targetUserInfo, setTargetUserInfo] = useState<{ username?: string; displayName?: string } | null>(null);
+  const [loadingUserInfo, setLoadingUserInfo] = useState(false);
 
-  const handleShowDetails = (action: AdminAction) => {
+  const handleShowDetails = async (action: AdminAction) => {
     setSelectedAction(action);
     setShowDetailsDialog(true);
+    setTargetUserInfo(null);
+    
+    // Загружаем информацию о целевом пользователе если targetType = 'user'
+    if (action.targetType === 'user') {
+      setLoadingUserInfo(true);
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`/api/user/${action.targetId}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.ok) {
+          const userData = await response.json();
+          setTargetUserInfo({
+            username: userData.username,
+            displayName: userData.displayName
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch target user info:', error);
+      } finally {
+        setLoadingUserInfo(false);
+      }
+    }
   };
 
   if (loading) {
@@ -55,6 +80,7 @@ export function AdminLogsTable({ logs, loading }: AdminLogsTableProps) {
               </TableHeader>
               <TableBody>
                 {logs.map((action) => {
+                  // Правильное определение имени администратора
                   const adminName = action.adminId === 'system' 
                     ? 'Система'
                     : action.admin?.displayName || action.admin?.username || 'Неизвестно';
@@ -68,10 +94,17 @@ export function AdminLogsTable({ logs, loading }: AdminLogsTableProps) {
                   return (
                     <TableRow key={action.id}>
                       <TableCell>
-                        <div>
-                          <div className="font-medium">{adminName}</div>
-                          <div className="text-sm text-muted-foreground">
-                            {adminUsername}
+                        <div className="flex items-center gap-2">
+                          {action.adminId === 'system' ? (
+                            <Shield className="h-4 w-4 text-blue-500" />
+                          ) : (
+                            <User className="h-4 w-4 text-purple-500" />
+                          )}
+                          <div>
+                            <div className="font-medium">{adminName}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {adminUsername}
+                            </div>
                           </div>
                         </div>
                       </TableCell>
@@ -121,32 +154,60 @@ export function AdminLogsTable({ logs, loading }: AdminLogsTableProps) {
         </CardContent>
       </Card>
 
-      {/* Details Dialog */}
+      {/* Modern Details Dialog */}
       <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Детали действия</DialogTitle>
-            <DialogDescription>
-              Подробная информация о действии администратора
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden rounded-3xl p-0 border-0 bg-gradient-to-b from-background to-background/95">
+          
+          {/* Animated Background */}
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-purple-500/5 pointer-events-none" />
+          
+          {/* Header */}
+          <div className="relative border-b border-border/50 bg-background/60 backdrop-blur-2xl">
+            <div className="p-6">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-purple-500 via-purple-600 to-purple-700 flex items-center justify-center shadow-lg shadow-purple-500/20">
+                      <FileText className="h-8 w-8 text-white" />
+                    </div>
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold mb-0.5">Детали действия</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Подробная информация о действии администратора
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
+          {/* Content */}
           {selectedAction && (
-            <div className="space-y-4">
-              {/* Admin Info */}
-              <div className="p-4 rounded-lg bg-muted/50">
-                <h3 className="font-semibold mb-2">Администратор</h3>
-                <div className="space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Имя:</span>
+            <div className="relative overflow-y-auto max-h-[calc(90vh-140px)] p-6 space-y-4">
+              
+              {/* Admin Info Card */}
+              <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-purple-500/30 transition-all duration-300">
+                <div className="absolute top-0 right-0 h-16 w-16 bg-purple-500/5 rounded-full blur-2xl group-hover:bg-purple-500/10 transition-colors" />
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  {selectedAction.adminId === 'system' ? (
+                    <Shield className="h-4 w-4 text-blue-500" />
+                  ) : (
+                    <User className="h-4 w-4 text-purple-500" />
+                  )}
+                  Администратор
+                </h3>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Имя:</span>
                     <span className="font-medium">
                       {selectedAction.adminId === 'system' 
                         ? 'Система'
                         : selectedAction.admin?.displayName || 'Неизвестно'}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Username:</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Username:</span>
                     <span className="font-mono text-sm">
                       {selectedAction.adminId === 'system'
                         ? '@system'
@@ -156,15 +217,15 @@ export function AdminLogsTable({ logs, loading }: AdminLogsTableProps) {
                     </span>
                   </div>
                   {selectedAction.admin?.telegramUsername && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Telegram:</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Telegram:</span>
                       <span className="font-mono text-sm">
                         @{selectedAction.admin.telegramUsername}
                       </span>
                     </div>
                   )}
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">ID:</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">ID:</span>
                     <span className="font-mono text-xs text-muted-foreground">
                       {selectedAction.adminId}
                     </span>
@@ -172,32 +233,35 @@ export function AdminLogsTable({ logs, loading }: AdminLogsTableProps) {
                 </div>
               </div>
 
-              {/* Action Info */}
-              <div className="p-4 rounded-lg bg-muted/50">
-                <h3 className="font-semibold mb-2">Действие</h3>
-                <div className="space-y-1">
+              {/* Action Info Card */}
+              <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-blue-500/30 transition-all duration-300">
+                <div className="absolute top-0 right-0 h-16 w-16 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors" />
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  {getActionIcon(selectedAction.action)}
+                  Действие
+                </h3>
+                <div className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Тип:</span>
+                    <span className="text-sm text-muted-foreground">Тип:</span>
                     <div className="flex items-center gap-2">
-                      {getActionIcon(selectedAction.action)}
                       <span className="font-medium">
                         {getActionLabel(selectedAction.action)}
                       </span>
                     </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Цель:</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Цель:</span>
                     <Badge variant="outline">{selectedAction.targetType}</Badge>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Target ID:</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Target ID:</span>
                     <span className="font-mono text-xs text-muted-foreground">
-                      {selectedAction.targetId}
+                      {selectedAction.targetId.slice(0, 16)}...
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Дата:</span>
-                    <span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Дата:</span>
+                    <span className="text-sm">
                       {new Date(selectedAction.createdAt).toLocaleString('ru-RU', {
                         day: '2-digit',
                         month: 'long',
@@ -211,11 +275,52 @@ export function AdminLogsTable({ logs, loading }: AdminLogsTableProps) {
                 </div>
               </div>
 
-              {/* Details */}
+              {/* Target User Info Card (если targetType = 'user') */}
+              {selectedAction.targetType === 'user' && (
+                <div className="group relative overflow-hidden rounded-2xl border border-green-500/30 bg-green-500/5 p-4">
+                  <h3 className="font-semibold mb-3 flex items-center gap-2">
+                    <User className="h-4 w-4 text-green-600" />
+                    Целевой пользователь
+                  </h3>
+                  {loadingUserInfo ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-5 w-5 animate-spin text-green-600" />
+                      <span className="ml-2 text-sm text-muted-foreground">Загрузка...</span>
+                    </div>
+                  ) : targetUserInfo ? (
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Имя:</span>
+                        <span className="font-medium">{targetUserInfo.displayName}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Username:</span>
+                        <span className="font-mono text-sm">@{targetUserInfo.username}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">User ID:</span>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {selectedAction.targetId}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      Не удалось загрузить информацию о пользователе
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Details Card */}
               {selectedAction.details && (
-                <div className="p-4 rounded-lg bg-muted/50">
-                  <h3 className="font-semibold mb-2">Детали</h3>
-                  <ActionDetails action={selectedAction} />
+                <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-orange-500/30 transition-all duration-300">
+                  <div className="absolute top-0 right-0 h-16 w-16 bg-orange-500/5 rounded-full blur-2xl group-hover:bg-orange-500/10 transition-colors" />
+                  <h3 className="font-semibold mb-3 flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-orange-600" />
+                    Детали
+                  </h3>
+                  <ActionDetails action={selectedAction} targetUserInfo={targetUserInfo} />
                 </div>
               )}
             </div>
@@ -227,7 +332,7 @@ export function AdminLogsTable({ logs, loading }: AdminLogsTableProps) {
 }
 
 // Component for rendering action-specific details
-function ActionDetails({ action }: { action: AdminAction }) {
+function ActionDetails({ action, targetUserInfo }: { action: AdminAction; targetUserInfo: { username?: string; displayName?: string } | null }) {
   const details = parseActionDetails(action.details);
 
   // Approve submission
@@ -242,6 +347,12 @@ function ActionDetails({ action }: { action: AdminAction }) {
           <div className="flex justify-between">
             <span className="text-muted-foreground">Submission ID:</span>
             <span className="font-mono text-xs">{details.submissionId}</span>
+          </div>
+        )}
+        {targetUserInfo && (
+          <div className="flex justify-between pt-2 border-t border-border/50">
+            <span className="text-muted-foreground">Пользователь:</span>
+            <span className="font-medium">{targetUserInfo.displayName} (@{targetUserInfo.username})</span>
           </div>
         )}
       </div>
@@ -262,6 +373,12 @@ function ActionDetails({ action }: { action: AdminAction }) {
           <div className="flex justify-between">
             <span className="text-muted-foreground">Submission ID:</span>
             <span className="font-mono text-xs">{details.submissionId}</span>
+          </div>
+        )}
+        {targetUserInfo && (
+          <div className="flex justify-between pt-2 border-t border-border/50">
+            <span className="text-muted-foreground">Пользователь:</span>
+            <span className="font-medium">{targetUserInfo.displayName} (@{targetUserInfo.username})</span>
           </div>
         )}
       </div>
@@ -288,6 +405,12 @@ function ActionDetails({ action }: { action: AdminAction }) {
           <div>
             <span className="text-muted-foreground">Причина:</span>
             <p className="mt-1 text-sm">{details.reason}</p>
+          </div>
+        )}
+        {targetUserInfo && (
+          <div className="flex justify-between pt-2 border-t border-border/50">
+            <span className="text-muted-foreground">Пользователь:</span>
+            <span className="font-medium">{targetUserInfo.displayName} (@{targetUserInfo.username})</span>
           </div>
         )}
       </div>
@@ -320,6 +443,12 @@ function ActionDetails({ action }: { action: AdminAction }) {
           <div>
             <span className="text-muted-foreground">Причина отклонения:</span>
             <p className="mt-1 text-sm text-destructive">{details.rejectionReason}</p>
+          </div>
+        )}
+        {targetUserInfo && (
+          <div className="flex justify-between pt-2 border-t border-border/50">
+            <span className="text-muted-foreground">Пользователь:</span>
+            <span className="font-medium">{targetUserInfo.displayName} (@{targetUserInfo.username})</span>
           </div>
         )}
       </div>
@@ -366,6 +495,12 @@ function ActionDetails({ action }: { action: AdminAction }) {
             <Badge variant="outline">{details.previousTier}</Badge>
           </div>
         )}
+        {targetUserInfo && (
+          <div className="flex justify-between pt-2 border-t border-border/50">
+            <span className="text-muted-foreground">Пользователь:</span>
+            <span className="font-medium">{targetUserInfo.displayName} (@{targetUserInfo.username})</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -389,9 +524,10 @@ function ActionDetails({ action }: { action: AdminAction }) {
               href={details.screenshotUrl} 
               target="_blank" 
               rel="noopener noreferrer"
-              className="block mt-1 text-sm text-blue-600 hover:underline break-all"
+              className="flex items-center gap-1 mt-1 text-sm text-blue-600 hover:underline break-all"
             >
-              {details.screenshotUrl}
+              Открыть скриншот
+              <ExternalLink className="h-3 w-3" />
             </a>
           </div>
         )}
@@ -403,6 +539,12 @@ function ActionDetails({ action }: { action: AdminAction }) {
         )}
         {details.autoApproved && (
           <Badge variant="outline" className="mt-2">Авто-одобрено</Badge>
+        )}
+        {targetUserInfo && (
+          <div className="flex justify-between pt-2 border-t border-border/50">
+            <span className="text-muted-foreground">Пользователь:</span>
+            <span className="font-medium">{targetUserInfo.displayName} (@{targetUserInfo.username})</span>
+          </div>
         )}
       </div>
     );

@@ -15,7 +15,9 @@ import {
   Copy,
   ExternalLink,
   X,
-  Eye
+  RefreshCw,
+  Maximize2,
+  Minimize2
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { PremiumStatusCard } from './PremiumBadge';
@@ -29,8 +31,10 @@ interface UserProfileProps {
 
 export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
   const { user, getAuthToken, logout, refreshProfile } = useAuth();
-  const { premiumStatus, loading: premiumLoading } = usePremium();
+  const { premiumStatus, loading: premiumLoading, refetch: refetchPremium } = usePremium();
   const { toast } = useToast();
+  
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   const [stats, setStats] = useState({
     totalSubmissions: 0,
@@ -45,7 +49,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
   });
   const [loadingStats, setLoadingStats] = useState(false);
   
-  // Kill stats state
   const [killStats, setKillStats] = useState({
     goldKills: 0,
     silverKills: 0,
@@ -68,6 +71,19 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
   } | null>(null);
   const [isCheckingTelegramStatus, setIsCheckingTelegramStatus] = useState(false);
 
+  const [checkingDiscordPremium, setCheckingDiscordPremium] = useState(false);
+  const [lastDiscordCheck, setLastDiscordCheck] = useState<number>(0);
+  const [discordCheckCooldown, setDiscordCheckCooldown] = useState<number>(0);
+
+  useEffect(() => {
+    if (discordCheckCooldown > 0) {
+      const timer = setTimeout(() => {
+        setDiscordCheckCooldown(discordCheckCooldown - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [discordCheckCooldown]);
+
   useEffect(() => {
     if (!user) return;
     
@@ -78,7 +94,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
       try {
         const t = getAuthToken();
 
-        // Загружаем статистику сабмишинов
         setLoadingStats(true);
         const statsRes = await fetch(`/api/user/${user.id}/stats`, {
           headers: { Authorization: `Bearer ${t}` },
@@ -87,7 +102,6 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
         setStats(statsData);
         setLoadingStats(false);
 
-        // Загружаем статистику киллов
         setLoadingKills(true);
         const killStatsRes = await fetch(`/api/user/${user.id}/kill-stats`, {
           headers: { Authorization: `Bearer ${t}` },
@@ -106,7 +120,72 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     fetchData();
   }, [user?.id, user?.telegramUsername, user?.discordUsername, getAuthToken]);
 
-  // Telegram bot authorization flow
+  const handleCheckDiscordPremium = async () => {
+    if (!user?.id) return;
+
+    const now = Date.now();
+    const timeSinceLastCheck = (now - lastDiscordCheck) / 1000;
+    
+    if (timeSinceLastCheck < 30) {
+      const remaining = Math.ceil(30 - timeSinceLastCheck);
+      toast({
+        title: "Подождите",
+        description: `Следующая проверка через ${remaining} сек.`,
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setCheckingDiscordPremium(true);
+    
+    try {
+      const t = getAuthToken();
+      const response = await fetch(`/api/user/${user.id}/check-discord-premium`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${t}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Не удалось проверить Discord premium');
+      }
+
+      const result = await response.json();
+      
+      await refreshProfile();
+      await refetchPremium();
+      
+      setLastDiscordCheck(now);
+      setDiscordCheckCooldown(30);
+
+      if (result.premiumActive) {
+        toast({
+          title: "✅ Premium активирован",
+          description: `Ваш премиум статус: ${result.premiumTier}`,
+        });
+      } else {
+        toast({
+          title: "❌ Premium роль не найдена",
+          description: "Убедитесь что у вас есть роль Premium на Discord сервере",
+          variant: "destructive"
+        });
+      }
+      
+    } catch (error) {
+      console.error('Failed to check Discord premium:', error);
+      toast({
+        title: "Ошибка",
+        description: error instanceof Error ? error.message : "Не удалось проверить Discord premium",
+        variant: "destructive"
+      });
+    } finally {
+      setCheckingDiscordPremium(false);
+    }
+  };
+
   const handleLinkTelegram = async () => {
     if (!user) return;
     setIsLinkingTelegram(true);
@@ -278,8 +357,12 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
             setLinkedDiscord(updatedUser.discordUsername);
             toast({
               title: "Успешно",
-              description: "Discord аккаунт привязан",
+              description: "Discord аккаунт привязан. Проверяем Premium роль...",
             });
+            
+            setTimeout(() => {
+              handleCheckDiscordPremium();
+            }, 1000);
           }
         }
       }, 1000);
@@ -335,14 +418,40 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg w-full max-h-[90vh] overflow-hidden rounded-3xl p-0 border-0 bg-gradient-to-b from-background to-background/95">
+      <DialogContent 
+        className={`${
+          isFullscreen 
+            ? 'max-w-[95vw] w-[95vw] h-[95vh]' 
+            : 'max-w-lg w-full max-h-[90vh]'
+        } overflow-hidden rounded-3xl p-0 border-0 bg-gradient-to-b from-background to-background/95 transition-all duration-300 [&>button]:hidden`}
+      >
         
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-purple-500/5 pointer-events-none" />
         
         {/* Header */}
         <div className="relative border-b border-border/50 bg-background/60 backdrop-blur-2xl">
+          {/* Кнопки управления окном */}
+          <div className="absolute top-4 right-4 flex items-center gap-2 z-20">
+            <button
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              className="h-8 w-8 rounded-lg hover:bg-muted/80 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {isFullscreen ? (
+                <Minimize2 className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              onClick={onClose}
+              className="h-8 w-8 rounded-lg hover:bg-muted/80 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
           <div className="p-6">
-            <div className="flex items-start justify-between mb-4">
+            <div className="flex items-start justify-between mb-4 pr-20">
               <div className="flex items-center gap-4">
                 <div className="relative">
                   <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/20">
@@ -376,276 +485,336 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
         </div>
 
         {/* Content */}
-        <div className="relative overflow-y-auto max-h-[calc(90vh-220px)] p-6 space-y-6">
-          
-          {/* Premium Status */}
-          {!premiumLoading && premiumStatus && premiumStatus.tier !== 'none' && (
-            <div className="animate-in slide-in-from-bottom-4 duration-500">
-              <PremiumStatusCard
-                tier={premiumStatus.tier}
-                startDate={premiumStatus.startDate}
-                endDate={premiumStatus.endDate}
-                daysRemaining={premiumStatus.daysRemaining}
-                isActive={premiumStatus.isActive}
-              />
-            </div>
-          )}
-
-          {/* Stats Grid */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-green-500/30 transition-all duration-300">
-              <div className="absolute top-0 right-0 h-16 w-16 bg-green-500/5 rounded-full blur-2xl group-hover:bg-green-500/10 transition-colors" />
-              <Trophy className="h-5 w-5 text-green-600 mb-2" />
-              <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.approvedSubmissions}</div>
-              <div className="text-xs text-muted-foreground">Одобрено</div>
-            </div>
-
-            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-yellow-500/30 transition-all duration-300">
-              <div className="absolute top-0 right-0 h-16 w-16 bg-yellow-500/5 rounded-full blur-2xl group-hover:bg-yellow-500/10 transition-colors" />
-              <Clock className="h-5 w-5 text-yellow-600 mb-2" />
-              <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.pendingSubmissions}</div>
-              <div className="text-xs text-muted-foreground">Ожидают</div>
-            </div>
-
-            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-blue-500/30 transition-all duration-300">
-              <div className="absolute top-0 right-0 h-16 w-16 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors" />
-              <Target className="h-5 w-5 text-blue-600 mb-2" />
-              <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.totalSubmissions}</div>
-              <div className="text-xs text-muted-foreground">Всего</div>
-            </div>
-
-            <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-purple-500/30 transition-all duration-300">
-              <div className="absolute top-0 right-0 h-16 w-16 bg-purple-500/5 rounded-full blur-2xl group-hover:bg-purple-500/10 transition-colors" />
-              <Wallet className="h-5 w-5 text-purple-600 mb-2" />
-              <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.totalEarnings}</div>
-              <div className="text-xs text-muted-foreground">Заработано</div>
-            </div>
-          </div>
-
-          {/* Kill Stats Section */}
-          {!loadingKills && killStats.totalKills > 0 && (
-            <div className="space-y-3 animate-in slide-in-from-bottom-4 duration-500">
-              <h3 className="text-sm font-medium text-muted-foreground">Статистика киллов</h3>
+        <div className={`relative overflow-y-auto ${isFullscreen ? 'max-h-[calc(95vh-220px)]' : 'max-h-[calc(90vh-220px)]'} p-6`}>
+          <div className={`${isFullscreen ? 'grid grid-cols-2 gap-6' : 'space-y-6'}`}>
+            
+            {/* Левая колонка в полноэкранном режиме или все блоки в обычном */}
+            <div className="space-y-6">
               
-              {/* Total Kills Banner */}
-              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-yellow-500/10 via-orange-500/10 to-red-500/10 border border-yellow-500/20 p-4">
-                <div className="absolute top-0 right-0 h-32 w-32 bg-yellow-500/10 rounded-full blur-3xl" />
-                <div className="relative z-10 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="h-12 w-12 rounded-xl bg-yellow-500/20 flex items-center justify-center">
-                      <Trophy className="h-6 w-6 text-yellow-600" />
-                    </div>
-                    <div>
-                      <div className="text-xs text-yellow-600/80 font-medium">Всего киллов</div>
-                      <div className="text-3xl font-bold tabular-nums">{killStats.totalKills}</div>
-                    </div>
-                  </div>
-                  {killStats.lastKillDate && (
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Последний</div>
-                      <div className="text-xs font-medium">
-                        {new Date(killStats.lastKillDate).toLocaleDateString('ru-RU')}
-                      </div>
-                    </div>
-                  )}
+              {/* Premium Status */}
+              {!premiumLoading && premiumStatus && premiumStatus.tier !== 'none' && (
+                <div className="animate-in slide-in-from-bottom-4 duration-500">
+                  <PremiumStatusCard
+                    tier={premiumStatus.tier}
+                    startDate={premiumStatus.startDate}
+                    endDate={premiumStatus.endDate}
+                    daysRemaining={premiumStatus.daysRemaining}
+                    isActive={premiumStatus.isActive}
+                  />
+                </div>
+              )}
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-green-500/30 transition-all duration-300">
+                  <div className="absolute top-0 right-0 h-16 w-16 bg-green-500/5 rounded-full blur-2xl group-hover:bg-green-500/10 transition-colors" />
+                  <Trophy className="h-5 w-5 text-green-600 mb-2" />
+                  <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.approvedSubmissions}</div>
+                  <div className="text-xs text-muted-foreground">Одобрено</div>
+                </div>
+
+                <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-yellow-500/30 transition-all duration-300">
+                  <div className="absolute top-0 right-0 h-16 w-16 bg-yellow-500/5 rounded-full blur-2xl group-hover:bg-yellow-500/10 transition-colors" />
+                  <Clock className="h-5 w-5 text-yellow-600 mb-2" />
+                  <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.pendingSubmissions}</div>
+                  <div className="text-xs text-muted-foreground">Ожидают</div>
+                </div>
+
+                <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-blue-500/30 transition-all duration-300">
+                  <div className="absolute top-0 right-0 h-16 w-16 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-colors" />
+                  <Target className="h-5 w-5 text-blue-600 mb-2" />
+                  <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.totalSubmissions}</div>
+                  <div className="text-xs text-muted-foreground">Всего</div>
+                </div>
+
+                <div className="group relative overflow-hidden rounded-2xl border border-border/50 p-4 hover:border-purple-500/30 transition-all duration-300">
+                  <div className="absolute top-0 right-0 h-16 w-16 bg-purple-500/5 rounded-full blur-2xl group-hover:bg-purple-500/10 transition-colors" />
+                  <Wallet className="h-5 w-5 text-purple-600 mb-2" />
+                  <div className="text-2xl font-bold tabular-nums mb-1">{loadingStats ? "..." : stats.totalEarnings}</div>
+                  <div className="text-xs text-muted-foreground">Заработано</div>
                 </div>
               </div>
 
-              {/* Individual Kill Types */}
-              <div className="grid grid-cols-3 gap-3">
-                {/* Gold Kills */}
-                <div className="group relative overflow-hidden rounded-2xl border border-yellow-500/30 bg-yellow-500/5 p-4 hover:border-yellow-500/50 hover:bg-yellow-500/10 transition-all duration-300">
-                  <div className="absolute top-0 right-0 h-16 w-16 bg-yellow-500/10 rounded-full blur-2xl" />
-                  <div className="relative z-10 text-center">
-                    <div className="text-4xl mb-2">🥇</div>
-                    <div className="text-2xl font-bold tabular-nums mb-1">{killStats.goldKills}</div>
-                    <div className="text-xs text-yellow-700 font-medium">Gold Kill</div>
-                  </div>
-                </div>
-
-                {/* Silver Kills */}
-                <div className="group relative overflow-hidden rounded-2xl border border-gray-400/30 bg-gray-400/5 p-4 hover:border-gray-400/50 hover:bg-gray-400/10 transition-all duration-300">
-                  <div className="absolute top-0 right-0 h-16 w-16 bg-gray-400/10 rounded-full blur-2xl" />
-                  <div className="relative z-10 text-center">
-                    <div className="text-4xl mb-2">🥈</div>
-                    <div className="text-2xl font-bold tabular-nums mb-1">{killStats.silverKills}</div>
-                    <div className="text-xs text-gray-700 font-medium">Silver Kill</div>
-                  </div>
-                </div>
-
-                {/* Bronze Kills */}
-                <div className="group relative overflow-hidden rounded-2xl border border-orange-600/30 bg-orange-600/5 p-4 hover:border-orange-600/50 hover:bg-orange-600/10 transition-all duration-300">
-                  <div className="absolute top-0 right-0 h-16 w-16 bg-orange-600/10 rounded-full blur-2xl" />
-                  <div className="relative z-10 text-center">
-                    <div className="text-4xl mb-2">🥉</div>
-                    <div className="text-2xl font-bold tabular-nums mb-1">{killStats.bronzeKills}</div>
-                    <div className="text-xs text-orange-700 font-medium">Bronze Kill</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Kill Progress Info */}
-              <div className="rounded-2xl border border-border/50 p-4 bg-muted/30">
-                <div className="flex items-start gap-3">
-                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <Trophy className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="flex-1 text-xs text-muted-foreground">
-                    <p className="font-medium text-foreground mb-1">Как получить киллы?</p>
-                    <p>Киллы выдаются автоматически при одобрении заявок категорий Gold Kill, Silver Kill и Bronze Kill. Используйте их для участия в специальных турнирах и розыгрышах!</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Social Integrations */}
-          <div className="space-y-3">
-            {/* Telegram Bot Link */}
-            <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-blue-500/30 transition-colors">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="h-4 w-4 text-blue-500" />
-                <span className="text-sm font-medium">Telegram</span>
-              </div>
-              
-              {linkedTelegram ? (
-                <div className="flex items-center justify-between p-3 rounded-xl bg-green-500/10 border border-green-500/20">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <span className="text-sm font-medium">{linkedTelegram}</span>
-                  </div>
-                  <button
-                    onClick={handleUnlinkTelegram}
-                    className="h-7 px-3 rounded-lg hover:bg-red-500/10 text-xs text-muted-foreground hover:text-red-600 transition-colors"
-                  >
-                    Отвязать
-                  </button>
-                </div>
-              ) : telegramLinkData ? (
-                <div className="space-y-3">
-                  <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-blue-600 font-medium">Код верификации</span>
-                      <button
-                        onClick={handleCancelTelegramLink}
-                        className="h-6 w-6 rounded-lg hover:bg-blue-500/20 flex items-center justify-center text-blue-600 transition-colors"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 p-3 rounded-lg bg-background/50 border border-blue-500/30">
-                        <div className="text-2xl font-mono font-bold text-center text-blue-700 tracking-widest">
-                          {telegramLinkData.verificationCode}
+              {/* Kill Stats Section */}
+              {!loadingKills && killStats.totalKills > 0 && (
+                <div className="space-y-3 animate-in slide-in-from-bottom-4 duration-500">
+                  <h3 className="text-sm font-medium text-muted-foreground">Статистика киллов</h3>
+                  
+                  {/* Total Kills Banner */}
+                  <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-yellow-500/10 via-orange-500/10 to-red-500/10 border border-yellow-500/20 p-4">
+                    <div className="absolute top-0 right-0 h-32 w-32 bg-yellow-500/10 rounded-full blur-3xl" />
+                    <div className="relative z-10 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="h-12 w-12 rounded-xl bg-yellow-500/20 flex items-center justify-center">
+                          <Trophy className="h-6 w-6 text-yellow-600" />
+                        </div>
+                        <div>
+                          <div className="text-xs text-yellow-600/80 font-medium">Всего киллов</div>
+                          <div className="text-3xl font-bold tabular-nums">{killStats.totalKills}</div>
                         </div>
                       </div>
+                      {killStats.lastKillDate && (
+                        <div className="text-right">
+                          <div className="text-xs text-muted-foreground">Последний</div>
+                          <div className="text-xs font-medium">
+                            {new Date(killStats.lastKillDate).toLocaleDateString('ru-RU')}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Individual Kill Types */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="group relative overflow-hidden rounded-2xl border border-yellow-500/30 bg-yellow-500/5 p-4 hover:border-yellow-500/50 hover:bg-yellow-500/10 transition-all duration-300">
+                      <div className="absolute top-0 right-0 h-16 w-16 bg-yellow-500/10 rounded-full blur-2xl" />
+                      <div className="relative z-10 text-center">
+                        <div className="text-4xl mb-2">🥇</div>
+                        <div className="text-2xl font-bold tabular-nums mb-1">{killStats.goldKills}</div>
+                        <div className="text-xs text-yellow-700 font-medium">Gold Kill</div>
+                      </div>
+                    </div>
+
+                    <div className="group relative overflow-hidden rounded-2xl border border-gray-400/30 bg-gray-400/5 p-4 hover:border-gray-400/50 hover:bg-gray-400/10 transition-all duration-300">
+                      <div className="absolute top-0 right-0 h-16 w-16 bg-gray-400/10 rounded-full blur-2xl" />
+                      <div className="relative z-10 text-center">
+                        <div className="text-4xl mb-2">🥈</div>
+                        <div className="text-2xl font-bold tabular-nums mb-1">{killStats.silverKills}</div>
+                        <div className="text-xs text-gray-700 font-medium">Silver Kill</div>
+                      </div>
+                    </div>
+
+                    <div className="group relative overflow-hidden rounded-2xl border border-orange-600/30 bg-orange-600/5 p-4 hover:border-orange-600/50 hover:bg-orange-600/10 transition-all duration-300">
+                      <div className="absolute top-0 right-0 h-16 w-16 bg-orange-600/10 rounded-full blur-2xl" />
+                      <div className="relative z-10 text-center">
+                        <div className="text-4xl mb-2">🥉</div>
+                        <div className="text-2xl font-bold tabular-nums mb-1">{killStats.bronzeKills}</div>
+                        <div className="text-xs text-orange-700 font-medium">Bronze Kill</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Kill Progress Info */}
+                  <div className="rounded-2xl border border-border/50 p-4 bg-muted/30">
+                    <div className="flex items-start gap-3">
+                      <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <Trophy className="h-4 w-4 text-primary" />
+                      </div>
+                      <div className="flex-1 text-xs text-muted-foreground">
+                        <p className="font-medium text-foreground mb-1">Как получить киллы?</p>
+                        <p>Киллы выдаются автоматически при одобрении заявок категорий Gold Kill, Silver Kill и Bronze Kill. Используйте их для участия в специальных турнирах и розыгрышах!</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Правая колонка в полноэкранном режиме */}
+            <div className="space-y-6">
+              {/* Social Integrations */}
+              <div className="space-y-3">
+                {/* Telegram Bot Link */}
+                <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-blue-500/30 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4 text-blue-500" />
+                    <span className="text-sm font-medium">Telegram</span>
+                  </div>
+                  
+                  {linkedTelegram ? (
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        <span className="text-sm font-medium">{linkedTelegram}</span>
+                      </div>
                       <button
-                        onClick={handleCopyCode}
-                        className="h-12 w-12 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 flex items-center justify-center text-blue-600 transition-colors"
+                        onClick={handleUnlinkTelegram}
+                        className="h-7 px-3 rounded-lg hover:bg-red-500/10 text-xs text-muted-foreground hover:text-red-600 transition-colors"
                       >
-                        <Copy className="h-5 w-5" />
+                        Отвязать
                       </button>
                     </div>
-                    
-                    <div className="text-xs text-muted-foreground space-y-1">
-                      <p>1. Откройте Telegram бот по кнопке ниже</p>
-                      <p>2. Отправьте команду: <code className="px-1 py-0.5 bg-background/50 rounded">/start {telegramLinkData.verificationCode}</code></p>
-                      <p>3. Дождитесь подтверждения</p>
+                  ) : telegramLinkData ? (
+                    <div className="space-y-3">
+                      <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-blue-600 font-medium">Код верификации</span>
+                          <button
+                            onClick={handleCancelTelegramLink}
+                            className="h-6 w-6 rounded-lg hover:bg-blue-500/20 flex items-center justify-center text-blue-600 transition-colors"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 p-3 rounded-lg bg-background/50 border border-blue-500/30">
+                            <div className="text-2xl font-mono font-bold text-center text-blue-700 tracking-widest">
+                              {telegramLinkData.verificationCode}
+                            </div>
+                          </div>
+                          <button
+                            onClick={handleCopyCode}
+                            className="h-12 w-12 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 flex items-center justify-center text-blue-600 transition-colors"
+                          >
+                            <Copy className="h-5 w-5" />
+                          </button>
+                        </div>
+                        
+                        <div className="text-xs text-muted-foreground space-y-1">
+                          <p>1. Откройте Telegram бот по кнопке ниже</p>
+                          <p>2. Отправьте команду: <code className="px-1 py-0.5 bg-background/50 rounded">/start {telegramLinkData.verificationCode}</code></p>
+                          <p>3. Дождитесь подтверждения</p>
+                        </div>
+                      </div>
+                      
+                      {isCheckingTelegramStatus && (
+                        <div className="flex items-center gap-2 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 animate-pulse">
+                          <Loader2 className="h-4 w-4 text-yellow-600 animate-spin" />
+                          <span className="text-xs text-yellow-700 font-medium">Ожидание подтверждения от бота...</span>
+                        </div>
+                      )}
+                      
+                      <Button
+                        onClick={() => window.open(telegramLinkData.botLink, '_blank')}
+                        className="w-full h-11 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg shadow-blue-500/25"
+                      >
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Открыть Telegram бот
+                      </Button>
                     </div>
-                  </div>
-                  
-                  {isCheckingTelegramStatus && (
-                    <div className="flex items-center gap-2 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 animate-pulse">
-                      <Loader2 className="h-4 w-4 text-yellow-600 animate-spin" />
-                      <span className="text-xs text-yellow-700 font-medium">Ожидание подтверждения от бота...</span>
-                    </div>
-                  )}
-                  
-                  <Button
-                    onClick={() => window.open(telegramLinkData.botLink, '_blank')}
-                    className="w-full h-11 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg shadow-blue-500/25"
-                  >
-                    <ExternalLink className="h-4 w-4 mr-2" />
-                    Открыть Telegram бот
-                  </Button>
-                </div>
-              ) : (
-                <Button 
-                  onClick={handleLinkTelegram}
-                  disabled={isLinkingTelegram}
-                  className="w-full h-11 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 transition-all"
-                >
-                  {isLinkingTelegram ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Подключение...
-                    </>
                   ) : (
-                    <>
-                      <MessageSquare className="h-4 w-4 mr-2" />
-                      Привязать Telegram
-                    </>
+                    <Button 
+                      onClick={handleLinkTelegram}
+                      disabled={isLinkingTelegram}
+                      className="w-full h-11 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 transition-all"
+                    >
+                      {isLinkingTelegram ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Подключение...
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquare className="h-4 w-4 mr-2" />
+                          Привязать Telegram
+                        </>
+                      )}
+                    </Button>
                   )}
-                </Button>
-              )}
-            </div>
+                </div>
 
-            {/* Discord OAuth */}
-            <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-indigo-500/30 transition-colors">
-              <div className="flex items-center gap-2">
-                <svg className="h-4 w-4 text-indigo-500" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
-                </svg>
-                <span className="text-sm font-medium">Discord</span>
-              </div>
-              
-              {linkedDiscord ? (
-                <div className="flex items-center justify-between p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+                {/* Discord OAuth */}
+                <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-indigo-500/30 transition-colors">
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <span className="text-sm font-medium">{linkedDiscord}</span>
+                    <svg className="h-4 w-4 text-indigo-500" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+                    </svg>
+                    <span className="text-sm font-medium">Discord</span>
                   </div>
-                  <button
-                    onClick={handleUnlinkDiscord}
-                    className="h-7 px-3 rounded-lg hover:bg-red-500/10 text-xs text-muted-foreground hover:text-red-600 transition-colors"
-                  >
-                    Отвязать
-                  </button>
-                </div>
-              ) : (
-                <Button 
-                  onClick={handleLinkDiscord}
-                  disabled={isLinkingDiscord}
-                  className="w-full h-11 rounded-xl bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/30 transition-all"
-                >
-                  {isLinkingDiscord ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Подключение...
-                    </>
+                  
+                  {linkedDiscord ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          <span className="text-sm font-medium">{linkedDiscord}</span>
+                        </div>
+                        <button
+                          onClick={handleUnlinkDiscord}
+                          className="h-7 px-3 rounded-lg hover:bg-red-500/10 text-xs text-muted-foreground hover:text-red-600 transition-colors"
+                        >
+                          Отвязать
+                        </button>
+                      </div>
+                    </div>
                   ) : (
-                    <>
-                      <svg className="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
-                      </svg>
-                      Привязать Discord
-                    </>
+                    <Button 
+                      onClick={handleLinkDiscord}
+                      disabled={isLinkingDiscord}
+                      className="w-full h-11 rounded-xl bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/30 transition-all"
+                    >
+                      {isLinkingDiscord ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Подключение...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+                          </svg>
+                          Привязать Discord
+                        </>
+                      )}
+                    </Button>
                   )}
-                </Button>
-              )}
+                </div>
+
+                {/* Premium Check Button */}
+                {linkedDiscord && (
+                  <div className="rounded-2xl border border-purple-500/30 bg-gradient-to-br from-purple-500/10 via-pink-500/10 to-purple-500/10 p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-8 w-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                        <Trophy className="h-4 w-4 text-purple-600" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-sm font-semibold">Проверка Premium статуса</h3>
+                        <p className="text-xs text-muted-foreground">
+                          Обновите ваш Premium статус вручную
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <Button
+                      onClick={handleCheckDiscordPremium}
+                      disabled={checkingDiscordPremium || discordCheckCooldown > 0}
+                      className="w-full h-10 rounded-xl bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 text-purple-600 border border-purple-500/30 hover:border-purple-500/50 transition-all"
+                      variant="outline"
+                    >
+                      {checkingDiscordPremium ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Проверка...
+                        </>
+                      ) : discordCheckCooldown > 0 ? (
+                        <>
+                          <Clock className="h-4 w-4 mr-2" />
+                          Следующая проверка через {discordCheckCooldown} сек
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Проверить Premium статус
+                        </>
+                      )}
+                    </Button>
+                    
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-purple-500/5 border border-purple-500/20">
+                      <svg className="h-4 w-4 text-purple-600 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <circle cx="12" cy="12" r="10" strokeWidth="2"/>
+                        <path d="M12 16v-4M12 8h.01" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                      <div className="text-xs text-muted-foreground">
+                        <p className="font-medium text-purple-700 mb-1">Как получить Premium?</p>
+                        <p>Premium статус активируется автоматически если у вас есть соответствующая роль на нашем Discord сервере.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Logout Button */}
+              <Button 
+                variant="outline" 
+                className="w-full h-11 rounded-xl border-border/50 hover:bg-red-500/5 hover:border-red-500/30 hover:text-red-600 transition-all" 
+                onClick={handleLogout}
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                Выйти из аккаунта
+              </Button>
             </div>
           </div>
-
-          {/* Logout Button */}
-          <Button 
-            variant="outline" 
-            className="w-full h-11 rounded-xl border-border/50 hover:bg-red-500/5 hover:border-red-500/30 hover:text-red-600 transition-all" 
-            onClick={handleLogout}
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Выйти из аккаунта
-          </Button>
         </div>
       </DialogContent>
     </Dialog>

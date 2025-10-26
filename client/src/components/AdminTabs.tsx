@@ -1,6 +1,8 @@
+// client/src/components/AdminTabs.tsx
 import { useState } from "react";
 import { TabType } from "@/types/admin";
 import { Menu, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface AdminTabsProps {
   activeTab: TabType;
@@ -22,58 +24,72 @@ export function AdminTabs({ activeTab, onTabChange }: AdminTabsProps) {
   ];
 
   return (
-    <div className="border-b border-border bg-card/30">
-      <div className="container mx-auto px-4">
+    <div className="border-b border-border/50 bg-muted/30">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         {/* Desktop Tabs */}
-        <div className="hidden md:flex gap-8">
+        <nav className="hidden md:flex -mb-px space-x-6">
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              className={`py-4 px-2 font-gaming transition-colors ${
-                activeTab === tab.id
-                  ? "border-b-2 border-primary text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              className={`
+                whitespace-nowrap py-3 px-1 text-sm font-medium transition-colors
+                border-b-2 -mb-px
+                ${
+                  activeTab === tab.id
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                }
+              `}
               onClick={() => onTabChange(tab.id)}
               data-testid={tab.testId}
             >
               {tab.label}
             </button>
           ))}
-        </div>
+        </nav>
 
-        {/* Mobile Burger */}
-        <div className="md:hidden flex items-center justify-between py-3">
-          <button
-            onClick={() => setMenuOpen((prev) => !prev)}
-            className="p-2 text-foreground hover:text-primary transition"
-          >
-            {menuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-        </div>
-
-        {/* Mobile Menu */}
-        {menuOpen && (
-          <div className="flex flex-col gap-2 pb-4 md:hidden">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={`py-2 px-3 rounded-lg text-left font-gaming transition-colors ${
-                  activeTab === tab.id
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => {
-                  onTabChange(tab.id);
-                  setMenuOpen(false);
-                }}
-                data-testid={tab.testId}
-              >
-                {tab.label}
-              </button>
-            ))}
+        {/* Mobile Tabs */}
+        <div className="md:hidden">
+          <div className="flex items-center justify-between py-3">
+            <span className="text-sm font-medium">
+              {tabs.find(t => t.id === activeTab)?.label}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="h-8 w-8 p-0"
+            >
+              {menuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            </Button>
           </div>
-        )}
+
+          {/* Mobile Dropdown */}
+          {menuOpen && (
+            <div className="pb-3 space-y-1">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={`
+                    block w-full text-left px-3 py-2 text-sm rounded-md transition-colors
+                    ${
+                      activeTab === tab.id
+                        ? "bg-muted text-foreground font-medium"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    }
+                  `}
+                  onClick={() => {
+                    onTabChange(tab.id);
+                    setMenuOpen(false);
+                  }}
+                  data-testid={tab.testId}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
