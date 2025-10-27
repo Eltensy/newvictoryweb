@@ -16,6 +16,7 @@ import { AdminLogsTable } from "./AdminLogsTable";
 import { AdminTournamentsTab } from "./AdminTournamentsTab";
 import AdminPremiumTab from "./AdminPremium";
 import AdminDropMapTab from './AdminDropMapTab';
+import { KillHistoryTable } from './KillHistory'
 
 export default function AdminDashboard() {
   const { getAuthToken } = useAuth();
@@ -24,31 +25,33 @@ export default function AdminDashboard() {
 
   // State management
   const [state, setState] = useState<AdminDashboardState>({
-    activeTab: 'submissions',
-    searchTerm: "",
-    statusFilter: "all",
-    selectedSubmission: null,
-    selectedWithdrawal: null,
-    rewardAmount: "",
-    rejectionReason: "",
-    balanceAmount: "",
-    balanceReason: "",
-    selectedUser: null,
-    adminActions: [],
-    withdrawalRequests: [],
-    subscriptionScreenshots: [], // NEW
-    logsLoading: false,
-    submissionsLoading: false,
-    usersLoading: false,
-    withdrawalsLoading: false,
-    subscriptionsLoading: false, // NEW
-    actionLoading: false,
-    submissions: [],
-    users: [],
-    error: null,
-    tournaments: [],
-    tournamentsLoading: false,
-  });
+  activeTab: 'submissions',
+  searchTerm: "",
+  statusFilter: "all",
+  selectedSubmission: null,
+  selectedWithdrawal: null,
+  rewardAmount: "",
+  rejectionReason: "",
+  balanceAmount: "",
+  balanceReason: "",
+  selectedUser: null,
+  adminActions: [],
+  withdrawalRequests: [],
+  subscriptionScreenshots: [],
+  killHistory: [],
+  logsLoading: false,
+  submissionsLoading: false,
+  usersLoading: false,
+  withdrawalsLoading: false,
+  subscriptionsLoading: false,
+  killHistoryLoading: false,
+  actionLoading: false,
+  submissions: [],
+  users: [],
+  error: null,
+  tournaments: [],
+  tournamentsLoading: false,
+});
 
   // Helper function to show toast
   const showToast = (title: string, description: string, variant: "default" | "destructive" = "default") => {
@@ -60,6 +63,30 @@ export default function AdminDashboard() {
     setState(prev => ({ ...prev, error: message }));
     showToast("Ошибка", message, "destructive");
   };
+
+  const fetchKillHistory = async () => {
+  setState(prev => ({ ...prev, killHistoryLoading: true, error: null }));
+  try {
+    const token = getAuthToken();
+    if (!token) throw new Error('No authentication token');
+    
+    const response = await fetch('/api/admin/kills', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+    
+    if (!response.ok) throw new Error('Failed to fetch kill history');
+    
+    const data = await response.json();
+    setState(prev => ({ ...prev, killHistory: data }));
+  } catch (error) {
+    console.error('Failed to fetch kill history:', error);
+    showError(error, 'Failed to fetch kill history');
+  } finally {
+    setState(prev => ({ ...prev, killHistoryLoading: false }));
+  }
+};
 
   // Data fetching functions
   const fetchSubmissions = async () => {
@@ -262,6 +289,9 @@ const handleRefresh = () => {
     case 'submissions':
       fetchSubmissions();
       break;
+    case 'kills':
+      fetchKillHistory();
+    break;
     case 'users':
       fetchUsers();
       break;
@@ -336,6 +366,9 @@ useEffect(() => {
     break;
     case 'dropmap':
     break;
+    case 'kills':
+      fetchKillHistory();
+    break;
   }
 }, [state.activeTab]);
 
@@ -383,6 +416,13 @@ const isLoading = state.submissionsLoading || state.usersLoading ||
             onApprove={handleApprove}
             onReject={handleReject}
             actionLoading={state.actionLoading}
+          />
+        )}
+
+        {state.activeTab === 'kills' && (
+          <KillHistoryTable 
+            killHistory={state.killHistory} 
+            loading={state.killHistoryLoading}
           />
         )}
 

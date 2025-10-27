@@ -269,7 +269,7 @@ export class DatabaseStorage implements IStorage {
       })
       .from(killHistory)
       .leftJoin(submissions, eq(killHistory.submissionId, submissions.id))
-      .leftJoin(users, eq(killHistory.grantedBy, users.id))
+      .leftJoin(users, sql`${killHistory.grantedBy}::text = ${users.id}::text`)
       .where(eq(killHistory.userId, userId))
       .orderBy(desc(killHistory.createdAt))
       .limit(limit);
@@ -318,7 +318,7 @@ export class DatabaseStorage implements IStorage {
         submissionFilename: submissions.originalFilename,
       })
       .from(killHistory)
-      .leftJoin(users, eq(killHistory.userId, users.id))
+      .leftJoin(users, sql`${killHistory.userId}::text = ${users.id}::text`)
       .leftJoin(submissions, eq(killHistory.submissionId, submissions.id))
       .orderBy(desc(killHistory.createdAt))
       .limit(limit);

@@ -186,7 +186,7 @@ export interface Tournament {
   };
 }
 
-export type TabType = 'submissions' | 'users' | 'subscriptions' | 'withdrawals' | 'premium' | 'tournaments' | 'logs' | 'dropmap' | 'kills'; // 🆕 Added 'kills' tab
+export type TabType = 'submissions' | 'users' | 'subscriptions' | 'withdrawals' | 'premium' | 'tournaments' | 'logs' | 'dropmap' | 'kills';
 
 export interface AdminDashboardState {
   activeTab: TabType;
@@ -207,14 +207,14 @@ export interface AdminDashboardState {
   withdrawalRequests: WithdrawalRequest[];
   subscriptionScreenshots: SubscriptionScreenshot[];
   adminActions: AdminAction[];
-  killHistory?: KillHistoryEntry[];  // 🆕 Optional kill history
+  killHistory: KillHistoryEntry[];  // ✅ Убрать optional, сделать обязательным
 
   submissionsLoading: boolean;
   usersLoading: boolean;
   withdrawalsLoading: boolean;
   subscriptionsLoading: boolean;
   logsLoading: boolean;
-  killsLoading?: boolean;           // 🆕 Loading state for kills
+  killHistoryLoading: boolean;      // ✅ Добавить это поле (убрать optional)
   actionLoading: boolean;
   
   error: string | null;

@@ -322,7 +322,7 @@ export const territories = pgTable("territories", {
   ownerId: uuid("owner_id").references(() => users.id, { onDelete: 'set null' }),
   claimedAt: timestamp("claimed_at"),
   
-  maxPlayers: integer("max_players").notNull().default(1),
+  maxPlayers: integer("max_players").notNull().default(999),
   description: text("description"),
   isActive: boolean("is_active").default(true).notNull(),
   
@@ -334,7 +334,7 @@ export const territories = pgTable("territories", {
 export const territoryClaims = pgTable("territory_claims", {
   id: uuid("id").defaultRandom().primaryKey(),
   territoryId: uuid("territory_id").references(() => territories.id, { onDelete: 'cascade' }).notNull(),
-  userId: uuid("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: 'cascade' }),
   claimType: territoryClaimTypeEnum("claim_type").notNull(),
   claimedAt: timestamp("claimed_at").defaultNow().notNull(),
   revokedAt: timestamp("revoked_at"),
@@ -405,6 +405,7 @@ export const dropMapInviteCodes = pgTable("dropmap_invite_codes", {
   expiresAt: timestamp("expires_at"),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  virtualPlayerId: text("virtual_player_id")
 });
 
 // ===== RELATIONS =====

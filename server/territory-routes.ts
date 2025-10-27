@@ -317,7 +317,7 @@ export function registerTerritoryRoutes(app: Express) {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      const { name, points, color, description, maxPlayers } = req.body;
+      const { name, points, description, maxPlayers } = req.body;
 
       if (!name || !points || points.length < 3) {
         return res.status(400).json({
@@ -331,7 +331,7 @@ export function registerTerritoryRoutes(app: Express) {
           mapId: req.params.mapId,
           name,
           points,
-          color: color || '#3B82F6',
+          color: '#374151',
           maxPlayers: maxPlayers || 1,
           description,
         })
@@ -654,23 +654,6 @@ export function registerTerritoryRoutes(app: Express) {
     }
   });
 
-  // Заклеймить территорию по инвайту
-  app.post("/api/claim-with-invite", async (req, res) => {
-    try {
-      const { code, territoryId } = req.body;
-
-      const result = await territoryStorage.claimTerritoryWithInvite(code, territoryId);
-
-      res.json({
-        message: "Локация заклеймлена",
-        claim: result.claim,
-        displayName: result.invite.displayName
-      });
-    } catch (error: any) {
-      console.error('Error claiming with invite:', error);
-      res.status(500).json({ error: error.message || "Не удалось поставить метку" });
-    }
-  });
 
   // ========== АДМИНИСТРАТИВСКИЕ ФУНКЦИИ ==========
 
@@ -1128,7 +1111,7 @@ export function registerTerritoryRoutes(app: Express) {
       }
 
       const { id: dropMapId } = req.params;
-      const { name, points, color, maxPlayers, description } = req.body;
+      const { name, points, maxPlayers, description } = req.body;
 
       if (!name || !points || points.length < 3) {
         return res.status(400).json({ error: "Название и минимум 3 точки обязательны" });
@@ -1140,7 +1123,7 @@ export function registerTerritoryRoutes(app: Express) {
           mapId: dropMapId,
           name,
           points: points as any,
-          color: color || '#808080',
+          color: '#374151',
           maxPlayers: maxPlayers || 1,
           description,
         })
@@ -1295,53 +1278,68 @@ export function registerTerritoryRoutes(app: Express) {
     }
   });
 
-  app.get("/api/dropmap/invite/:code", async (req, res) => {
-    try {
-      const validation = await territoryStorage.validateDropMapInvite(req.params.code);
+app.get("/api/dropmap/invite/:code", async (req, res) => {
+  try {
+    const validation = await territoryStorage.validateDropMapInvite(req.params.code);
 
-      if (!validation.valid || !validation.invite) {
-        return res.status(400).json({ error: validation.error });
-      }
-
-      const invite = validation.invite;
-      const map = await territoryStorage.getMap(invite.settingsId);
-
-      if (!map) {
-        return res.status(404).json({ error: "Карта не найдена" });
-      }
-
-      res.json({
-        valid: true,
-        displayName: invite.displayName,
-        map: {
-          id: map.id,
-          name: map.name,
-          mapImageUrl: map.mapImageUrl,
-        },
-        settingsId: map.id,
-      });
-    } catch (error) {
-      console.error('Error validating invite:', error);
-      res.status(500).json({ error: "Внутренняя ошибка сервера" });
+    if (!validation.valid || !validation.invite) {
+      return res.status(400).json({ error: validation.error });
     }
-  });
 
-  app.post("/api/dropmap/claim-with-invite", async (req, res) => {
-    try {
-      const { code, territoryId } = req.body;
+    const invite = validation.invite;
+    const map = await territoryStorage.getMap(invite.settingsId);
 
-      const result = await territoryStorage.claimTerritoryWithInvite(code, territoryId);
-
-      res.json({
-        message: "Локация заклеймлена",
-        claim: result.claim,
-        displayName: result.invite.displayName
-      });
-    } catch (error: any) {
-      console.error('Error claiming with invite:', error);
-      res.status(500).json({ error: error.message || "Не удалось поставить метку" });
+    if (!map) {
+      return res.status(404).json({ error: "Карта не найдена" });
     }
-  });
+
+    res.json({
+      valid: true,
+      displayName: invite.displayName,
+      map: {
+        id: map.id,
+        name: map.name,
+        mapImageUrl: map.mapImageUrl,
+      },
+      settingsId: map.id,
+    });
+  } catch (error) {
+    console.error('Error validating invite:', error);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+app.get("/api/maps/:mapId/territories/public", async (req, res) => {
+  try {
+    const territoriesData = await territoryStorage.getMapTerritories(req.params.mapId);
+    res.json(territoriesData);
+  } catch (error) {
+    console.error('Error fetching territories:', error);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+// Заклеймить территорию по инвайту (БЕЗ АУТЕНТИФИКАЦИИ)
+app.post("/api/claim-with-invite", async (req, res) => {
+  try {
+    const { code, territoryId } = req.body;
+
+    if (!code || !territoryId) {
+      return res.status(400).json({ error: "Код и ID территории обязательны" });
+    }
+
+    const result = await territoryStorage.claimTerritoryWithInvite(code, territoryId);
+
+    res.json({
+      message: "Локация заклеймлена",
+      claim: result.claim,
+      displayName: result.invite.displayName
+    });
+  } catch (error: any) {
+    console.error('Error claiming with invite:', error);
+    res.status(500).json({ error: error.message || "Не удалось поставить метку" });
+  }
+});
 
   app.post("/api/dropmap/settings/:id/import-players", async (req, res) => {
     try {

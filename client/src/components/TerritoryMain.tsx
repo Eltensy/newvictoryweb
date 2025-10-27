@@ -122,23 +122,111 @@ function NotificationModal({ isOpen, type, title, message, onClose }: any) {
   );
 }
 
-// Компоненты SVG (без изменений)
 function TerritoryPolygon({ territory, isSelected, onClick, onContextMenu, scale }: { territory: Territory; isSelected: boolean; onClick: (e: React.MouseEvent) => void; onContextMenu: (e: React.MouseEvent) => void; scale: number; }) {
-  const hasOwner = !!territory.ownerId;
+  // Убираем дубликаты по userId
+  const uniqueClaims = territory.claims ? territory.claims.filter((claim, index, self) => 
+  index === self.findIndex(c => c.userId === claim.userId)
+) : [];
+  
+  const hasClaims = uniqueClaims.length > 0;
+  const claimCount = uniqueClaims.length;
   const points = territory.points.map(p => `${p.x},${p.y}`).join(' ');
   const centerX = territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length;
   const centerY = territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length;
+  
+  // Определяем цвет: красный если 2+ игроков, иначе оригинальный
+  const displayColor = claimCount >= 2 ? '#EF4444' : territory.color;
+  
+  // Функция для расчета позиций текста в зависимости от количества игроков
+  const getTextPositions = (count: number) => {
+    const offset = 20 / scale;
+    
+    if (count === 1) {
+      return [{ x: centerX, y: centerY }];
+    } else if (count === 2) {
+      return [
+        { x: centerX, y: centerY - offset },
+        { x: centerX, y: centerY + offset },
+      ];
+    } else if (count === 3) {
+      return [
+        { x: centerX, y: centerY - offset * 1.2 },
+        { x: centerX, y: centerY },
+        { x: centerX, y: centerY + offset * 1.2 },
+      ];
+    } else if (count === 4) {
+      return [
+        { x: centerX, y: centerY - offset * 1.5 },
+        { x: centerX, y: centerY - offset * 0.5 },
+        { x: centerX, y: centerY + offset * 0.5 },
+        { x: centerX, y: centerY + offset * 1.5 },
+      ];
+    } else {
+      const positions = [];
+      const totalHeight = offset * 2 * (count - 1);
+      const startY = centerY - totalHeight / 2;
+      
+      for (let i = 0; i < count; i++) {
+        positions.push({
+          x: centerX,
+          y: startY + (totalHeight / (count - 1)) * i
+        });
+      }
+      return positions;
+    }
+  };
+  
   return (
     <g className="territory-group">
-      <polygon points={points} fill={territory.color} fillOpacity={hasOwner ? 0.5 : 0.25} stroke={territory.color} strokeWidth={isSelected ? 3 / scale : 2 / scale} className={cn("transition-all duration-200 cursor-pointer", hasOwner ? "hover:fill-opacity-60" : "hover:fill-opacity-35")} onClick={onClick} onContextMenu={onContextMenu} />
-      {hasOwner && territory.owner && scale > 0.5 && (
-        <text x={centerX} y={centerY} textAnchor="middle" dominantBaseline="middle" className="pointer-events-none select-none" style={{ fontSize: `${16 / scale}px`, fontWeight: 'bold', fontFamily: 'Montserrat, Inter, system-ui, sans-serif', fill: '#ffffff', paintOrder: 'stroke', stroke: 'rgba(0, 0, 0, 0.9)', strokeWidth: `${4 / scale}px`, strokeLinecap: 'round', strokeLinejoin: 'round' }}>
-          {territory.owner.displayName}
-        </text>
-      )}
+      <polygon 
+        points={points} 
+        fill={displayColor} 
+        fillOpacity={hasClaims ? 0.5 : 0.25} 
+        stroke={displayColor} 
+        strokeWidth={isSelected ? 3 / scale : 2 / scale} 
+        className={cn(
+          "transition-all duration-200 cursor-pointer", 
+          hasClaims ? "hover:fill-opacity-60" : "hover:fill-opacity-35"
+        )} 
+        onClick={onClick} 
+        onContextMenu={onContextMenu} 
+      />
+      {hasClaims && scale > 0.5 && uniqueClaims.length > 0 && (() => {
+        const positions = getTextPositions(uniqueClaims.length);
+        
+        return uniqueClaims.map((claim, index) => {
+          const pos = positions[index];
+          if (!pos) return null;
+          
+          return (
+            <text 
+              key={`${claim.userId}-${index}`}
+              x={pos.x} 
+              y={pos.y} 
+              textAnchor="middle" 
+              dominantBaseline="middle" 
+              className="pointer-events-none select-none" 
+              style={{ 
+                fontSize: `${14 / scale}px`, 
+                fontWeight: 'bold', 
+                fontFamily: 'Montserrat, Inter, system-ui, sans-serif', 
+                fill: '#ffffff', 
+                paintOrder: 'stroke', 
+                stroke: 'rgba(0, 0, 0, 0.9)', 
+                strokeWidth: `${3 / scale}px`, 
+                strokeLinecap: 'round', 
+                strokeLinejoin: 'round' 
+              }}
+            >
+              {claim.displayName || territory.name}
+            </text>
+          );
+        });
+      })()}
     </g>
   );
 }
+
 function DrawingPoints({ points, color, scale }: { points: { x: number; y: number }[]; color: string; scale: number; }) {
   if (points.length === 0) return null;
   const pointsStr = points.map(p => `${p.x},${p.y}`).join(' ');
@@ -216,7 +304,7 @@ export default function TerritoryMain() {
   
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<{ x: number; y: number }[]>([]);
-  const [newSpotForm, setNewSpotForm] = useState({ name: '', color: '#3B82F6', description: '', maxPlayers: 1 });
+  const [newSpotForm, setNewSpotForm] = useState({ name: '', description: '', maxPlayers: 999 });
   
   // Dialog states
   const [showCreateMapDialog, setShowCreateMapDialog] = useState(false);
@@ -232,9 +320,8 @@ export default function TerritoryMain() {
   const [editTerritoryForm, setEditTerritoryForm] = useState({ 
   id: '', 
   name: '', 
-  color: '#3B82F6', 
   description: '', 
-  maxPlayers: 1 
+  maxPlayers: 999
 });
 const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
@@ -299,41 +386,53 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
     return [];
   }, [isLoggedIn, getAuthToken, showNotification]);
 
-  const loadMapData = useCallback(async (mapId: string) => {
-    if (!mapId) return;
-    try {
-      const token = getAuthToken();
-      if (!token) return;
+ const loadMapData = useCallback(async (mapId: string) => {
+  if (!mapId) return;
+  try {
+    const token = getAuthToken();
+    if (!token) return;
 
-      const playersResponse = await fetch(`/api/maps/${mapId}/players`, {
+    // ПАРАЛЛЕЛЬНАЯ загрузка всех данных
+    const requests = [
+      fetch(`/api/maps/${mapId}/players`, {
         headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (playersResponse.ok) {
-        const players = await playersResponse.json();
-        setEligiblePlayers(players);
-        setIsUserEligible(players.some((p: EligiblePlayer) => p.userId === user?.id));
-      }
+      }),
+      fetch(`/api/maps/${mapId}/territories`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+    ];
 
-      if (user?.isAdmin) {
-        const invitesResponse = await fetch(`/api/maps/${mapId}/invites`, {
+    if (user?.isAdmin) {
+      requests.push(
+        fetch(`/api/maps/${mapId}/invites`, {
           headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (invitesResponse.ok) {
-          setInviteCodes(await invitesResponse.json());
-        }
-      }
-      
-      const territoriesResponse = await fetch(`/api/maps/${mapId}/territories`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (territoriesResponse.ok) {
-        setTerritories(await territoriesResponse.json());
-      }
-    } catch (err) {
-      console.error('Ошибка загрузки данных карты:', err);
-      showNotification('error', 'Ошибка', 'Не удалось загрузить данные карты');
+        })
+      );
     }
-  }, [getAuthToken, user, showNotification]);
+
+    const responses = await Promise.all(requests);
+    
+    // Обработка players
+    if (responses[0].ok) {
+      const players = await responses[0].json();
+      setEligiblePlayers(players);
+      setIsUserEligible(players.some((p: EligiblePlayer) => p.userId === user?.id));
+    }
+    
+    // Обработка territories
+    if (responses[1].ok) {
+      setTerritories(await responses[1].json());
+    }
+    
+    // Обработка invites (если админ)
+    if (user?.isAdmin && responses[2]?.ok) {
+      setInviteCodes(await responses[2].json());
+    }
+  } catch (err) {
+    console.error('Ошибка загрузки данных карты:', err);
+    showNotification('error', 'Ошибка', 'Не удалось загрузить данные карты');
+  }
+}, [getAuthToken, user, showNotification]);
   
   const fetchTournaments = useCallback(async () => {
     if (!user?.isAdmin) return;
@@ -359,59 +458,63 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
     }
   }, [getAuthToken, user]);
 
-  // Initial load effect
   useEffect(() => {
-    const init = async () => {
-      if (authLoading || !isLoggedIn || !user || isInitialized) return;
-      if (user.subscriptionScreenshotStatus !== 'approved') {
-        setIsLoading(false);
-        return;
-      }
-      setIsLoading(true);
-      setError(null);
-      try {
-        const maps = await loadAllMaps();
-        if (user.isAdmin) {
-          await Promise.all([fetchTournaments(), fetchAllUsers()]);
-        }
-        if (maps && maps.length > 0) {
-          let targetMap = null;
-          if (dropmapIdFromUrl) {
-            targetMap = maps.find((m: DropMap) => m.id === dropmapIdFromUrl);
-            if (!targetMap) {
-              showNotification('error', 'Карта не найдена', 'Запрошенная карта недоступна');
-            }
-          }
-          if (!targetMap) {
-            targetMap = maps.find((m: DropMap) => !m.isLocked) || maps[0];
-          }
-          if (targetMap) {
-            setLocation(`/dropmap/${targetMap.id}`, { replace: true });
-            setActiveMap(targetMap);
-          }
-        }
-        setIsInitialized(true);
-      } catch (err) {
-        console.error('Ошибка инициализации:', err);
-        setError('Не удалось загрузить данные локаций');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    init();
-  }, [authLoading, isLoggedIn, user, isInitialized]);
-
-  // Effect to load data when active map changes
-  useEffect(() => {
-    if (activeMap && isInitialized) {
-      loadMapData(activeMap.id);
-      setSettingsForm({
-        allowReclaim: activeMap.allowReclaim,
-        isLocked: activeMap.isLocked,
-        mapImageFile: null,
-      });
+  const init = async () => {
+    if (authLoading || !isLoggedIn || !user || isInitialized) return;
+    if (user.subscriptionScreenshotStatus !== 'approved') {
+      setIsLoading(false);
+      return;
     }
-  }, [activeMap?.id, isInitialized]);
+    setIsLoading(true);
+    setError(null);
+    try {
+      // ПАРАЛЛЕЛЬНАЯ загрузка начальных данных
+      const loadPromises = [loadAllMaps()];
+      
+      if (user.isAdmin) {
+        loadPromises.push(fetchTournaments(), fetchAllUsers());
+      }
+      
+      const [maps] = await Promise.all(loadPromises);
+      
+      if (maps && maps.length > 0) {
+        let targetMap = null;
+        if (dropmapIdFromUrl) {
+          targetMap = maps.find((m: DropMap) => m.id === dropmapIdFromUrl);
+          if (!targetMap) {
+            showNotification('error', 'Карта не найдена', 'Запрошенная карта недоступна');
+          }
+        }
+        if (!targetMap) {
+          targetMap = maps.find((m: DropMap) => !m.isLocked) || maps[0];
+        }
+        if (targetMap) {
+          setLocation(`/dropmap/${targetMap.id}`, { replace: true });
+          setActiveMap(targetMap);
+          
+          // ✅ Загружаем данные карты БЕЗ ОЖИДАНИЯ
+          loadMapData(targetMap.id);
+          
+          // ✅ Устанавливаем настройки сразу
+          setSettingsForm({
+            allowReclaim: targetMap.allowReclaim,
+            isLocked: targetMap.isLocked,
+            mapImageFile: null,
+          });
+        }
+      }
+      setIsInitialized(true);
+    } catch (err) {
+      console.error('Ошибка инициализации:', err);
+      setError('Не удалось загрузить данные локаций');
+    } finally {
+      // ✅ Убираем лоадинг сразу после загрузки карт
+      setIsLoading(false);
+    }
+  };
+  init();
+}, [authLoading, isLoggedIn, user, isInitialized]);
+
   
   // ===================================================
   // ========== EVENT HANDLERS (ADAPTED) ==========
@@ -445,12 +548,21 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   };
 
   const handleSelectMap = useCallback((mapId: string) => {
-    setLocation(`/dropmap/${mapId}`, { replace: true });
-    const foundMap = allMaps.find(m => m.id === mapId);
-    if (foundMap) {
-      setActiveMap(foundMap);
-    }
-  }, [allMaps, setLocation]);
+  setLocation(`/dropmap/${mapId}`, { replace: true });
+  const foundMap = allMaps.find(m => m.id === mapId);
+  if (foundMap) {
+    setActiveMap(foundMap);
+    
+    // ✅ Загружаем данные БЕЗ БЛОКИРОВКИ UI
+    loadMapData(foundMap.id);
+    
+    setSettingsForm({
+      allowReclaim: foundMap.allowReclaim,
+      isLocked: foundMap.isLocked,
+      mapImageFile: null,
+    });
+  }
+}, [allMaps, setLocation, loadMapData]);
   
   const handleClaimTerritory = async (territoryId: string) => {
     if (activeMap?.isLocked && !user?.isAdmin) {
@@ -729,7 +841,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
       const response = await fetch(`/api/territories/${editTerritoryForm.id}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editTerritoryForm.name, color: editTerritoryForm.color, description: editTerritoryForm.description, maxPlayers: editTerritoryForm.maxPlayers }),
+        body: JSON.stringify({ name: editTerritoryForm.name, description: editTerritoryForm.description, maxPlayers: editTerritoryForm.maxPlayers }),
       });
       if (response.ok) {
         showNotification('success', 'Успешно', 'Локация обновлена');
@@ -762,7 +874,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
         showNotification('success', 'Успешно', 'Локация создана');
         setCurrentPoints([]);
         setIsDrawingMode(false);
-        setNewSpotForm({ name: '', color: '#3B82F6', description: '', maxPlayers: 1 });
+        setNewSpotForm({ name: '', description: '', maxPlayers: 999 });
         await loadMapData(activeMap.id);
       } else {
         const error = await response.json();
@@ -782,18 +894,11 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
     const token = getAuthToken();
     if (!token) return;
     
-    // Находим игрока в списке eligible players чтобы получить его userId
-    const selectedPlayer = eligiblePlayers.find(p => p.id === playerId);
-    
-    if (!selectedPlayer) {
-      showNotification('error', 'Ошибка', 'Игрок не найден в списке допущенных');
-      return;
-    }
-    
+    // ИСПРАВЛЕНО: playerId уже является userId из селекта
     const response = await fetch(`/api/admin/territories/${territoryId}/assign-player`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: selectedPlayer.userId }),
+      body: JSON.stringify({ userId: playerId }), // playerId уже содержит userId
     });
     
     if (response.ok) {
@@ -843,9 +948,8 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   setEditTerritoryForm({ 
     id: territory.id, 
     name: territory.name, 
-    color: territory.color, 
     description: territory.description || '', 
-    maxPlayers: territory.maxPlayers || 1 
+    maxPlayers: territory.maxPlayers || 999
   });
   setLocalSelectedPlayer(''); // Сброс локального состояния
   setShowEditTerritoryDialog(true);
@@ -1050,7 +1154,6 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
               <h3 className="font-semibold mb-3">Новая локация</h3>
               <div className="space-y-3">
                 <div><Label>Название</Label><Input value={newSpotForm.name} onChange={(e) => setNewSpotForm({ ...newSpotForm, name: e.target.value })} placeholder="Введите название..." /></div>
-                <div><Label>Цвет</Label><Input type="color" value={newSpotForm.color} onChange={(e) => setNewSpotForm({ ...newSpotForm, color: e.target.value })} /></div>
                 <div><Label>Макс. игроков</Label><Input type="number" min="1" max="10" value={newSpotForm.maxPlayers} onChange={(e) => setNewSpotForm({ ...newSpotForm, maxPlayers: parseInt(e.target.value) || 1 })} /></div>
                 <div className="text-xs text-muted-foreground">Точек: {currentPoints.length} (мин. 3)</div>
                 <div className="flex gap-2">
@@ -1063,7 +1166,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
           )}
 
           <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur-sm p-3 rounded-lg border text-sm pointer-events-none">
-            <div className="text-muted-foreground">{isDrawingMode ? (<><div className="font-semibold text-primary mb-1">Режим рисования</div><div>Клик: Добавить точку</div><div>Мин. 3 точки</div></>) : (<><div>Скролл: Зум</div><div>Shift + ЛКМ: Двигать картой</div><div>Клик: Выбрать локацию</div>{isAdminMode && <div className="text-primary">ПКМ: Меню (админ)</div>}</>)}</div>
+            <div className="text-muted-foreground">{isDrawingMode ? (<><div className="font-semibold text-primary mb-1">Режим рисования</div><div>Клик: Добавить точку</div><div>Мин. 3 точки</div></>) : (<><div>Скролл: Зум</div><div>ПКМ или Shift + ЛКМ: Двигать картой</div><div>Клик: Выбрать локацию</div>{isAdminMode && <div className="text-primary">ПКМ: Меню (админ)</div>}</>)}</div>
           </div>
           
           {!isUserEligible && !user?.isAdmin && (<div className="absolute top-4 left-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 pointer-events-none"><div className="flex items-center gap-2 text-yellow-600"><AlertTriangle className="h-4 w-4" /><span className="text-sm font-medium">Вы не в списке допущенных игроков</span></div></div>)}
@@ -1086,23 +1189,32 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
           )}
           
           <div className="p-4 border-b">
-             <h3 className="font-semibold flex items-center gap-2 mb-3"><Users className="h-4 w-4" />Локации и игроки ({territories.length})</h3>
+             <h3 className="font-semibold flex items-center gap-2 mb-3"><Users className="h-4 w-4" />Локации и игроки</h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {territories.length === 0 ? (
                   <div className="text-center py-6 text-muted-foreground"><MapPin className="h-6 w-6 mx-auto mb-2 opacity-50" /><p className="text-sm">Нет локаций на этой карте</p></div>
                 ) : (
                   territories.map(territory => {
-                    const isExpanded = expandedTerritories[territory.id];
-                    const territoryClaims = territory.claims || [];
-                    const playerCount = territoryClaims.length;
-                    const maxPlayers = territory.maxPlayers || 1;
-                    const isFull = playerCount >= maxPlayers;
+  const uniqueClaims = territory.claims ? territory.claims.filter((claim, index, self) => 
+    index === self.findIndex(c => c.userId === claim.userId)
+  ) : [];
+  
+  const isExpanded = expandedTerritories[territory.id];
+  const territoryClaims = uniqueClaims;
+  const playerCount = uniqueClaims.length;
+  const maxPlayers = territory.maxPlayers || 1; 
+  const isFull = maxPlayers < 999 && playerCount >= maxPlayers;
                     return (
                       <div key={territory.id} className="border rounded-lg overflow-hidden bg-card">
                         <button onClick={() => { toggleTerritoryExpanded(territory.id); setSelectedTerritory(territory); }} className={cn("w-full px-3 py-2 text-left hover:bg-muted transition-colors", selectedTerritory?.id === territory.id && 'bg-primary/10')}>
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 flex-1 min-w-0"><div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: territory.color }} /><div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{territory.name}</div><div className="text-xs text-muted-foreground">Макс: {maxPlayers}</div></div></div>
-                            <div className="flex items-center gap-2 flex-shrink-0"><Badge variant={isFull ? 'destructive' : 'secondary'} className="text-xs">{playerCount}/{maxPlayers}</Badge><ChevronDown className={cn('h-4 w-4 transition-transform', isExpanded && 'rotate-180')} /></div>
+                            <div className="flex items-center gap-2 flex-1 min-w-0"><div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: territory.color }} /><div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{territory.name}</div>{maxPlayers < 999 && (
+      <div className="text-xs text-muted-foreground">Макс: {maxPlayers}</div>
+    )}</div></div>
+                            <div className="flex items-center gap-2 flex-shrink-0"><Badge variant={isFull ? 'destructive' : 'secondary'} className="text-xs">
+  {playerCount}
+  {maxPlayers < 999 && ` / ${maxPlayers}`}
+</Badge><ChevronDown className={cn('h-4 w-4 transition-transform', isExpanded && 'rotate-180')} /></div>
                           </div>
                         </button>
                         {isExpanded && (
@@ -1217,13 +1329,15 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
             <div className="space-y-4 pb-4 border-b">
               <h4 className="font-semibold text-sm">Основные настройки</h4>
               <div><Label>Название</Label><Input value={editTerritoryForm.name} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, name: e.target.value })} /></div>
-              <div><Label>Цвет</Label><Input type="color" value={editTerritoryForm.color} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, color: e.target.value })} /></div>
-              <div><Label>Макс. игроков</Label><Input type="number" min="1" max="10" value={editTerritoryForm.maxPlayers} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, maxPlayers: parseInt(e.target.value) || 1 })} /></div>
+              <div><Label>Макс. игроков</Label><Input type="number" min="1" max="10" value={editTerritoryForm.maxPlayers} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, maxPlayers: parseInt(e.target.value) || 999 })} /></div>
               <div><Label>Описание</Label><Textarea value={editTerritoryForm.description} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, description: e.target.value })} /></div>
             </div>
             {user?.isAdmin && isAdminMode && selectedTerritory && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between"><h4 className="font-semibold text-sm">Игроки на локации</h4><Badge variant="outline">{selectedTerritory.claims?.length || 0} / {editTerritoryForm.maxPlayers}</Badge></div>
+                <div className="flex items-center justify-between"><h4 className="font-semibold text-sm">Игроки на локации</h4><Badge variant="outline">
+    {selectedTerritory.claims?.length || 0}
+    {editTerritoryForm.maxPlayers < 999 && ` / ${editTerritoryForm.maxPlayers}`}
+  </Badge></div>
                 {(() => {
                   const currentClaims = selectedTerritory.claims || [];
                   return currentClaims.length > 0 ? (
@@ -1256,7 +1370,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
 >
   <option value="">Выберите игрока...</option>
   {availablePlayers.map((p) => (
-    <option key={p.id} value={p.id}>
+    <option key={p.id} value={p.userId}>  {/* ИСПРАВЛЕНО: используем p.userId */}
       {p.displayName} (@{p.user?.username || 'unknown'})
     </option>
   ))}
@@ -1370,14 +1484,14 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
           <div className="space-y-4">
             <div><Label>Локация</Label><Select value={assignPlayerForm.territoryId} onValueChange={(value) => setAssignPlayerForm({ ...assignPlayerForm, territoryId: value })}><SelectTrigger><SelectValue placeholder="Выберите локацию" /></SelectTrigger><SelectContent>{territories.map((t) => (<SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>))}</SelectContent></Select></div>
            <div><Label>Игрок</Label>
- <select
+<select
   value={assignPlayerForm.playerId}
   onChange={(e) => setAssignPlayerForm({ ...assignPlayerForm, playerId: e.target.value })}
   className="w-full h-10 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
 >
   <option value="">Выберите игрока</option>
   {eligiblePlayers.map((p) => (
-    <option key={p.id} value={p.id}>
+    <option key={p.id} value={p.userId}>  {/* ИСПРАВЛЕНО: используем p.userId */}
       {p.displayName} (@{p.user?.username || 'unknown'})
     </option>
   ))}

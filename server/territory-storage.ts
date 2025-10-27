@@ -17,8 +17,11 @@ import {
 import { db } from "./db";
 import { eq, desc, sql, and, isNull, inArray } from "drizzle-orm";
 
-const UNCLAIMED_COLOR = '#374151'; // Very Dark Gray
-const DEFAULT_CLAIM_COLOR = '#3B82F6'; // Bright Blue
+// В начале файла territory-storage.ts, замени константы:
+
+const UNCLAIMED_COLOR = '#000000'; //  (0 игроков)
+const SINGLE_PLAYER_COLOR = '#3B82F6'; // (1 игрок)
+const MULTI_PLAYER_COLOR = '#EF4444'; // (2+ игрока)
 
 export class DatabaseTerritoryStorage {
 
@@ -79,6 +82,11 @@ export class DatabaseTerritoryStorage {
   async getAllMaps(): Promise<DropMapSettings[]> {
     return db.select().from(dropMapSettings).orderBy(desc(dropMapSettings.createdAt));
   }
+  private getTerritoryColor(claimCount: number): string {
+  if (claimCount === 0) return UNCLAIMED_COLOR;
+  if (claimCount === 1) return SINGLE_PLAYER_COLOR;
+  return MULTI_PLAYER_COLOR; // 2+
+}
 
   async updateMap(id: string, updates: Partial<Omit<DropMapSettings, 'id' | 'createdAt'>>): Promise<DropMapSettings> {
     const [updated] = await db.update(dropMapSettings).set({ ...updates, updatedAt: new Date() }).where(eq(dropMapSettings.id, id)).returning();
@@ -95,29 +103,104 @@ export class DatabaseTerritoryStorage {
   // =============================================
 
   async getMapTerritories(mapId: string): Promise<any[]> {
-    const territoriesData = await db
-      .select({ territory: territories, ownerUsername: users.username, ownerDisplayName: users.displayName })
-      .from(territories).leftJoin(users, sql`(${territories.ownerId})::text = (${users.id})::text`).where(eq(territories.mapId, mapId));
+  const territoriesData = await db
+    .select({ 
+      territory: territories, 
+      ownerUsername: users.username, 
+      ownerDisplayName: users.displayName 
+    })
+    .from(territories)
+    .leftJoin(users, sql`(${territories.ownerId})::text = (${users.id})::text`)
+    .where(eq(territories.mapId, mapId));
+  
+  const territoryIds = territoriesData.map(t => t.territory.id);
+  if (territoryIds.length === 0) return [];
+
+  const allClaims = await db
+    .select({ 
+      claim: territoryClaims,
+      user: { username: users.username, displayName: users.displayName },
+      invite: dropMapInviteCodes,
+      eligiblePlayer: dropMapEligiblePlayers // ДОБАВЛЕНО
+    })
+    .from(territoryClaims)
+    .leftJoin(users, sql`(${territoryClaims.userId})::text = (${users.id})::text`)
+    .leftJoin(
+      dropMapInviteCodes,
+      sql`${territoryClaims.territoryId} = ${dropMapInviteCodes.territoryId} 
+          AND ${dropMapInviteCodes.isUsed} = true`
+    )
+    .leftJoin( // ДОБАВЛЕНО: джойним виртуальных игроков
+      dropMapEligiblePlayers,
+      sql`(${territoryClaims.userId})::text = (${dropMapEligiblePlayers.userId})::text`
+    )
+    .where(
+      and(
+        inArray(territoryClaims.territoryId, territoryIds),
+        eq(territoryClaims.claimType, 'claim'),
+        isNull(territoryClaims.revokedAt)
+      )
+    );
+
+  const claimsByTerritory = allClaims.reduce((acc, row) => {
+    const id = row.claim.territoryId;
+    if (!acc[id]) acc[id] = [];
     
-    const territoryIds = territoriesData.map(t => t.territory.id);
-    if (territoryIds.length === 0) return [];
+    let displayName: string;
+    let username: string;
+    let userId: string;
+    
+    if (row.claim.userId) {
+      userId = row.claim.userId;
+      
+      // ИЗМЕНЕНО: Проверяем, виртуальный ли это игрок
+      if (userId.startsWith('virtual-')) {
+        // Виртуальный игрок - берём данные из eligiblePlayer
+        displayName = row.eligiblePlayer?.displayName || row.invite?.displayName || 'Виртуальный игрок';
+        username = 'virtual';
+      } else if (row.user) {
+        // Обычный пользователь
+        displayName = row.user.displayName || 'Неизвестный';
+        username = row.user.username || 'unknown';
+      } else {
+        // Фоллбэк для старых данных
+        displayName = row.invite?.displayName || 'Неизвестный';
+        username = 'unknown';
+      }
+    } else {
+      // Старый формат без userId
+      userId = `anonymous-${row.claim.id}`;
+      displayName = 'Анонимный игрок';
+      username = 'anonymous';
+    }
+    
+    const exists = acc[id].find((c: any) => c.userId === userId);
+    if (!exists) {
+      acc[id].push({ 
+        userId,
+        username,
+        displayName,
+        claimedAt: row.claim.claimedAt 
+      });
+    }
+    
+    return acc;
+  }, {} as Record<string, any[]>);
 
-    const allClaims = await db.select({ claim: territoryClaims, user: { username: users.username, displayName: users.displayName } })
-      .from(territoryClaims).leftJoin(users, sql`(${territoryClaims.userId})::text = (${users.id})::text`)
-      .where(and(inArray(territoryClaims.territoryId, territoryIds), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
-
-    const claimsByTerritory = allClaims.reduce((acc, row) => {
-      const id = row.claim.territoryId;
-      if (!acc[id]) acc[id] = [];
-      acc[id].push({ userId: row.claim.userId, username: row.user?.username, displayName: row.user?.displayName, claimedAt: row.claim.claimedAt });
-      return acc;
-    }, {} as Record<string, any[]>);
-
-    return territoriesData.map(row => {
-      const claims = claimsByTerritory[row.territory.id] || [];
-      return { ...row.territory, owner: row.territory.ownerId ? { id: row.territory.ownerId, username: row.ownerUsername || '', displayName: row.ownerDisplayName || '' } : undefined, claims, claimCount: claims.length };
-    });
-  }
+  return territoriesData.map(row => {
+    const claims = claimsByTerritory[row.territory.id] || [];
+    return { 
+      ...row.territory, 
+      owner: row.territory.ownerId ? { 
+        id: row.territory.ownerId, 
+        username: row.ownerUsername || '', 
+        displayName: row.ownerDisplayName || '' 
+      } : undefined, 
+      claims, 
+      claimCount: claims.length 
+    };
+  });
+}
   
   async createTerritory(data: { mapId: string; name: string; points: any; color?: string; maxPlayers?: number; description?: string; }): Promise<Territory> {
     const [territory] = await db.insert(territories).values({ mapId: data.mapId, name: data.name, points: data.points, color: data.color || UNCLAIMED_COLOR, maxPlayers: data.maxPlayers || 1, description: data.description }).returning();
@@ -158,10 +241,32 @@ export class DatabaseTerritoryStorage {
   }
 
   async getMapPlayers(mapId: string): Promise<any[]> {
-    return db.select({ player: dropMapEligiblePlayers, user: { id: users.id, username: users.username, displayName: users.displayName } })
-      .from(dropMapEligiblePlayers).leftJoin(users, eq(dropMapEligiblePlayers.userId, users.id))
-      .where(eq(dropMapEligiblePlayers.settingsId, mapId)).orderBy(desc(dropMapEligiblePlayers.addedAt));
-  }
+  const players = await db
+    .select({ 
+      player: dropMapEligiblePlayers, 
+      user: { 
+        id: users.id, 
+        username: users.username, 
+        displayName: users.displayName 
+      } 
+    })
+    .from(dropMapEligiblePlayers)
+    .leftJoin(users, eq(dropMapEligiblePlayers.userId, users.id))
+    .where(eq(dropMapEligiblePlayers.settingsId, mapId))
+    .orderBy(desc(dropMapEligiblePlayers.addedAt));
+  
+  // ИЗМЕНЕНО: Обрабатываем виртуальных игроков
+  return players.map(p => ({
+    ...p.player,
+    user: p.player.userId.startsWith('virtual-') 
+      ? { 
+          id: p.player.userId,
+          username: 'virtual',
+          displayName: p.player.displayName 
+        }
+      : p.user
+  }));
+}
 
   async isUserEligibleForMap(mapId: string, userId: string): Promise<boolean> {
   const [player] = await db
@@ -198,68 +303,99 @@ export class DatabaseTerritoryStorage {
   // =============================================
 
   async claimTerritory(territoryId: string, userId: string): Promise<TerritoryClaim> {
-    return db.transaction(async (tx) => {
-        const [territory] = await tx.select().from(territories).where(eq(territories.id, territoryId));
-        if (!territory || !territory.mapId) throw new Error('Territory or associated map not found');
+  return db.transaction(async (tx) => {
+    const [territory] = await tx.select().from(territories).where(eq(territories.id, territoryId));
+    if (!territory || !territory.mapId) throw new Error('Territory or associated map not found');
 
-        const oldClaims = await tx.select({ id: territoryClaims.id, territoryId: territoryClaims.territoryId })
-            .from(territoryClaims)
-            .innerJoin(territories, eq(territoryClaims.territoryId, territories.id))
-            .where(and(
-                eq(territoryClaims.userId, userId), 
-                eq(territories.mapId, territory.mapId), 
-                eq(territoryClaims.claimType, 'claim'), 
-                isNull(territoryClaims.revokedAt)
-            ));
-        
-        const oldClaim = oldClaims[0];
+    const oldClaims = await tx.select({ id: territoryClaims.id, territoryId: territoryClaims.territoryId })
+      .from(territoryClaims)
+      .innerJoin(territories, eq(territoryClaims.territoryId, territories.id))
+      .where(and(
+        eq(territoryClaims.userId, userId), 
+        eq(territories.mapId, territory.mapId), 
+        eq(territoryClaims.claimType, 'claim'), 
+        isNull(territoryClaims.revokedAt)
+      ));
+    
+    const oldClaim = oldClaims[0];
 
-        if (oldClaim && oldClaim.territoryId !== territoryId) {
-            await tx.update(territoryClaims).set({ revokedAt: new Date() }).where(eq(territoryClaims.id, oldClaim.id));
+    if (oldClaim && oldClaim.territoryId !== territoryId) {
+      await tx.update(territoryClaims).set({ revokedAt: new Date() }).where(eq(territoryClaims.id, oldClaim.id));
 
-            const remainingOnOld = await tx.select({ id: territoryClaims.id, userId: territoryClaims.userId }).from(territoryClaims)
-                .where(and(
-                    eq(territoryClaims.territoryId, oldClaim.territoryId),
-                    eq(territoryClaims.claimType, 'claim'),
-                    isNull(territoryClaims.revokedAt)
-                )).orderBy(territoryClaims.claimedAt);
+      const remainingOnOld = await tx.select({ id: territoryClaims.id, userId: territoryClaims.userId }).from(territoryClaims)
+        .where(and(
+          eq(territoryClaims.territoryId, oldClaim.territoryId),
+          eq(territoryClaims.claimType, 'claim'),
+          isNull(territoryClaims.revokedAt)
+        )).orderBy(territoryClaims.claimedAt);
 
-            if (remainingOnOld.length === 0) {
-                await tx.update(territories).set({ 
-                    ownerId: null, 
-                    claimedAt: null, 
-                    color: UNCLAIMED_COLOR 
-                }).where(eq(territories.id, oldClaim.territoryId));
-            } else {
-                const [oldTerritory] = await tx.select({ ownerId: territories.ownerId }).from(territories).where(eq(territories.id, oldClaim.territoryId));
-                if (oldTerritory.ownerId === userId) {
-                    await tx.update(territories).set({ ownerId: remainingOnOld[0].userId }).where(eq(territories.id, oldClaim.territoryId));
-                }
-            }
+      // ИЗМЕНЕНО: Обновляем цвет старой территории
+      const oldTerritoryColor = this.getTerritoryColor(remainingOnOld.length);
+      
+      if (remainingOnOld.length === 0) {
+        await tx.update(territories).set({ 
+          ownerId: null, 
+          claimedAt: null, 
+          color: oldTerritoryColor 
+        }).where(eq(territories.id, oldClaim.territoryId));
+      } else {
+        const [oldTerritory] = await tx.select({ ownerId: territories.ownerId }).from(territories).where(eq(territories.id, oldClaim.territoryId));
+        if (oldTerritory.ownerId === userId) {
+          await tx.update(territories).set({ 
+            ownerId: remainingOnOld[0].userId,
+            color: oldTerritoryColor // ДОБАВЛЕНО
+          }).where(eq(territories.id, oldClaim.territoryId));
+        } else {
+          // Просто обновляем цвет
+          await tx.update(territories).set({ 
+            color: oldTerritoryColor 
+          }).where(eq(territories.id, oldClaim.territoryId));
         }
+      }
+    }
 
-        const currentClaims = await tx.select({ id: territoryClaims.id }).from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
-        if (currentClaims.length >= (territory.maxPlayers || 1)) {
-            const userAlreadyOnThisTerritory = currentClaims.some(c => c.userId === userId);
-            if (userAlreadyOnThisTerritory) {
-                const [existingClaim] = await tx.select().from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.userId, userId), isNull(territoryClaims.revokedAt)));
-                return existingClaim;
-            }
-            throw new Error(`Максимум ${territory.maxPlayers} игрок(ов) на локации`);
-        }
+    const currentClaims = await tx.select({ id: territoryClaims.id, userId: territoryClaims.userId }).from(territoryClaims)
+      .where(and(
+        eq(territoryClaims.territoryId, territoryId), 
+        eq(territoryClaims.claimType, 'claim'), 
+        isNull(territoryClaims.revokedAt)
+      ));
+      
+    if (currentClaims.length >= (territory.maxPlayers || 999)) {
+      const userAlreadyOnThisTerritory = currentClaims.some(c => c.userId === userId);
+      if (userAlreadyOnThisTerritory) {
+        const [existingClaim] = await tx.select().from(territoryClaims)
+          .where(and(
+            eq(territoryClaims.territoryId, territoryId), 
+            eq(territoryClaims.userId, userId), 
+            isNull(territoryClaims.revokedAt)
+          ));
+        return existingClaim;
+      }
+      throw new Error(`Максимум ${territory.maxPlayers} игрок(ов) на локации`);
+    }
 
-        if (currentClaims.length === 0) {
-            await tx.update(territories).set({ 
-                ownerId: userId, 
-                claimedAt: new Date(),
-                color: DEFAULT_CLAIM_COLOR 
-            }).where(eq(territories.id, territoryId));
-        }
+    // ИЗМЕНЕНО: Вычисляем новый цвет после добавления игрока
+    const newClaimCount = currentClaims.length + 1;
+    const newColor = this.getTerritoryColor(newClaimCount);
 
-        const [newClaim] = await tx.insert(territoryClaims).values({ territoryId, userId, claimType: 'claim' }).returning();
-        return newClaim;
-    });
-  }
+    if (currentClaims.length === 0) {
+      await tx.update(territories).set({ 
+        ownerId: userId, 
+        claimedAt: new Date(),
+        color: newColor 
+      }).where(eq(territories.id, territoryId));
+    } else {
+      // Обновляем только цвет, если это не первый игрок
+      await tx.update(territories).set({ 
+        color: newColor 
+      }).where(eq(territories.id, territoryId));
+    }
+
+    const [newClaim] = await tx.insert(territoryClaims).values({ territoryId, userId, claimType: 'claim' }).returning();
+    return newClaim;
+  });
+}
   
 
   async getUserTerritoryClaimForTerritory(territoryId: string, userId: string): Promise<TerritoryClaim | undefined> {
@@ -268,23 +404,47 @@ export class DatabaseTerritoryStorage {
   }
 
   async removeUserClaim(territoryId: string, userId: string): Promise<void> {
-    await db.transaction(async (tx) => {
-        await tx.update(territoryClaims).set({ revokedAt: new Date() }).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.userId, userId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
-        
-        const remaining = await tx.select({ userId: territoryClaims.userId }).from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt))).orderBy(territoryClaims.claimedAt);
-        const [currentTerritory] = await tx.select({ ownerId: territories.ownerId }).from(territories).where(eq(territories.id, territoryId));
-        
-        if (remaining.length === 0) {
-            await tx.update(territories).set({ 
-                ownerId: null, 
-                claimedAt: null,
-                color: UNCLAIMED_COLOR
-            }).where(eq(territories.id, territoryId));
-        } else if (currentTerritory.ownerId === userId) {
-            await tx.update(territories).set({ ownerId: remaining[0].userId }).where(eq(territories.id, territoryId));
-        }
-    });
-  }
+  await db.transaction(async (tx) => {
+    await tx.update(territoryClaims).set({ revokedAt: new Date() })
+      .where(and(
+        eq(territoryClaims.territoryId, territoryId), 
+        eq(territoryClaims.userId, userId), 
+        eq(territoryClaims.claimType, 'claim'), 
+        isNull(territoryClaims.revokedAt)
+      ));
+    
+    const remaining = await tx.select({ userId: territoryClaims.userId }).from(territoryClaims)
+      .where(and(
+        eq(territoryClaims.territoryId, territoryId), 
+        eq(territoryClaims.claimType, 'claim'), 
+        isNull(territoryClaims.revokedAt)
+      )).orderBy(territoryClaims.claimedAt);
+      
+    const [currentTerritory] = await tx.select({ ownerId: territories.ownerId }).from(territories)
+      .where(eq(territories.id, territoryId));
+    
+    // ИЗМЕНЕНО: Вычисляем цвет на основе оставшихся игроков
+    const newColor = this.getTerritoryColor(remaining.length);
+    
+    if (remaining.length === 0) {
+      await tx.update(territories).set({ 
+        ownerId: null, 
+        claimedAt: null,
+        color: newColor
+      }).where(eq(territories.id, territoryId));
+    } else if (currentTerritory.ownerId === userId) {
+      await tx.update(territories).set({ 
+        ownerId: remaining[0].userId,
+        color: newColor // ДОБАВЛЕНО
+      }).where(eq(territories.id, territoryId));
+    } else {
+      // Просто обновляем цвет
+      await tx.update(territories).set({ 
+        color: newColor 
+      }).where(eq(territories.id, territoryId));
+    }
+  });
+}
 
   // =============================================
   // ========== INVITE METHODS ==========
@@ -315,30 +475,83 @@ export class DatabaseTerritoryStorage {
   }
 
   async claimTerritoryWithInvite(code: string, territoryId: string): Promise<{ claim: TerritoryClaim; invite: DropMapInviteCode }> {
-    return db.transaction(async (tx) => {
-      const { valid, error, invite } = await this.validateInvite(code);
-      if (!valid || !invite) throw new Error(error);
+  return db.transaction(async (tx) => {
+    const { valid, error, invite } = await this.validateInvite(code);
+    if (!valid || !invite) throw new Error(error);
 
-      const [map] = await tx.select().from(dropMapSettings).where(eq(dropMapSettings.id, invite.settingsId));
-      if (!map) throw new Error('Карта для этого инвайта не найдена');
-      if (map.isLocked) throw new Error('Карта заблокирована');
+    const [map] = await tx.select().from(dropMapSettings).where(eq(dropMapSettings.id, invite.settingsId));
+    if (!map) throw new Error('Карта для этого инвайта не найдена');
+    if (map.isLocked) throw new Error('Карта заблокирована');
 
-      const [territory] = await tx.select().from(territories).where(eq(territories.id, territoryId));
-      if (!territory) throw new Error('Territory not found');
+    const [territory] = await tx.select().from(territories).where(eq(territories.id, territoryId));
+    if (!territory) throw new Error('Territory not found');
+    if (territory.mapId !== invite.settingsId) throw new Error('Territory does not belong to this map');
 
-      const currentClaims = await tx.select({ id: territoryClaims.id }).from(territoryClaims).where(and(eq(territoryClaims.territoryId, territoryId), eq(territoryClaims.claimType, 'claim'), isNull(territoryClaims.revokedAt)));
-      if (currentClaims.length >= (territory.maxPlayers || 1)) throw new Error(`Максимум ${territory.maxPlayers} игрок(ов) на локации`);
-
-      if (currentClaims.length === 0) {
-        await tx.update(territories).set({ color: DEFAULT_CLAIM_COLOR }).where(eq(territories.id, territoryId));
-      }
-
-      const [newClaim] = await tx.insert(territoryClaims).values({ territoryId, userId: null, claimType: 'claim', reason: `Клейм по коду: ${invite.displayName}` }).returning();
-      await tx.update(dropMapInviteCodes).set({ isUsed: true, usedAt: new Date(), territoryId }).where(eq(dropMapInviteCodes.code, code));
+    const currentClaims = await tx.select({ id: territoryClaims.id }).from(territoryClaims)
+      .where(and(
+        eq(territoryClaims.territoryId, territoryId), 
+        eq(territoryClaims.claimType, 'claim'), 
+        isNull(territoryClaims.revokedAt)
+      ));
       
-      return { claim: newClaim, invite };
-    });
-  }
+    if (currentClaims.length >= (territory.maxPlayers || 999)) {
+      throw new Error(`Максимум ${territory.maxPlayers} игрок(ов) на локации`);
+    }
+
+    // НОВОЕ: Создаём или получаем ID виртуального игрока
+    let virtualPlayerId = invite.virtualPlayerId;
+    
+    if (!virtualPlayerId) {
+      // Генерируем уникальный ID для виртуального игрока
+      virtualPlayerId = `virtual-${invite.code}-${Date.now()}`;
+      
+      // ДОБАВЛЯЕМ виртуального игрока в список допущенных
+      await tx.insert(dropMapEligiblePlayers).values({
+        settingsId: invite.settingsId,
+        userId: virtualPlayerId, // Используем виртуальный ID как userId
+        displayName: invite.displayName,
+        sourceType: 'invite',
+        addedBy: 'system',
+      });
+      
+      // Сохраняем virtualPlayerId в инвайт-коде
+      await tx.update(dropMapInviteCodes)
+        .set({ virtualPlayerId })
+        .where(eq(dropMapInviteCodes.code, code));
+    }
+
+    const newClaimCount = currentClaims.length + 1;
+    const newColor = this.getTerritoryColor(newClaimCount);
+
+    if (currentClaims.length === 0) {
+      await tx.update(territories).set({ 
+        color: newColor,
+        claimedAt: new Date()
+      }).where(eq(territories.id, territoryId));
+    } else {
+      await tx.update(territories).set({ 
+        color: newColor
+      }).where(eq(territories.id, territoryId));
+    }
+
+    // ИЗМЕНЕНО: Создаём клейм с виртуальным userId
+    const [newClaim] = await tx.insert(territoryClaims).values({ 
+      territoryId, 
+      userId: virtualPlayerId, // Используем виртуальный ID
+      claimType: 'claim', 
+      reason: `Invite: ${invite.displayName}`
+    }).returning();
+    
+    // Помечаем инвайт как использованный
+    await tx.update(dropMapInviteCodes).set({ 
+      isUsed: true, 
+      usedAt: new Date(), 
+      territoryId 
+    }).where(eq(dropMapInviteCodes.code, code));
+    
+    return { claim: newClaim, invite };
+  });
+}
 
   // ===== Admin & Logging =====
   
