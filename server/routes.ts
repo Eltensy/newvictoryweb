@@ -2050,6 +2050,63 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
   }
 });
 
+// ===== DEV LOGIN (ONLY IN DEVELOPMENT) =====
+
+if (process.env.NODE_ENV === 'development') {
+  app.post("/api/auth/dev-login", async (req, res) => {
+    try {
+      const { username } = req.body;
+      
+      if (!username?.trim()) {
+        return res.status(400).json({ error: "Username is required" });
+      }
+
+      // Проверяем или создаем тестового пользователя
+      let user = await storage.getUserByUsername(username);
+      
+      if (!user) {
+        // Создаем нового тестового пользователя
+        const isAdmin = username.toLowerCase().includes('admin');
+        
+        user = await storage.createUser({
+          username: username,
+          displayName: `Test ${username}`,
+          email: `${username}@test.local`,
+          epicGamesId: `dev-${username}-${Date.now()}`,
+          balance: isAdmin ? 10000 : 1000, // Админы получают больше денег для тестов
+          isAdmin: isAdmin,
+        });
+
+        console.log(`✅ Created dev user: ${username} (admin: ${isAdmin})`);
+      } else {
+        console.log(`🔄 Using existing dev user: ${username}`);
+      }
+      
+      // Создаем токен
+      const token = generateSessionToken(user);
+      
+      res.json({ 
+        user: {
+          id: user.id,
+          username: user.username,
+          displayName: user.displayName,
+          balance: user.balance,
+          isAdmin: user.isAdmin,
+          subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
+          premiumTier: user.premiumTier,
+          premiumEndDate: user.premiumEndDate,
+        },
+        token 
+      });
+    } catch (error) {
+      console.error('Dev login error:', error);
+      res.status(500).json({ error: "Failed to create dev user" });
+    }
+  });
+
+  console.log('🔧 Dev login endpoint enabled at /api/auth/dev-login');
+}
+
 app.post("/api/admin/submission/:id/review", async (req, res) => {
   try {
     const authResult = await authenticateAdmin(req);

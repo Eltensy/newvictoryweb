@@ -48,7 +48,6 @@ interface DropMap {
   description?: string;
   mapImageUrl?: string;
   mode: 'tournament' | 'practice';
-  allowReclaim: boolean;
   isLocked: boolean;
   tournamentId?: string;
   tournament?: { name: string; };
@@ -124,17 +123,28 @@ function NotificationModal({ isOpen, type, title, message, onClose }: any) {
   );
 }
 
-function TerritoryPolygon({ territory, isSelected, onClick, onContextMenu, scale }: { territory: Territory; isSelected: boolean; onClick: (e: React.MouseEvent) => void; onContextMenu: (e: React.MouseEvent) => void; scale: number; }) {
-  // Убираем дубликаты по userId
-  const uniqueClaims = territory.claims ? territory.claims.filter((claim, index, self) => 
-  index === self.findIndex(c => c.userId === claim.userId)
-) : [];
-  
+const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContextMenu, scale }: { territory: Territory; isSelected: boolean; onClick: (e: React.MouseEvent) => void; onContextMenu: (e: React.MouseEvent) => void; scale: number; }) => {
+  // Убираем дубликаты по userId - memoized
+  const uniqueClaims = useMemo(() =>
+    territory.claims ? territory.claims.filter((claim, index, self) =>
+      index === self.findIndex(c => c.userId === claim.userId)
+    ) : [],
+    [territory.claims]
+  );
+
   const hasClaims = uniqueClaims.length > 0;
   const claimCount = uniqueClaims.length;
-  const points = territory.points.map(p => `${p.x},${p.y}`).join(' ');
-  const centerX = territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length;
-  const centerY = territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length;
+
+  // Memoize expensive calculations
+  const points = useMemo(() =>
+    territory.points.map(p => `${p.x},${p.y}`).join(' '),
+    [territory.points]
+  );
+
+  const { centerX, centerY } = useMemo(() => ({
+    centerX: territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length,
+    centerY: territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length
+  }), [territory.points]);
   
   // Определяем цвет: красный если 2+ игроков, иначе оригинальный
   const displayColor = claimCount >= 2 ? '#EF4444' : territory.color;
@@ -227,7 +237,16 @@ function TerritoryPolygon({ territory, isSelected, onClick, onContextMenu, scale
       })()}
     </g>
   );
-}
+}, (prevProps, nextProps) => {
+  // Custom comparison for optimal re-renders
+  return (
+    prevProps.territory.id === nextProps.territory.id &&
+    prevProps.territory.color === nextProps.territory.color &&
+    prevProps.territory.claims?.length === nextProps.territory.claims?.length &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.scale === nextProps.scale
+  );
+});
 
 function DrawingPoints({ points, color, scale }: { points: { x: number; y: number }[]; color: string; scale: number; }) {
   if (points.length === 0) return null;
@@ -292,6 +311,8 @@ export default function TerritoryMain() {
   
   const [expandedTerritories, setExpandedTerritories] = useState<ExpandedTerritories>({});
 
+  const [shouldConnectSocket, setShouldConnectSocket] = useState(false);
+
   const [scale, setScale] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -330,7 +351,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   const [playerSearchQuery, setPlayerSearchQuery] = useState('');
   const [inviteForm, setInviteForm] = useState({ displayName: '', expiresInDays: 30 });
   const [importForm, setImportForm] = useState({ tournamentId: '', topN: '', positions: '' });
-  const [settingsForm, setSettingsForm] = useState({ allowReclaim: true, isLocked: false, mapImageFile: null as File | null });
+  const [settingsForm, setSettingsForm] = useState({ isLocked: false, mapImageFile: null as File | null });
   const [assignPlayerForm, setAssignPlayerForm] = useState({ territoryId: '', playerId: '' });
   
   const [notification, setNotification] = useState<{ isOpen: boolean; type: 'success' | 'error' | 'warning' | 'info'; title: string; message: string; }>({ isOpen: false, type: 'info', title: '', message: '' });
@@ -444,125 +465,133 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
     }
   }, [getAuthToken, user]);
 
-  useEffect(() => {
-  const init = async () => {
-    if (authLoading || !isLoggedIn || !user || isInitialized) return;
-    if (user.subscriptionScreenshotStatus !== 'approved') {
-      setIsLoading(false);
-      return;
-    }
-    
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      const token = getAuthToken();
-      if (!token) return;
+ useEffect(() => {
+   const init = async () => {
+     if (authLoading || !isLoggedIn || !user || isInitialized) {
+       return;
+     }
 
-      // ✅ ШАГ 1: Загрузить только список карт (минимум данных)
-      const mapsResponse = await fetch('/api/maps', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (!mapsResponse.ok) throw new Error('Failed to load maps');
-      const maps = await mapsResponse.json();
-      setAllMaps(maps);
+     setIsLoading(true);
+     setError(null);
 
-      // ✅ ШАГ 2: Определить целевую карту
-      let targetMap = null;
-      if (dropmapIdFromUrl) {
-        targetMap = maps.find((m: DropMap) => m.id === dropmapIdFromUrl);
-      }
-      if (!targetMap) {
-        targetMap = maps.find((m: DropMap) => !m.isLocked) || maps[0];
-      }
+     try {
+       const token = getAuthToken();
+       if (!token) {
+         return;
+       }
 
-      if (!targetMap) {
-        setIsLoading(false);
-        return;
-      }
+       const mapsResponse = await fetch('/api/maps', {
+         headers: { 'Authorization': `Bearer ${token}` }
+       });
 
-      setLocation(`/dropmap/${targetMap.id}`, { replace: true });
-      setActiveMap(targetMap);
-      setSettingsForm({
-        allowReclaim: targetMap.allowReclaim,
-        isLocked: targetMap.isLocked,
-        mapImageFile: null,
-      });
+       if (!mapsResponse.ok) {
+         throw new Error('Failed to load maps');
+       }
 
-      // ✅ ШАГ 3: Загрузить ВСЕ данные карты ОДНИМ запросом
-      const fullDataResponse = await fetch(`/api/maps/${targetMap.id}/full-data`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+       const maps = await mapsResponse.json();
+       setAllMaps(maps);
 
-      if (!fullDataResponse.ok) throw new Error('Failed to load map data');
-      const fullData = await fullDataResponse.json();
+       let targetMap = null;
+       if (dropmapIdFromUrl) {
+         targetMap = maps.find((m: DropMap) => m.id === dropmapIdFromUrl);
+       }
 
-      // ✅ Установить все данные сразу
-      setTerritories(fullData.territories);
-      setEligiblePlayers(fullData.eligiblePlayers);
-      setIsUserEligible(fullData.isUserEligible);
-      if (user.isAdmin) {
-        setInviteCodes(fullData.inviteCodes);
-      }
+       if (!targetMap) {
+         targetMap = maps.find((m: DropMap) => !m.isLocked) || maps[0];
+       }
 
-      // ✅ ШАГ 4: Параллельная загрузка дополнительных данных (только для админа)
-      if (user.isAdmin) {
-        Promise.all([
-          fetch('/api/admin/tournaments', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }).then(r => r.ok ? r.json() : []),
-          fetch('/api/admin/users', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }).then(r => r.ok ? r.json() : [])
-        ]).then(([tournaments, users]) => {
-          setTournaments(tournaments);
-          setAllUsers(users);
-        });
-      }
+       if (!targetMap) {
+         setIsLoading(false);
+         return;
+       }
 
-      setIsInitialized(true);
-    } catch (err) {
-      console.error('Ошибка инициализации:', err);
-      setError('Не удалось загрузить данные локаций');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  init();
-}, [authLoading, isLoggedIn, user, isInitialized]);
+       setLocation(`/dropmap/${targetMap.id}`, { replace: true });
+       setActiveMap(targetMap);
+       setSettingsForm({
+         isLocked: targetMap.isLocked,
+         mapImageFile: null,
+       });
+
+       const fullDataResponse = await fetch(`/api/maps/${targetMap.id}/full-data`, {
+         headers: { 'Authorization': `Bearer ${token}` }
+       });
+
+       if (!fullDataResponse.ok) {
+         throw new Error('Failed to load map data');
+       }
+
+       const fullData = await fullDataResponse.json();
+
+       console.log('📦 [Init] Full data received:', {
+         territoriesCount: fullData.territories?.length,
+         eligiblePlayersCount: fullData.eligiblePlayers?.length,
+         eligiblePlayersSample: fullData.eligiblePlayers?.slice(0, 2).map((p: any) => ({
+           id: p.id,
+           userId: p.userId,
+           displayName: p.displayName
+         }))
+       });
+
+       setTerritories(fullData.territories || []);
+       setEligiblePlayers(fullData.eligiblePlayers || []);
+       setIsUserEligible(fullData.isUserEligible || false);
+
+       if (user.isAdmin) {
+         setInviteCodes(fullData.inviteCodes || []);
+       }
+
+       if (user.isAdmin) {
+         Promise.all([
+           fetch('/api/admin/tournaments', {
+             headers: { 'Authorization': `Bearer ${token}` }
+           }).then(r => r.ok ? r.json() : []),
+           fetch('/api/admin/users', {
+             headers: { 'Authorization': `Bearer ${token}` }
+           }).then(r => r.ok ? r.json() : [])
+         ]).then(([tournaments, users]) => {
+           setTournaments(tournaments);
+           setAllUsers(users);
+         }).catch(() => {});
+       }
+
+       setIsInitialized(true);
+
+     } catch (err) {
+       setError('Не удалось загрузить данные локаций');
+     } finally {
+       setIsLoading(false);
+     }
+   };
+
+   init();
+ }, [authLoading, isLoggedIn, user, isInitialized, dropmapIdFromUrl, getAuthToken, setLocation]);
+ 
 
 const { isConnected } = useTerritorySocket(
-  activeMap?.id || null,
+  activeMap?.id ?? null,
   useCallback((update: { territoryId: string; territory: any; timestamp: string }) => {
     console.log('🔔 [TerritoryMain] Territory update received:', {
       territoryId: update.territoryId,
+      territory: update.territory?.name,
       claimCount: update.territory?.claims?.length || 0
     });
-    
-    // ✅ ИСПРАВЛЕНО: Обновляем территорию И сохраняем все поля
+
     setTerritories(prev => {
-      const newTerritories = prev.map(t => 
-        t.id === update.territoryId 
+      const updated = prev.map(t =>
+        t.id === update.territoryId
           ? { ...t, ...update.territory, claims: update.territory.claims || [] }
           : t
       );
-      
-      console.log('✅ [TerritoryMain] Territories updated:', {
-        total: newTerritories.length,
-        updatedTerritory: newTerritories.find(t => t.id === update.territoryId)
-      });
-      
-      return newTerritories;
+      console.log('✅ [TerritoryMain] State updated, new territories:', updated.length);
+      return updated;
     });
   }, []),
   useCallback((update: { mapId: string; timestamp: string }) => {
+    console.log('🔄 [TerritoryMain] Full map reload triggered for:', update.mapId);
     if (activeMap?.id === update.mapId) {
-      console.log('🔄 [TerritoryMain] Full map reload triggered');
       loadMapData(update.mapId);
     }
-  }, [activeMap, loadMapData])
+  }, [activeMap?.id, loadMapData])
 );
 
   
@@ -605,9 +634,8 @@ const { isConnected } = useTerritorySocket(
     
     // ✅ Загружаем данные БЕЗ БЛОКИРОВКИ UI
     loadMapData(foundMap.id);
-    
+
     setSettingsForm({
-      allowReclaim: foundMap.allowReclaim,
       isLocked: foundMap.isLocked,
       mapImageFile: null,
     });
@@ -630,7 +658,7 @@ const { isConnected } = useTerritorySocket(
       });
       if (response.ok) {
         showNotification('success', 'Локация заклеймлена', 'Вы успешно заклеймили локацию!');
-        if (activeMap) await loadMapData(activeMap.id);
+        // WebSocket обновит состояние автоматически
       } else {
         const errorData = await response.json();
         showNotification('error', 'Ошибка клейма', errorData.error || 'Не удалось заклеймить');
@@ -720,7 +748,6 @@ const { isConnected } = useTerritorySocket(
       const token = getAuthToken();
       if (!token) return;
       const formData = new FormData();
-      formData.append('allowReclaim', String(settingsForm.allowReclaim));
       formData.append('isLocked', String(settingsForm.isLocked));
       if (settingsForm.mapImageFile) {
         formData.append('mapImage', settingsForm.mapImageFile);
@@ -936,19 +963,28 @@ const { isConnected } = useTerritorySocket(
   };
   
  const handleAssignPlayerToTerritory = async (territoryId: string, playerId: string) => {
+  console.log('📤 [Assign Player] Request:', { territoryId, playerId });
   if (!territoryId || !playerId) {
     showNotification('error', 'Ошибка', 'Выберите локацию и игрока');
     return;
   }
   try {
     const token = getAuthToken();
-    if (!token) return;
-    
+    if (!token) {
+      console.error('❌ [Assign Player] No token');
+      return;
+    }
+
     // ИСПРАВЛЕНО: playerId уже является userId из селекта
     const response = await fetch(`/api/admin/territories/${territoryId}/assign-player`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: playerId }), // playerId уже содержит userId
+    });
+
+    console.log('📥 [Assign Player] Response:', {
+      status: response.status,
+      ok: response.ok
     });
     
     if (response.ok) {
@@ -956,8 +992,22 @@ const { isConnected } = useTerritorySocket(
       setAssignPlayerForm({ territoryId: '', playerId: '' });
       setLocalSelectedPlayer('');
       if (showAssignPlayerDialog) setShowAssignPlayerDialog(false);
-      if (showEditTerritoryDialog) setShowEditTerritoryDialog(false);
-      if (activeMap) await loadMapData(activeMap.id);
+      // WebSocket обновит состояние автоматически, но обновим selectedTerritory локально
+      if (selectedTerritory && selectedTerritory.id === territoryId) {
+        // Найдем игрока
+        const player = eligiblePlayers.find(p => p.userId === playerId);
+        if (player) {
+          const newClaim = {
+            userId: player.userId,
+            displayName: player.displayName,
+            username: player.user?.username || 'unknown'
+          };
+          setSelectedTerritory({
+            ...selectedTerritory,
+            claims: [...(selectedTerritory.claims || []), newClaim]
+          });
+        }
+      }
     } else {
       const error = await response.json();
       throw new Error(error.error);
@@ -979,7 +1029,13 @@ const { isConnected } = useTerritorySocket(
       });
       if (response.ok) {
         showNotification('success', 'Успешно', 'Игрок убран с локации');
-        if (activeMap) await loadMapData(activeMap.id);
+        // WebSocket обновит состояние автоматически, но обновим selectedTerritory локально
+        if (selectedTerritory && selectedTerritory.id === territoryId) {
+          setSelectedTerritory({
+            ...selectedTerritory,
+            claims: (selectedTerritory.claims || []).filter(claim => claim.userId !== userId)
+          });
+        }
       } else {
         const error = await response.json();
         throw new Error(error.error);
@@ -1056,7 +1112,6 @@ const { isConnected } = useTerritorySocket(
     setContextMenu({ territory, x: event.clientX, y: event.clientY });
   }, [isAdminMode, user]);
   const handleWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
-    e.preventDefault();
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.min(Math.max(scale * delta, MIN_SCALE), MAX_SCALE);
     if (newScale !== scale) {
@@ -1257,23 +1312,14 @@ const resetZoom = useCallback(() => {
           )}
           
           <div className="p-4 border-b">
-             <h3 className="font-semibold flex items-center gap-2 mb-3"><Users className="h-4 w-4" />Игроки</h3>
+             <h3 className="font-semibold flex items-center gap-2 mb-3">
+               <Users className="h-4 w-4" />
+               Игроки
+               <Badge variant="outline" className="ml-auto">{eligiblePlayers.length}</Badge>
+             </h3>
               <div className="space-y-2">
   {(() => {
-    // Собираем всех игроков с их территориями
-    const allPlayers = territories.flatMap(territory => {
-      const uniqueClaims = territory.claims ? territory.claims.filter((claim, index, self) => 
-        index === self.findIndex(c => c.userId === claim.userId)
-      ) : [];
-      
-      return uniqueClaims.map(claim => ({
-        ...claim,
-        territory,
-        territoryColor: territory.color
-      }));
-    });
-
-    if (allPlayers.length === 0) {
+    if (eligiblePlayers.length === 0) {
       return (
         <div className="text-center py-6 text-muted-foreground">
           <Users className="h-6 w-6 mx-auto mb-2 opacity-50" />
@@ -1282,58 +1328,63 @@ const resetZoom = useCallback(() => {
       );
     }
 
-    // Группируем игроков по территориям
-    const playersByTerritory = territories.map(territory => {
-      const uniqueClaims = territory.claims ? territory.claims.filter((claim, index, self) => 
-        index === self.findIndex(c => c.userId === claim.userId)
-      ) : [];
-      
-      return {
-        territory,
-        players: uniqueClaims
-      };
-    }).filter(group => group.players.length > 0);
+    // Для каждого eligible игрока находим его территорию (если есть)
+    const playersWithTerritories = eligiblePlayers.map(player => {
+      // Находим территорию где этот игрок заклеймил
+      const claimedTerritory = territories.find(t =>
+        t.claims?.some(c => c.userId === player.userId)
+      );
 
-    return playersByTerritory.map(({ territory, players }) => (
-      <div key={territory.id} className="border rounded-lg overflow-hidden bg-card">
-        <div className="space-y-1 p-2">
-          {players.map((claim, index) => (
-            <button
-              key={`${claim.userId}-${index}`}
-              onClick={() => {
-                setSelectedTerritory(territory);
-                // Зумим на территорию
-                const centerX = territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length;
-                const centerY = territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length;
-                setPanOffset({ x: SVG_SIZE / 2 - centerX, y: SVG_SIZE / 2 - centerY });
-                setScale(2);
-              }}
-              className="w-full flex items-center justify-between p-2 bg-background rounded border border-border group hover:bg-muted/50 transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: territory.color }} />
-                <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                <div className="min-w-0 flex-1 text-left">
-                  <div className="text-xs font-medium truncate">{claim.displayName || 'Неизвестный'}</div>
-                  <div className="text-xs text-muted-foreground truncate">@{claim.username || 'unknown'}</div>
-                </div>
-              </div>
-              {isAdminMode && user?.isAdmin && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemovePlayerFromTerritory(territory.id, claim.userId);
-                  }}
-                  className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2 h-6 w-6 rounded bg-destructive/10 hover:bg-destructive/20 flex items-center justify-center text-destructive"
-                  title="Убрать с локации"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </button>
-          ))}
+      return {
+        player,
+        territory: claimedTerritory,
+        hasClaim: !!claimedTerritory
+      };
+    });
+
+    return playersWithTerritories.map(({ player, territory, hasClaim }) => (
+      <button
+        key={player.userId}
+        onClick={() => {
+          if (hasClaim && territory) {
+            setSelectedTerritory(territory);
+            // Зумим на территорию
+            const centerX = territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length;
+            const centerY = territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length;
+            setPanOffset({ x: SVG_SIZE / 2 - centerX, y: SVG_SIZE / 2 - centerY });
+            setScale(2);
+          }
+        }}
+        className={cn(
+          "w-full flex items-center justify-between p-2 bg-background rounded border border-border group transition-colors",
+          hasClaim ? "hover:bg-muted/50 cursor-pointer" : "opacity-60 cursor-default"
+        )}
+      >
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          {hasClaim && territory ? (
+            <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: territory.color }} />
+          ) : (
+            <div className="w-3 h-3 rounded-full flex-shrink-0 border-2 border-muted-foreground/30" />
+          )}
+          <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+          <div className="min-w-0 flex-1 text-left">
+            <div className="text-xs font-medium truncate">{player.displayName || 'Неизвестный'}</div>
+            <div className="text-xs text-muted-foreground truncate">@{player.user?.username || 'unknown'}</div>
+          </div>
         </div>
-      </div>
+        {hasClaim && territory && isAdminMode && user?.isAdmin && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRemovePlayerFromTerritory(territory.id, player.userId);
+            }}
+            className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2 h-6 w-6 rounded bg-destructive/10 hover:bg-destructive/20 flex items-center justify-center text-destructive"
+            title="Убрать с локации"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </button>
     ));
   })()}
 </div>
@@ -1390,7 +1441,7 @@ const resetZoom = useCallback(() => {
           }
           
           return (
-            <div key={invite.id} className="border rounded-lg overflow-hidden bg-card">
+            <div key={invite.code} className="border rounded-lg overflow-hidden bg-card">
               <div className="px-3 py-2">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1535,7 +1586,28 @@ const resetZoom = useCallback(() => {
                 {(() => {
                   const currentPlayerCount = selectedTerritory.claims?.length || 0;
                   const canAddMore = currentPlayerCount < editTerritoryForm.maxPlayers;
+
+                  console.log('🔍 [Available Players] Before filter:', {
+                    eligiblePlayersCount: eligiblePlayers.length,
+                    eligiblePlayersSample: eligiblePlayers.slice(0, 2).map(p => ({
+                      id: p.id,
+                      userId: p.userId,
+                      displayName: p.displayName
+                    })),
+                    selectedTerritoryClaims: selectedTerritory.claims?.map(c => c.userId)
+                  });
+
                   const availablePlayers = eligiblePlayers.filter(p => !selectedTerritory.claims?.some(claim => claim.userId === p.userId));
+
+                  console.log('🔍 [Available Players] After filter:', {
+                    count: availablePlayers.length,
+                    sample: availablePlayers.slice(0, 2).map(p => ({
+                      id: p.id,
+                      userId: p.userId,
+                      displayName: p.displayName
+                    }))
+                  });
+
                 return canAddMore ? (
   <div className="space-y-3 p-3 border rounded-lg bg-blue-50/50 dark:bg-blue-950/20">
     <div className="flex items-center gap-2">
@@ -1546,25 +1618,52 @@ const resetZoom = useCallback(() => {
       <>
         <select
   value={localSelectedPlayer}
-  onChange={(e) => setLocalSelectedPlayer(e.target.value)}
+  onChange={(e) => {
+    console.log('🔽 [Select] Changed:', {
+      value: e.target.value,
+      availablePlayers: availablePlayers.map(p => ({
+        id: p.id,
+        userId: p.userId,
+        displayName: p.displayName
+      }))
+    });
+    setLocalSelectedPlayer(e.target.value);
+  }}
   className="w-full h-10 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-input"
 >
   <option value="">Выберите игрока...</option>
-  {availablePlayers.map((p) => (
-    <option key={p.id} value={p.userId}>  {/* ИСПРАВЛЕНО: используем p.userId */}
-      {p.displayName} (@{p.user?.username || 'unknown'})
-    </option>
-  ))}
+  {availablePlayers.map((p) => {
+    console.log('🔹 [Option] Rendering:', {
+      id: p.id,
+      userId: p.userId,
+      displayName: p.displayName
+    });
+    return (
+      <option key={p.id} value={p.userId}>
+        {p.displayName} (@{p.user?.username || 'unknown'})
+      </option>
+    );
+  })}
 </select>
-<Button 
-  size="sm" 
-  onClick={async () => { 
+<Button
+  size="sm"
+  onClick={async () => {
+    console.log('🔘 [Add Player] Button clicked:', {
+      localSelectedPlayer,
+      selectedTerritoryId: selectedTerritory?.id,
+      eligiblePlayersCount: eligiblePlayers.length
+    });
     if (localSelectedPlayer && selectedTerritory) {
       await handleAssignPlayerToTerritory(selectedTerritory.id, localSelectedPlayer);
       setLocalSelectedPlayer('');
+    } else {
+      console.warn('⚠️ [Add Player] Missing data:', {
+        hasLocalSelectedPlayer: !!localSelectedPlayer,
+        hasSelectedTerritory: !!selectedTerritory
+      });
     }
-  }} 
-  disabled={!localSelectedPlayer} 
+  }}
+  disabled={!localSelectedPlayer}
   className="w-full"
 >
   <UserPlus className="h-4 w-4 mr-2" />
@@ -1651,7 +1750,6 @@ const resetZoom = useCallback(() => {
           <DialogHeader><DialogTitle>Настройки карты</DialogTitle><DialogDescription>Измените параметры текущей карты</DialogDescription></DialogHeader>
           <div className="space-y-4">
             {activeMap && (<>
-              <div className="flex items-center gap-2"><input type="checkbox" id="settingsAllowReclaim" checked={settingsForm.allowReclaim} onChange={(e) => setSettingsForm({ ...settingsForm, allowReclaim: e.target.checked })} /><Label htmlFor="settingsAllowReclaim">Разрешить переклейм</Label></div>
               <div className="flex items-center gap-2"><input type="checkbox" id="settingsIsLocked" checked={settingsForm.isLocked} onChange={(e) => setSettingsForm({ ...settingsForm, isLocked: e.target.checked })} /><Label htmlFor="settingsIsLocked">Заблокировать карту</Label></div>
               <div><Label>Изображение карты</Label><div className="space-y-2"><input ref={mapImageInputRef} type="file" accept="image/*" onChange={(e) => setSettingsForm(prev => ({ ...prev, mapImageFile: e.target.files?.[0] || null }))} className="hidden" /><Button type="button" variant="outline" onClick={() => mapImageInputRef.current?.click()} className="w-full"><ImageIcon className="h-4 w-4 mr-2" />{settingsForm.mapImageFile ? settingsForm.mapImageFile.name : 'Выбрать новое изображение'}</Button>{settingsForm.mapImageFile && (<div className="text-xs text-muted-foreground">Размер: {(settingsForm.mapImageFile.size / 1024 / 1024).toFixed(2)} МБ</div>)}{activeMap.mapImageUrl && !settingsForm.mapImageFile && (<div className="text-xs text-muted-foreground">Текущее изображение установлено</div>)}</div></div>
               <Button onClick={handleSaveSettings} className="w-full">Сохранить</Button>

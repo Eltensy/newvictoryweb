@@ -8,16 +8,20 @@ export function useTerritorySocket(
 ) {
   const socketRef = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const currentMapIdRef = useRef<string | null>(null);
+  const onTerritoryUpdateRef = useRef(onTerritoryUpdate);
+  const onMapUpdateRef = useRef(onMapUpdate);
 
+  // Обновляем колбэки без пересоздания эффекта
   useEffect(() => {
-    if (!mapId) {
-      console.log('🔌 [Socket] No mapId provided, skipping connection');
-      return;
-    }
+    onTerritoryUpdateRef.current = onTerritoryUpdate;
+    onMapUpdateRef.current = onMapUpdate;
+  }, [onTerritoryUpdate, onMapUpdate]);
 
-    console.log('🔌 [Socket] Connecting to map:', mapId);
+  // Создаем сокет один раз при монтировании
+  useEffect(() => {
+    console.log('🔌 [Socket] Initializing socket connection');
 
-    // Создаем подключение
     const socket = io('/', {
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -28,56 +32,79 @@ export function useTerritorySocket(
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('✅ [Socket] Connected, joining map room:', mapId);
+      console.log('✅ [Socket] Connected');
       setIsConnected(true);
-      
-      // Присоединяемся к комнате карты
-      socket.emit('join-map', mapId);
+      // Если есть текущая карта, присоединяемся к ней
+      if (currentMapIdRef.current) {
+        console.log('📍 [Socket] Rejoining map:', currentMapIdRef.current);
+        socket.emit('join-map', currentMapIdRef.current);
+      }
     });
 
-    socket.on('disconnect', () => {
-      console.log('❌ [Socket] Disconnected');
+    socket.on('disconnect', (reason) => {
+      console.log('❌ [Socket] Disconnected:', reason);
       setIsConnected(false);
     });
 
     socket.on('connect_error', (error) => {
-      console.error('❌ [Socket] Connection error:', error);
+      console.error('❌ [Socket] Connection error:', error.message);
       setIsConnected(false);
     });
 
-    // ✅ КРИТИЧНО: Слушаем territory-update
     socket.on('territory-update', (data: any) => {
-      console.log('🔔 [Socket] Territory update received:', {
-        mapId: data.mapId,
-        territoryId: data.territoryId,
-        claimCount: data.territory?.claims?.length || 0,
-        timestamp: data.timestamp
-      });
-
-      // Проверяем, что обновление для нашей карты
-      if (data.mapId === mapId && onTerritoryUpdate) {
-        onTerritoryUpdate(data);
+      if (data.mapId === currentMapIdRef.current && onTerritoryUpdateRef.current) {
+        onTerritoryUpdateRef.current(data);
       }
     });
 
-    // ✅ Слушаем map-update (полное обновление карты)
     socket.on('map-update', (data: any) => {
-      console.log('🔄 [Socket] Map update received:', data);
-      
-      if (data.mapId === mapId && onMapUpdate) {
-        onMapUpdate(data);
+      if (data.mapId === currentMapIdRef.current && onMapUpdateRef.current) {
+        onMapUpdateRef.current(data);
       }
     });
 
-    // Cleanup
+    socket.on('error', (error) => {
+      console.error('❌ [Socket] Socket error:', error);
+    });
+
     return () => {
-      console.log('🔌 [Socket] Disconnecting from map:', mapId);
+      console.log('🧹 [Socket] Disconnecting');
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, []); // Создается только один раз!
+
+  // Отдельный эффект для смены карт (только join/leave, без пересоздания сокета)
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) return;
+
+    const previousMapId = currentMapIdRef.current;
+
+    // Покидаем старую карту
+    if (previousMapId && previousMapId !== mapId) {
+      console.log('📤 [Socket] Leaving map:', previousMapId);
+      socket.emit('leave-map', previousMapId);
+    }
+
+    // Присоединяемся к новой карте
+    if (mapId) {
+      console.log('📥 [Socket] Joining map:', mapId);
+      currentMapIdRef.current = mapId;
       if (socket.connected) {
+        socket.emit('join-map', mapId);
+      }
+    } else {
+      currentMapIdRef.current = null;
+    }
+
+    return () => {
+      // При размонтировании или смене карты покидаем текущую
+      if (mapId && socket.connected) {
         socket.emit('leave-map', mapId);
       }
-      socket.disconnect();
     };
-  }, [mapId, onTerritoryUpdate, onMapUpdate]);
+  }, [mapId]);
 
   return { isConnected, socket: socketRef.current };
 }

@@ -276,7 +276,6 @@ export const dropMapSettings = pgTable('drop_map_settings', {
   createdFrom: uuid('created_from').references((): any => dropMapSettings.id, { onDelete: 'set null' }),
   
   mode: dropMapModeEnum('mode').notNull().default('practice'),
-  allowReclaim: boolean('allow_reclaim').notNull().default(false),
   isLocked: boolean('is_locked').notNull().default(false),
   
   createdBy: uuid('created_by').references(() => users.id),
@@ -334,7 +333,7 @@ export const territories = pgTable("territories", {
 export const territoryClaims = pgTable("territory_claims", {
   id: uuid("id").defaultRandom().primaryKey(),
   territoryId: uuid("territory_id").references(() => territories.id, { onDelete: 'cascade' }).notNull(),
-  userId: uuid("user_id").references(() => users.id, { onDelete: 'cascade' }),
+  userId: text("user_id"), // Может быть UUID (реальный юзер) или text (виртуальный игрок) или null
   claimType: territoryClaimTypeEnum("claim_type").notNull(),
   claimedAt: timestamp("claimed_at").defaultNow().notNull(),
   revokedAt: timestamp("revoked_at"),
@@ -385,7 +384,7 @@ export const territoryNotifications = pgTable("territory_notifications", {
 export const dropMapEligiblePlayers = pgTable("dropmap_eligible_players", {
   id: uuid("id").primaryKey().defaultRandom(),
   settingsId: uuid("settings_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
-  userId: uuid("user_id").references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  userId: text("user_id").notNull(), // Может быть UUID (реальный юзер) или text (виртуальный игрок)
   displayName: text("display_name").notNull(),
   sourceType: varchar("source_type", { length: 50 }),
   sourceDetails: jsonb("source_details"),
@@ -945,13 +944,11 @@ export const createDropMapSettingsSchema = z.object({
   description: z.string().optional(),
   mapImageUrl: z.string().url().optional(),
   mode: z.enum(['tournament', 'practice']).default('practice'),
-  allowReclaim: z.boolean().default(true),
 });
 
 export const updateDropMapSettingsSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().optional(),
-  allowReclaim: z.boolean().optional(),
   isLocked: z.boolean().optional(),
 });
 

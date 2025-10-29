@@ -446,9 +446,15 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
 
   useEffect(() => {
   const init = async () => {
-    if (authLoading || !isLoggedIn || !user || isInitialized) return;
-    if (user.subscriptionScreenshotStatus !== 'approved') {
-      setIsLoading(false);
+    console.log('🔧 [Init] Starting initialization...', {
+      authLoading,
+      isLoggedIn,
+      user: user?.username,
+      isInitialized
+    });
+
+    if (authLoading || !isLoggedIn || !user || isInitialized) {
+      console.log('⏸️ [Init] Skipping - waiting for auth or already initialized');
       return;
     }
     
@@ -457,30 +463,59 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
     
     try {
       const token = getAuthToken();
-      if (!token) return;
+      if (!token) {
+        console.error('❌ [Init] No auth token!');
+        return;
+      }
 
-      // ✅ ШАГ 1: Загрузить только список карт (минимум данных)
+      console.log('📡 [Init] Step 1: Loading maps list...');
+      
+      // ШАГ 1: Загрузка списка карт
       const mapsResponse = await fetch('/api/maps', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
-      if (!mapsResponse.ok) throw new Error('Failed to load maps');
+      console.log('📡 [Init] Maps response status:', mapsResponse.status);
+      
+      if (!mapsResponse.ok) {
+        const errorText = await mapsResponse.text();
+        console.error('❌ [Init] Maps fetch failed:', errorText);
+        throw new Error('Failed to load maps');
+      }
+      
       const maps = await mapsResponse.json();
+      console.log('✅ [Init] Maps loaded:', {
+        count: maps.length,
+        maps: maps.map((m: any) => ({ id: m.id, name: m.name }))
+      });
+      
       setAllMaps(maps);
 
-      // ✅ ШАГ 2: Определить целевую карту
+      // ШАГ 2: Определение целевой карты
       let targetMap = null;
       if (dropmapIdFromUrl) {
+        console.log('🔍 [Init] Looking for map from URL:', dropmapIdFromUrl);
         targetMap = maps.find((m: DropMap) => m.id === dropmapIdFromUrl);
+        console.log('🔍 [Init] Found map from URL:', targetMap?.name || 'NOT FOUND');
       }
+      
       if (!targetMap) {
+        console.log('🔍 [Init] No URL map, selecting first unlocked map');
         targetMap = maps.find((m: DropMap) => !m.isLocked) || maps[0];
+        console.log('🔍 [Init] Selected map:', targetMap?.name);
       }
 
       if (!targetMap) {
+        console.warn('⚠️ [Init] No maps available!');
         setIsLoading(false);
         return;
       }
+
+      console.log('🗺️ [Init] Active map set:', {
+        id: targetMap.id,
+        name: targetMap.name,
+        isLocked: targetMap.isLocked
+      });
 
       setLocation(`/dropmap/${targetMap.id}`, { replace: true });
       setActiveMap(targetMap);
@@ -490,40 +525,71 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
         mapImageFile: null,
       });
 
-      // ✅ ШАГ 3: Загрузить ВСЕ данные карты ОДНИМ запросом
+      // ШАГ 3: Загрузка данных карты
+      console.log('📡 [Init] Step 3: Loading full map data...');
+      
       const fullDataResponse = await fetch(`/api/maps/${targetMap.id}/full-data`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
-      if (!fullDataResponse.ok) throw new Error('Failed to load map data');
-      const fullData = await fullDataResponse.json();
+      console.log('📡 [Init] Full data response status:', fullDataResponse.status);
 
-      // ✅ Установить все данные сразу
-      setTerritories(fullData.territories);
-      setEligiblePlayers(fullData.eligiblePlayers);
-      setIsUserEligible(fullData.isUserEligible);
-      if (user.isAdmin) {
-        setInviteCodes(fullData.inviteCodes);
+      if (!fullDataResponse.ok) {
+        const errorText = await fullDataResponse.text();
+        console.error('❌ [Init] Full data fetch failed:', errorText);
+        throw new Error('Failed to load map data');
       }
 
-      // ✅ ШАГ 4: Параллельная загрузка дополнительных данных (только для админа)
+      const fullData = await fullDataResponse.json();
+      console.log('✅ [Init] Full data loaded:', {
+        territories: fullData.territories?.length || 0,
+        eligiblePlayers: fullData.eligiblePlayers?.length || 0,
+        isUserEligible: fullData.isUserEligible,
+        inviteCodes: fullData.inviteCodes?.length || 0
+      });
+
+      setTerritories(fullData.territories || []);
+      setEligiblePlayers(fullData.eligiblePlayers || []);
+      setIsUserEligible(fullData.isUserEligible || false);
+      
       if (user.isAdmin) {
+        setInviteCodes(fullData.inviteCodes || []);
+      }
+
+      // ШАГ 4: Загрузка дополнительных данных для админа
+      if (user.isAdmin) {
+        console.log('📡 [Init] Step 4: Loading admin data...');
+        
         Promise.all([
           fetch('/api/admin/tournaments', {
             headers: { 'Authorization': `Bearer ${token}` }
-          }).then(r => r.ok ? r.json() : []),
+          }).then(r => {
+            console.log('📡 [Init] Tournaments response:', r.status);
+            return r.ok ? r.json() : [];
+          }),
           fetch('/api/admin/users', {
             headers: { 'Authorization': `Bearer ${token}` }
-          }).then(r => r.ok ? r.json() : [])
+          }).then(r => {
+            console.log('📡 [Init] Users response:', r.status);
+            return r.ok ? r.json() : [];
+          })
         ]).then(([tournaments, users]) => {
+          console.log('✅ [Init] Admin data loaded:', {
+            tournaments: tournaments.length,
+            users: users.length
+          });
           setTournaments(tournaments);
           setAllUsers(users);
+        }).catch(err => {
+          console.error('❌ [Init] Admin data failed:', err);
         });
       }
 
       setIsInitialized(true);
+      console.log('✅✅✅ [Init] Initialization complete!');
+      
     } catch (err) {
-      console.error('Ошибка инициализации:', err);
+      console.error('❌❌❌ [Init] Initialization failed:', err);
       setError('Не удалось загрузить данные локаций');
     } finally {
       setIsLoading(false);
@@ -531,7 +597,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   };
   
   init();
-}, [authLoading, isLoggedIn, user, isInitialized]);
+}, [authLoading, isLoggedIn, user, isInitialized, dropmapIdFromUrl, getAuthToken, setLocation]);
 
 const { isConnected } = useTerritorySocket(
   activeMap?.id || null,

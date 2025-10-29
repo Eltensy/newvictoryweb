@@ -7,7 +7,8 @@
     "dev": "cross-env NODE_ENV=development tsx server/index.ts",
     "telegram-bot": "node --experimental-modules server/telegram-bot.js",
     "dev:bot": "tsx server/telegram-bot.js",
-    "dev:all": "tsx server/index.ts & tsx server/telegram-bot.js"
+    "dev:all": "tsx server/index.ts & tsx server/telegram-bot.js",
+    "migrate:userid": "tsx server/migrate-userid-to-text.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -219,11 +219,7 @@ export function registerTerritoryRoutes(app: Express) {
         updates.description = req.body.description;
       }
 
-      // Настройки allowReclaim и isLocked
-      if (req.body.allowReclaim !== undefined) {
-        updates.allowReclaim = req.body.allowReclaim === 'true' || req.body.allowReclaim === true;
-      }
-
+      // Настройка isLocked
       if (req.body.isLocked !== undefined) {
         updates.isLocked = req.body.isLocked === 'true' || req.body.isLocked === true;
       }
@@ -440,13 +436,25 @@ export function registerTerritoryRoutes(app: Express) {
         return res.status(403).json({ error: "Вы не в списке допущенных игроков для этой карты" });
       }
 
-      const claim = await territoryStorage.claimTerritory(territoryId, authResult.userId);
+      const result = await territoryStorage.claimTerritory(territoryId, authResult.userId);
+
+      console.log('🔍 [Claim] About to broadcast, io exists:', !!io, 'mapId:', territory.mapId, 'territoryId:', territoryId, 'oldTerritoryId:', result.oldTerritoryId);
 
       if (io) {
+        // Broadcast для новой территории
         await broadcastTerritoryClaim(io, territory.mapId, territoryId);
+        console.log('✅ [Claim] Broadcast completed for new territory');
+
+        // Если была старая территория - broadcast и для неё
+        if (result.oldTerritoryId) {
+          await broadcastTerritoryClaim(io, territory.mapId, result.oldTerritoryId);
+          console.log('✅ [Claim] Broadcast completed for old territory');
+        }
+      } else {
+        console.error('❌ [Claim] io is null, cannot broadcast!');
       }
 
-      res.json({ message: "Территория успешно заклеймлена", claim, immediate: true });
+      res.json({ message: "Территория успешно заклеймлена", claim: result.claim, immediate: true });
     } catch (error: any) {
       console.error('Error claiming territory:', error);
       res.status(500).json({ error: error.message || "Не удалось заклеймить территорию" });
@@ -666,8 +674,14 @@ export function registerTerritoryRoutes(app: Express) {
   // Администратор добавляет игрока на территорию
   app.post("/api/admin/territories/:territoryId/assign-player", async (req, res) => {
     try {
+      console.log('🔵 [Admin Assign] Request received:', {
+        territoryId: req.params.territoryId,
+        userId: req.body.userId
+      });
+
       const authResult = await authenticateAdmin(req);
       if ('error' in authResult) {
+        console.error('❌ [Admin Assign] Auth failed:', authResult.error);
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
@@ -675,48 +689,93 @@ export function registerTerritoryRoutes(app: Express) {
       const { userId } = req.body;
 
       if (!userId) {
+        console.error('❌ [Admin Assign] Missing userId');
         return res.status(400).json({ error: "Требуется userId" });
       }
 
+      console.log('🔍 [Admin Assign] Looking for territory:', territoryId);
       const [territory] = await db
         .select()
         .from(territories)
         .where(eq(territories.id, territoryId));
 
       if (!territory) {
+        console.error('❌ [Admin Assign] Territory not found:', territoryId);
         return res.status(404).json({ error: "Территория не найдена" });
       }
 
-      const user = await storage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ error: "Пользователь не найден" });
+      console.log('✅ [Admin Assign] Territory found:', territory.name);
+
+      // Проверяем, является ли это виртуальным игроком (инвайт) или реальным пользователем
+      const isVirtualPlayer = userId.startsWith('virtual-');
+      let displayName: string;
+
+      if (isVirtualPlayer) {
+        // Получаем displayName из dropMapEligiblePlayers
+        const [eligiblePlayer] = await db
+          .select()
+          .from(dropMapEligiblePlayers)
+          .where(and(
+            eq(dropMapEligiblePlayers.userId, userId),
+            eq(dropMapEligiblePlayers.settingsId, territory.mapId)
+          ));
+
+        if (!eligiblePlayer) {
+          console.error('❌ [Admin Assign] Virtual player not found in eligible players:', userId);
+          return res.status(404).json({ error: "Игрок не найден" });
+        }
+        displayName = eligiblePlayer.displayName || 'Инвайтнутый игрок';
+        console.log('✅ [Admin Assign] Virtual player found:', displayName);
+      } else {
+        const user = await storage.getUser(userId);
+        if (!user) {
+          console.error('❌ [Admin Assign] User not found:', userId);
+          return res.status(404).json({ error: "Пользователь не найден" });
+        }
+        displayName = user.displayName;
+        console.log('✅ [Admin Assign] User found:', displayName);
       }
 
       const existingClaim = await territoryStorage.getUserTerritoryClaimForTerritory(territoryId, userId);
       if (existingClaim) {
+        console.warn('⚠️ [Admin Assign] User already has claim');
         return res.status(400).json({ error: "Этот игрок уже заклеймил эту локацию" });
       }
 
-      const claim = await territoryStorage.claimTerritory(territoryId, userId);
+      console.log('🎯 [Admin Assign] Claiming territory...');
+      const result = await territoryStorage.claimTerritory(territoryId, userId);
+
+      console.log('✅ [Admin Assign] Claim successful, broadcasting...');
+
+      // Broadcast для новой территории
+      if (io) {
+        await broadcastTerritoryClaim(io, territory.mapId, territoryId);
+        // Если была старая территория - broadcast и для неё
+        if (result.oldTerritoryId) {
+          await broadcastTerritoryClaim(io, territory.mapId, result.oldTerritoryId);
+        }
+      }
 
       await territoryStorage.logAdminActivity(
         authResult.adminId,
         'admin_assign',
-        `Администратор добавил ${user.displayName} на территорию "${territory.name}"`,
+        `Администратор добавил ${displayName} на территорию "${territory.name}"`,
         {
           territoryId,
           territoryName: territory.name,
           userId,
-          userName: user.displayName,
+          userName: displayName,
         }
       );
 
+      console.log('✅ [Admin Assign] Complete');
+
       res.json({
         message: "Игрок добавлен на территорию",
-        claim,
+        claim: result.claim,
       });
     } catch (error) {
-      console.error('Error assigning player to territory:', error);
+      console.error('❌ [Admin Assign] Error:', error);
       res.status(500).json({ error: "Не удалось назначить игрока" });
     }
   });
@@ -750,19 +809,42 @@ export function registerTerritoryRoutes(app: Express) {
         return res.status(400).json({ error: "Этот игрок не заклеймил эту территорию" });
       }
 
-      const user = await storage.getUser(userId);
+      // Проверяем, является ли это виртуальным игроком (инвайт) или реальным пользователем
+      const isVirtualPlayer = userId.startsWith('virtual-');
+      let displayName: string;
+
+      if (isVirtualPlayer) {
+        // Получаем displayName из dropMapEligiblePlayers
+        const [eligiblePlayer] = await db
+          .select()
+          .from(dropMapEligiblePlayers)
+          .where(and(
+            eq(dropMapEligiblePlayers.userId, userId),
+            eq(dropMapEligiblePlayers.settingsId, territory.mapId)
+          ));
+        displayName = eligiblePlayer?.displayName || 'Инвайтнутый игрок';
+      } else {
+        const user = await storage.getUser(userId);
+        displayName = user?.displayName || 'игрок';
+      }
 
       await territoryStorage.removeUserClaim(territoryId, userId);
+
+      // Broadcast обновление территории
+      if (io) {
+        await broadcastTerritoryClaim(io, territory.mapId, territoryId);
+        console.log('✅ [Admin Remove] Broadcast sent');
+      }
 
       await territoryStorage.logAdminActivity(
         authResult.adminId,
         'admin_remove',
-        `Администратор убрал ${user?.displayName || 'игрока'} с территории "${territory.name}"`,
+        `Администратор убрал ${displayName} с территории "${territory.name}"`,
         {
           territoryId,
           territoryName: territory.name,
           userId,
-          userName: user?.displayName,
+          userName: displayName,
         }
       );
 
@@ -770,7 +852,7 @@ export function registerTerritoryRoutes(app: Express) {
         message: "Игрок убран с территории",
       });
     } catch (error) {
-      console.error('Error removing player from territory:', error);
+      console.error('❌ [Admin Remove] Error:', error);
       res.status(500).json({ error: "Не удалось убрать игрока" });
     }
   });
@@ -923,7 +1005,7 @@ export function registerTerritoryRoutes(app: Express) {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      const { sourceDropMapId, customName, mapImageUrl, tournamentId, allowReclaim } = req.body;
+      const { sourceDropMapId, customName, mapImageUrl, tournamentId } = req.body;
 
       if (!customName || !customName.trim()) {
         return res.status(400).json({ error: "Название карты обязательно" });
@@ -937,10 +1019,9 @@ export function registerTerritoryRoutes(app: Express) {
             mapImageUrl: mapImageUrl || null,
             tournamentId: tournamentId || null,
             mode: 'tournament',
-            allowReclaim: allowReclaim ?? true,
             createdBy: authResult.adminId,
           })
-          .returning(); // Add this to get the inserted row
+          .returning();
 
         if (sourceDropMapId) {
           const sourceTerritories = await tx
@@ -985,10 +1066,6 @@ export function registerTerritoryRoutes(app: Express) {
 
       if (req.body.customName !== undefined) {
         updates.name = req.body.customName?.trim() || null;
-      }
-
-      if (req.body.allowReclaim !== undefined) {
-        updates.allowReclaim = req.body.allowReclaim === 'true' || req.body.allowReclaim === true;
       }
 
       if (req.body.isLocked !== undefined) {
@@ -1361,13 +1438,34 @@ app.get("/api/maps/:mapId/full-data", async (req, res) => {
       return res.status(404).json({ error: "Карта не найдена" });
     }
 
+    console.log('📦 [Full Data] Eligible players raw sample:',
+      eligiblePlayers.slice(0, 2).map(p => ({
+        keys: Object.keys(p),
+        data: p
+      }))
+    );
+
     res.json({
       map: mapData,
       territories,
-      eligiblePlayers: eligiblePlayers.map(p => ({
-        ...p.dropMapEligiblePlayers,
-        user: p.users
-      })),
+      eligiblePlayers: eligiblePlayers.map(p => {
+        // Явно извлекаем поля из joined таблиц
+        const player = p.dropmap_eligible_players || p.dropMapEligiblePlayers;
+        const userInfo = p.users;
+
+        return {
+          id: player?.id,
+          userId: player?.userId || player?.user_id,
+          displayName: player?.displayName || player?.display_name,
+          sourceType: player?.sourceType || player?.source_type,
+          addedAt: player?.addedAt || player?.added_at,
+          user: userInfo ? {
+            id: userInfo.id,
+            username: userInfo.username,
+            displayName: userInfo.displayName || userInfo.display_name
+          } : null
+        };
+      }),
       isUserEligible: isEligible,
       inviteCodes: invites
     });
@@ -1405,11 +1503,11 @@ app.post("/api/claim-with-invite", async (req, res) => {
       .from(territories)
       .where(eq(territories.id, territoryId));
 
-    // ✅ КРИТИЧЕСКИ ВАЖНО: Broadcast через WebSocket
+    console.log('🔍 [Claim Invite] About to broadcast, io exists:', !!io, 'territory exists:', !!territory, 'mapId:', territory?.mapId);
+
     if (territory && io) {
-      
-      // ✅ Используем функцию broadcastTerritoryClaim
       await broadcastTerritoryClaim(io, territory.mapId, territoryId);
+      console.log('✅ [Claim Invite] Broadcast completed');
     } else {
       console.warn('⚠️ WebSocket broadcast skipped - missing territory or io');
     }

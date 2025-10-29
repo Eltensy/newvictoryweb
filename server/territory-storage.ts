@@ -150,17 +150,25 @@ export class DatabaseTerritoryStorage {
     const territoryIds = territoriesData.map(t => t.territory.id);
 
     const allClaims = await db
-      .select({ 
+      .select({
         claim: territoryClaims,
         user: { username: users.username, displayName: users.displayName },
         invite: dropMapInviteCodes,
+        eligiblePlayer: dropMapEligiblePlayers,
       })
       .from(territoryClaims)
       .leftJoin(users, sql`(${territoryClaims.userId})::text = (${users.id})::text`)
       .leftJoin(
         dropMapInviteCodes,
-        sql`${territoryClaims.territoryId} = ${dropMapInviteCodes.territoryId} 
+        sql`${territoryClaims.territoryId} = ${dropMapInviteCodes.territoryId}
             AND ${dropMapInviteCodes.isUsed} = true`
+      )
+      .leftJoin(
+        dropMapEligiblePlayers,
+        and(
+          sql`${dropMapEligiblePlayers.userId}::text = ${territoryClaims.userId}::text`,
+          eq(dropMapEligiblePlayers.settingsId, mapId)
+        )
       )
       .where(
         and(
@@ -181,16 +189,27 @@ export class DatabaseTerritoryStorage {
       let displayName: string;
       let username: string;
       let userId: string;
-      
-      if (row.claim.userId === null) {
+
+      // Проверяем, является ли это виртуальным игроком (инвайт)
+      const isVirtualPlayer = row.claim.userId?.startsWith('virtual-');
+
+      if (isVirtualPlayer && row.eligiblePlayer) {
+        // Виртуальный игрок из инвайта
+        userId = row.claim.userId;
+        displayName = row.eligiblePlayer.displayName || row.invite?.displayName || 'Инвайтнутый игрок';
+        username = 'invite';
+      } else if (row.claim.userId === null) {
+        // Старые инвайты с userId = null (для обратной совместимости)
         userId = row.invite?.code || `invite-${row.claim.id}`;
         displayName = row.invite?.displayName || 'Инвайтнутый игрок';
         username = 'invite';
       } else if (row.user) {
+        // Обычный пользователь
         userId = row.claim.userId;
         displayName = row.user.displayName || 'Неизвестный';
         username = row.user.username || 'unknown';
       } else {
+        // Фоллбэк
         userId = row.claim.userId || `anonymous-${row.claim.id}`;
         displayName = 'Неизвестный игрок';
         username = 'unknown';
@@ -241,17 +260,25 @@ export class DatabaseTerritoryStorage {
 
     // Получаем все claims одним запросом
     const allClaims = await db
-      .select({ 
+      .select({
         claim: territoryClaims,
         user: { username: users.username, displayName: users.displayName },
         invite: dropMapInviteCodes,
+        eligiblePlayer: dropMapEligiblePlayers,
       })
       .from(territoryClaims)
       .leftJoin(users, sql`(${territoryClaims.userId})::text = (${users.id})::text`)
       .leftJoin(
         dropMapInviteCodes,
-        sql`${territoryClaims.territoryId} = ${dropMapInviteCodes.territoryId} 
+        sql`${territoryClaims.territoryId} = ${dropMapInviteCodes.territoryId}
             AND ${dropMapInviteCodes.isUsed} = true`
+      )
+      .leftJoin(
+        dropMapEligiblePlayers,
+        and(
+          sql`${dropMapEligiblePlayers.userId}::text = ${territoryClaims.userId}::text`,
+          eq(dropMapEligiblePlayers.settingsId, mapId)
+        )
       )
       .where(
         and(
@@ -273,9 +300,17 @@ export class DatabaseTerritoryStorage {
       let displayName: string;
       let username: string;
       let userId: string;
-      
-      if (row.claim.userId === null) {
-        // Инвайт-игрок
+
+      // Проверяем, является ли это виртуальным игроком (инвайт)
+      const isVirtualPlayer = row.claim.userId?.startsWith('virtual-');
+
+      if (isVirtualPlayer && row.eligiblePlayer) {
+        // Виртуальный игрок из инвайта
+        userId = row.claim.userId;
+        displayName = row.eligiblePlayer.displayName || row.invite?.displayName || 'Инвайтнутый игрок';
+        username = 'invite';
+      } else if (row.claim.userId === null) {
+        // Старые инвайты с userId = null (для обратной совместимости)
         userId = row.invite?.code || `invite-${row.claim.id}`;
         displayName = row.invite?.displayName || 'Инвайтнутый игрок';
         username = 'invite';
@@ -506,23 +541,46 @@ export class DatabaseTerritoryStorage {
   // ========== CLAIM METHODS ==========
   // =============================================
 
-  async claimTerritory(territoryId: string, userId: string): Promise<TerritoryClaim> {
+  async claimTerritory(territoryId: string, userId: string): Promise<{ claim: TerritoryClaim; oldTerritoryId?: string }> {
     return db.transaction(async (tx) => {
-      // 1. Получаем территорию
-      const [territory] = await tx
-        .select()
-        .from(territories)
-        .where(eq(territories.id, territoryId));
-      
+      // 1. Получаем территорию с блокировкой строки для предотвращения race conditions
+      const territoryRows = await tx.execute(sql`
+        SELECT
+          id,
+          map_id as "mapId",
+          name,
+          points,
+          color,
+          owner_id as "ownerId",
+          claimed_at as "claimedAt",
+          max_players as "maxPlayers",
+          description,
+          is_active as "isActive",
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+        FROM territories
+        WHERE id = ${territoryId}
+        FOR UPDATE
+      `);
+
+      const territory = territoryRows.rows[0] as any;
+
       if (!territory) {
         throw new Error('Territory not found');
       }
 
+      console.log('🔒 [claimTerritory] Territory locked:', {
+        id: territory.id,
+        name: territory.name,
+        mapId: territory.mapId,
+        maxPlayers: territory.maxPlayers
+      });
+
       // 2. Проверяем старые клеймы пользователя на этой карте
       const oldClaims = await tx
-        .select({ 
-          id: territoryClaims.id, 
-          territoryId: territoryClaims.territoryId 
+        .select({
+          id: territoryClaims.id,
+          territoryId: territoryClaims.territoryId
         })
         .from(territoryClaims)
         .innerJoin(territories, eq(territoryClaims.territoryId, territories.id))
@@ -534,11 +592,13 @@ export class DatabaseTerritoryStorage {
             isNull(territoryClaims.revokedAt)
           )
         );
-      
+
       const oldClaim = oldClaims[0];
+      let oldTerritoryId: string | undefined;
 
       // 3. Если у пользователя есть клейм на другой территории этой карты - удаляем его
       if (oldClaim && oldClaim.territoryId !== territoryId) {
+        oldTerritoryId = oldClaim.territoryId;
         await tx
           .update(territoryClaims)
           .set({ revokedAt: new Date() })
@@ -575,14 +635,22 @@ export class DatabaseTerritoryStorage {
             .select({ ownerId: territories.ownerId })
             .from(territories)
             .where(eq(territories.id, oldClaim.territoryId));
-          
+
           if (oldTerritory.ownerId === userId) {
+            // Назначаем нового владельца только если это реальный пользователь
+            const newOwnerId = remainingOnOld[0].userId;
+            const isNewOwnerVirtual = newOwnerId?.startsWith('virtual-');
+
+            const updateData: any = { color: oldTerritoryColor };
+            if (!isNewOwnerVirtual && newOwnerId) {
+              updateData.ownerId = newOwnerId;
+            } else {
+              updateData.ownerId = null;
+            }
+
             await tx
               .update(territories)
-              .set({ 
-                ownerId: remainingOnOld[0].userId,
-                color: oldTerritoryColor
-              })
+              .set(updateData)
               .where(eq(territories.id, oldClaim.territoryId));
           } else {
             await tx
@@ -595,36 +663,55 @@ export class DatabaseTerritoryStorage {
 
       // 4. Проверяем текущие клеймы на целевой территории
       const currentClaims = await tx
-        .select({ 
-          id: territoryClaims.id, 
-          userId: territoryClaims.userId 
+        .select({
+          id: territoryClaims.id,
+          userId: territoryClaims.userId
         })
         .from(territoryClaims)
         .where(
           and(
-            eq(territoryClaims.territoryId, territoryId), 
-            eq(territoryClaims.claimType, 'claim'), 
+            eq(territoryClaims.territoryId, territoryId),
+            eq(territoryClaims.claimType, 'claim'),
             isNull(territoryClaims.revokedAt)
           )
         );
-      
+
+      console.log('🔍 [claimTerritory] Current claims:', {
+        territoryId,
+        currentCount: currentClaims.length,
+        maxPlayers: territory.maxPlayers,
+        userId,
+        currentUserIds: currentClaims.map(c => c.userId)
+      });
+
       // Проверка: уже заклеймлено максимум игроков?
-      if (currentClaims.length >= (territory.maxPlayers || 999)) {
-        const userAlreadyOnThisTerritory = currentClaims.some(c => c.userId === userId);
-        if (userAlreadyOnThisTerritory) {
-          const [existingClaim] = await tx
-            .select()
-            .from(territoryClaims)
-            .where(
-              and(
-                eq(territoryClaims.territoryId, territoryId), 
-                eq(territoryClaims.userId, userId), 
-                isNull(territoryClaims.revokedAt)
-              )
-            );
-          return existingClaim;
-        }
-        throw new Error(`Максимум ${territory.maxPlayers} игрок(ов) на локации`);
+      const maxPlayers = territory.maxPlayers || 999;
+
+      // Проверяем, есть ли уже клейм этого пользователя на этой территории
+      const userAlreadyOnThisTerritory = currentClaims.some(c => c.userId === userId);
+
+      if (userAlreadyOnThisTerritory) {
+        console.log('✅ [claimTerritory] User already on this territory, returning existing claim');
+        const [existingClaim] = await tx
+          .select()
+          .from(territoryClaims)
+          .where(
+            and(
+              eq(territoryClaims.territoryId, territoryId),
+              eq(territoryClaims.userId, userId),
+              isNull(territoryClaims.revokedAt)
+            )
+          );
+        return { claim: existingClaim, oldTerritoryId };
+      }
+
+      // Если территория заполнена и пользователя там нет - ошибка
+      if (currentClaims.length >= maxPlayers) {
+        console.error('❌ [claimTerritory] Territory full:', {
+          currentCount: currentClaims.length,
+          maxPlayers
+        });
+        throw new Error(`Максимум ${maxPlayers} игрок(ов) на локации`);
       }
 
       // 5. Добавляем новый клейм
@@ -632,13 +719,21 @@ export class DatabaseTerritoryStorage {
       const newColor = this.getTerritoryColor(newClaimCount);
 
       if (currentClaims.length === 0) {
+        // Устанавливаем ownerId только для реальных пользователей (UUID)
+        // Для виртуальных игроков (инвайтов) оставляем ownerId = null
+        const isVirtualPlayer = userId.startsWith('virtual-');
+        const updateData: any = {
+          claimedAt: new Date(),
+          color: newColor
+        };
+
+        if (!isVirtualPlayer) {
+          updateData.ownerId = userId;
+        }
+
         await tx
           .update(territories)
-          .set({ 
-            ownerId: userId, 
-            claimedAt: new Date(),
-            color: newColor 
-          })
+          .set(updateData)
           .where(eq(territories.id, territoryId));
       } else {
         await tx
@@ -649,14 +744,22 @@ export class DatabaseTerritoryStorage {
 
       const [newClaim] = await tx
         .insert(territoryClaims)
-        .values({ 
-          territoryId, 
-          userId, 
-          claimType: 'claim' 
+        .values({
+          territoryId,
+          userId,
+          claimType: 'claim'
         })
         .returning();
-      
-      return newClaim;
+
+      console.log('✅ [claimTerritory] Claim successful:', {
+        territoryId,
+        userId,
+        newClaimId: newClaim.id,
+        totalClaimsNow: newClaimCount,
+        oldTerritoryId
+      });
+
+      return { claim: newClaim, oldTerritoryId };
     });
   }
 
@@ -714,19 +817,27 @@ export class DatabaseTerritoryStorage {
       if (remaining.length === 0) {
         await tx
           .update(territories)
-          .set({ 
-            ownerId: null, 
+          .set({
+            ownerId: null,
             claimedAt: null,
             color: newColor
           })
           .where(eq(territories.id, territoryId));
       } else if (currentTerritory.ownerId === userId) {
+        // Назначаем нового владельца только если это реальный пользователь
+        const newOwnerId = remaining[0].userId;
+        const isNewOwnerVirtual = newOwnerId?.startsWith('virtual-');
+
+        const updateData: any = { color: newColor };
+        if (!isNewOwnerVirtual && newOwnerId) {
+          updateData.ownerId = newOwnerId;
+        } else {
+          updateData.ownerId = null;
+        }
+
         await tx
           .update(territories)
-          .set({ 
-            ownerId: remaining[0].userId,
-            color: newColor
-          })
+          .set(updateData)
           .where(eq(territories.id, territoryId));
       } else {
         await tx
@@ -840,14 +951,26 @@ export class DatabaseTerritoryStorage {
       }
 
       let virtualPlayerId = invite.virtualPlayerId;
-      
+
       if (!virtualPlayerId) {
         virtualPlayerId = `virtual-${invite.code}-${Date.now()}`;
-        
+
         await tx
           .update(dropMapInviteCodes)
           .set({ virtualPlayerId })
           .where(eq(dropMapInviteCodes.code, code));
+
+        // Добавляем инвайтнутого игрока в список допущенных игроков
+        await tx
+          .insert(dropMapEligiblePlayers)
+          .values({
+            settingsId: invite.settingsId,
+            userId: virtualPlayerId,
+            displayName: invite.displayName,
+            sourceType: 'invite',
+            addedBy: null,
+          })
+          .onConflictDoNothing();
       }
 
       const newClaimCount = currentClaims.length + 1;
@@ -870,10 +993,10 @@ export class DatabaseTerritoryStorage {
 
       const [newClaim] = await tx
         .insert(territoryClaims)
-        .values({ 
-          territoryId, 
-          userId: null,
-          claimType: 'claim', 
+        .values({
+          territoryId,
+          userId: virtualPlayerId,
+          claimType: 'claim',
           reason: `Invite: ${invite.displayName} (${invite.code})`
         })
         .returning();

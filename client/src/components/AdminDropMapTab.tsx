@@ -51,7 +51,6 @@ interface DropMapSettings {
   mode: 'tournament' | 'practice';
   maxPlayersPerSpot: number;
   maxContestedSpots: number;
-  allowReclaim: boolean;
   isLocked: boolean;
   customName?: string;
   template?: {
@@ -123,7 +122,6 @@ export default function AdminDropMapTab({ authToken }: AdminDropMapTabProps) {
     tournamentId: '',
     maxPlayersPerSpot: 1,
     maxContestedSpots: 0,
-    allowReclaim: true,
   });
   
   const [spotForm, setSpotForm] = useState({
@@ -502,7 +500,6 @@ export default function AdminDropMapTab({ authToken }: AdminDropMapTabProps) {
         mode: 'tournament',
         maxPlayersPerSpot: mapForm.maxPlayersPerSpot,
         maxContestedSpots: mapForm.maxContestedSpots,
-        allowReclaim: mapForm.allowReclaim,
       };
       
       if (mapForm.tournamentId && mapForm.tournamentId !== '') {
@@ -530,7 +527,6 @@ export default function AdminDropMapTab({ authToken }: AdminDropMapTabProps) {
           tournamentId: '',
           maxPlayersPerSpot: 1,
           maxContestedSpots: 0,
-          allowReclaim: true,
         });
         fetchDropMaps();
       } else {
