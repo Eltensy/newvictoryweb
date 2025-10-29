@@ -6,6 +6,8 @@ import { cloudStorage } from './fileStorage';
 import { storage } from "./storage";
 import { db } from "./db";
 import { eq, desc, sql, and, isNull } from "drizzle-orm";
+import { io } from './index';
+import { broadcastTerritoryClaim } from './websocket-server';
 import { 
   dropMapSettings, 
   dropMapEligiblePlayers, 
@@ -331,7 +333,7 @@ export function registerTerritoryRoutes(app: Express) {
           mapId: req.params.mapId,
           name,
           points,
-          color: '#374151',
+          color: '#000000',
           maxPlayers: maxPlayers || 1,
           description,
         })
@@ -439,6 +441,10 @@ export function registerTerritoryRoutes(app: Express) {
       }
 
       const claim = await territoryStorage.claimTerritory(territoryId, authResult.userId);
+
+      if (io) {
+        await broadcastTerritoryClaim(io, territory.mapId, territoryId);
+      }
 
       res.json({ message: "Территория успешно заклеймлена", claim, immediate: true });
     } catch (error: any) {
@@ -1309,6 +1315,70 @@ app.get("/api/dropmap/invite/:code", async (req, res) => {
   }
 });
 
+app.get("/api/maps/:mapId/full-data", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { mapId } = req.params;
+    const userId = authResult.userId;
+    const isAdmin = authResult.user.isAdmin;
+
+    // ✅ ПАРАЛЛЕЛЬНАЯ загрузка всех данных
+    const [map, territories, eligiblePlayers, isEligible, invites] = await Promise.all([
+      db.select().from(dropMapSettings).where(eq(dropMapSettings.id, mapId)).limit(1),
+      
+      // 2. Территории с claims (оптимизированный запрос)
+      territoryStorage.getMapTerritories(mapId),
+      
+      // 3. Список игроков
+      db.select().from(dropMapEligiblePlayers)
+        .leftJoin(users, eq(dropMapEligiblePlayers.userId, users.id))
+        .where(eq(dropMapEligiblePlayers.settingsId, mapId))
+        .orderBy(desc(dropMapEligiblePlayers.addedAt)),
+      
+      // 4. Проверка eligibility текущего юзера (одним запросом)
+      db.select({ count: sql`count(*)` })
+        .from(dropMapEligiblePlayers)
+        .where(and(
+          eq(dropMapEligiblePlayers.settingsId, mapId),
+          eq(dropMapEligiblePlayers.userId, userId)
+        ))
+        .then(r => r[0]?.count > 0),
+      
+      // 5. Инвайты (только для админа, иначе пустой массив)
+      isAdmin 
+        ? db.select().from(dropMapInviteCodes)
+            .where(eq(dropMapInviteCodes.settingsId, mapId))
+            .orderBy(desc(dropMapInviteCodes.createdAt))
+        : Promise.resolve([])
+    ]);
+
+    const [mapData] = map;
+    if (!mapData) {
+      return res.status(404).json({ error: "Карта не найдена" });
+    }
+
+    res.json({
+      map: mapData,
+      territories,
+      eligiblePlayers: eligiblePlayers.map(p => ({
+        ...p.dropMapEligiblePlayers,
+        user: p.users
+      })),
+      isUserEligible: isEligible,
+      inviteCodes: invites
+    });
+  } catch (error) {
+    console.error('Error fetching full map data:', error);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+
+
 app.get("/api/maps/:mapId/territories/public", async (req, res) => {
   try {
     const territoriesData = await territoryStorage.getMapTerritories(req.params.mapId);
@@ -1330,6 +1400,20 @@ app.post("/api/claim-with-invite", async (req, res) => {
 
     const result = await territoryStorage.claimTerritoryWithInvite(code, territoryId);
 
+    const [territory] = await db
+      .select()
+      .from(territories)
+      .where(eq(territories.id, territoryId));
+
+    // ✅ КРИТИЧЕСКИ ВАЖНО: Broadcast через WebSocket
+    if (territory && io) {
+      
+      // ✅ Используем функцию broadcastTerritoryClaim
+      await broadcastTerritoryClaim(io, territory.mapId, territoryId);
+    } else {
+      console.warn('⚠️ WebSocket broadcast skipped - missing territory or io');
+    }
+
     res.json({
       message: "Локация заклеймлена",
       claim: result.claim,
@@ -1340,6 +1424,7 @@ app.post("/api/claim-with-invite", async (req, res) => {
     res.status(500).json({ error: error.message || "Не удалось поставить метку" });
   }
 });
+
 
   app.post("/api/dropmap/settings/:id/import-players", async (req, res) => {
     try {

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useTerritorySocket } from '@/hooks/useTerritorySocket';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation, useRoute } from "wouter";
 import LoadingScreen from './LoadingScreen';
@@ -15,7 +16,8 @@ import {
   Trophy, Crown, MapPin, Home, User, Settings, Loader2, 
   AlertCircle, Users, CheckCircle, XCircle, AlertTriangle, Info, ZoomIn, 
   ZoomOut, RotateCcw, Lock, Unlock, Copy, ExternalLink, Plus, Trash2, 
-  Edit, Save, X, Undo, UserPlus, Upload, Link as LinkIcon, Image as ImageIcon, ChevronDown
+  Edit, Save, X, Undo, UserPlus, Upload, Link as LinkIcon, Image as ImageIcon, ChevronDown,
+  Wifi, WifiOff
 } from 'lucide-react';
 import { cn } from "@/lib/utils";
 
@@ -333,6 +335,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   
   const [notification, setNotification] = useState<{ isOpen: boolean; type: 'success' | 'error' | 'warning' | 'info'; title: string; message: string; }>({ isOpen: false, type: 'info', title: '', message: '' });
 
+
   const showNotification = useCallback((type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
     setNotification({ isOpen: true, type, title, message });
   }, []);
@@ -388,45 +391,28 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
 
  const loadMapData = useCallback(async (mapId: string) => {
   if (!mapId) return;
+  
   try {
     const token = getAuthToken();
     if (!token) return;
 
-    // ПАРАЛЛЕЛЬНАЯ загрузка всех данных
-    const requests = [
-      fetch(`/api/maps/${mapId}/players`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      }),
-      fetch(`/api/maps/${mapId}/territories`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-    ];
+    // ✅ ОДИН запрос вместо трёх
+    const response = await fetch(`/api/maps/${mapId}/full-data`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
 
+    if (!response.ok) {
+      throw new Error('Failed to load map data');
+    }
+
+    const data = await response.json();
+    
+    // ✅ Обновить все данные сразу
+    setTerritories(data.territories);
+    setEligiblePlayers(data.eligiblePlayers);
+    setIsUserEligible(data.isUserEligible);
     if (user?.isAdmin) {
-      requests.push(
-        fetch(`/api/maps/${mapId}/invites`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
-      );
-    }
-
-    const responses = await Promise.all(requests);
-    
-    // Обработка players
-    if (responses[0].ok) {
-      const players = await responses[0].json();
-      setEligiblePlayers(players);
-      setIsUserEligible(players.some((p: EligiblePlayer) => p.userId === user?.id));
-    }
-    
-    // Обработка territories
-    if (responses[1].ok) {
-      setTerritories(await responses[1].json());
-    }
-    
-    // Обработка invites (если админ)
-    if (user?.isAdmin && responses[2]?.ok) {
-      setInviteCodes(await responses[2].json());
+      setInviteCodes(data.inviteCodes);
     }
   } catch (err) {
     console.error('Ошибка загрузки данных карты:', err);
@@ -465,55 +451,119 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
       setIsLoading(false);
       return;
     }
+    
     setIsLoading(true);
     setError(null);
+    
     try {
-      // ПАРАЛЛЕЛЬНАЯ загрузка начальных данных
-      const loadPromises = [loadAllMaps()];
+      const token = getAuthToken();
+      if (!token) return;
+
+      // ✅ ШАГ 1: Загрузить только список карт (минимум данных)
+      const mapsResponse = await fetch('/api/maps', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       
+      if (!mapsResponse.ok) throw new Error('Failed to load maps');
+      const maps = await mapsResponse.json();
+      setAllMaps(maps);
+
+      // ✅ ШАГ 2: Определить целевую карту
+      let targetMap = null;
+      if (dropmapIdFromUrl) {
+        targetMap = maps.find((m: DropMap) => m.id === dropmapIdFromUrl);
+      }
+      if (!targetMap) {
+        targetMap = maps.find((m: DropMap) => !m.isLocked) || maps[0];
+      }
+
+      if (!targetMap) {
+        setIsLoading(false);
+        return;
+      }
+
+      setLocation(`/dropmap/${targetMap.id}`, { replace: true });
+      setActiveMap(targetMap);
+      setSettingsForm({
+        allowReclaim: targetMap.allowReclaim,
+        isLocked: targetMap.isLocked,
+        mapImageFile: null,
+      });
+
+      // ✅ ШАГ 3: Загрузить ВСЕ данные карты ОДНИМ запросом
+      const fullDataResponse = await fetch(`/api/maps/${targetMap.id}/full-data`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!fullDataResponse.ok) throw new Error('Failed to load map data');
+      const fullData = await fullDataResponse.json();
+
+      // ✅ Установить все данные сразу
+      setTerritories(fullData.territories);
+      setEligiblePlayers(fullData.eligiblePlayers);
+      setIsUserEligible(fullData.isUserEligible);
       if (user.isAdmin) {
-        loadPromises.push(fetchTournaments(), fetchAllUsers());
+        setInviteCodes(fullData.inviteCodes);
       }
-      
-      const [maps] = await Promise.all(loadPromises);
-      
-      if (maps && maps.length > 0) {
-        let targetMap = null;
-        if (dropmapIdFromUrl) {
-          targetMap = maps.find((m: DropMap) => m.id === dropmapIdFromUrl);
-          if (!targetMap) {
-            showNotification('error', 'Карта не найдена', 'Запрошенная карта недоступна');
-          }
-        }
-        if (!targetMap) {
-          targetMap = maps.find((m: DropMap) => !m.isLocked) || maps[0];
-        }
-        if (targetMap) {
-          setLocation(`/dropmap/${targetMap.id}`, { replace: true });
-          setActiveMap(targetMap);
-          
-          // ✅ Загружаем данные карты БЕЗ ОЖИДАНИЯ
-          loadMapData(targetMap.id);
-          
-          // ✅ Устанавливаем настройки сразу
-          setSettingsForm({
-            allowReclaim: targetMap.allowReclaim,
-            isLocked: targetMap.isLocked,
-            mapImageFile: null,
-          });
-        }
+
+      // ✅ ШАГ 4: Параллельная загрузка дополнительных данных (только для админа)
+      if (user.isAdmin) {
+        Promise.all([
+          fetch('/api/admin/tournaments', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }).then(r => r.ok ? r.json() : []),
+          fetch('/api/admin/users', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }).then(r => r.ok ? r.json() : [])
+        ]).then(([tournaments, users]) => {
+          setTournaments(tournaments);
+          setAllUsers(users);
+        });
       }
+
       setIsInitialized(true);
     } catch (err) {
       console.error('Ошибка инициализации:', err);
       setError('Не удалось загрузить данные локаций');
     } finally {
-      // ✅ Убираем лоадинг сразу после загрузки карт
       setIsLoading(false);
     }
   };
+  
   init();
 }, [authLoading, isLoggedIn, user, isInitialized]);
+
+const { isConnected } = useTerritorySocket(
+  activeMap?.id || null,
+  useCallback((update: { territoryId: string; territory: any; timestamp: string }) => {
+    console.log('🔔 [TerritoryMain] Territory update received:', {
+      territoryId: update.territoryId,
+      claimCount: update.territory?.claims?.length || 0
+    });
+    
+    // ✅ ИСПРАВЛЕНО: Обновляем территорию И сохраняем все поля
+    setTerritories(prev => {
+      const newTerritories = prev.map(t => 
+        t.id === update.territoryId 
+          ? { ...t, ...update.territory, claims: update.territory.claims || [] }
+          : t
+      );
+      
+      console.log('✅ [TerritoryMain] Territories updated:', {
+        total: newTerritories.length,
+        updatedTerritory: newTerritories.find(t => t.id === update.territoryId)
+      });
+      
+      return newTerritories;
+    });
+  }, []),
+  useCallback((update: { mapId: string; timestamp: string }) => {
+    if (activeMap?.id === update.mapId) {
+      console.log('🔄 [TerritoryMain] Full map reload triggered');
+      loadMapData(update.mapId);
+    }
+  }, [activeMap, loadMapData])
+);
 
   
   // ===================================================
@@ -1021,7 +1071,15 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   const handleMouseDown = useCallback((e: React.MouseEvent<SVGSVGElement>) => { if (e.button === 2 || (e.button === 0 && e.shiftKey) || e.button === 1) { e.preventDefault(); setIsDragging(true); setDragStart({ x: e.clientX, y: e.clientY }); } }, []);
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => { if (!isDragging) return; const dx = (e.clientX - dragStart.x) / scale; const dy = (e.clientY - dragStart.y) / scale; setPanOffset(prev => ({ x: prev.x + dx, y: prev.y + dy })); setDragStart({ x: e.clientX, y: e.clientY }); }, [isDragging, dragStart, scale]);
   const handleMouseUp = useCallback(() => { setIsDragging(false); }, []);
-  const resetZoom = useCallback(() => { setScale(1); setPanOffset({ x: 0, y: 0 }); }, []);
+const resetZoom = useCallback(() => { 
+  setScale(1); 
+  setPanOffset({ x: 0, y: 0 }); 
+  
+  // Перезагружаем данные
+  if (activeMap?.id) {
+    loadMapData(activeMap.id);
+  }
+}, [activeMap, loadMapData]);
   const viewBox = useMemo(() => { const centerX = SVG_SIZE / 2 - panOffset.x; const centerY = SVG_SIZE / 2 - panOffset.y; const width = SVG_SIZE / scale; const height = SVG_SIZE / scale; const x = centerX - width / 2; const y = centerY - height / 2; return `${x} ${y} ${width} ${height}`; }, [scale, panOffset]);
   const filteredUsers = useMemo(() => { if (!playerSearchQuery.trim()) return allUsers; const query = playerSearchQuery.toLowerCase(); return allUsers.filter(u => u.displayName?.toLowerCase().includes(query) || u.username?.toLowerCase().includes(query)); }, [allUsers, playerSearchQuery]);
   useEffect(() => { const handleClick = () => setContextMenu(null); if (contextMenu) { document.addEventListener('click', handleClick); return () => document.removeEventListener('click', handleClick); } }, [contextMenu]);
@@ -1074,6 +1132,16 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
           </div>
           
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 px-3 border-r">
+              {isConnected ? (
+                <Wifi className="h-4 w-4 text-green-500" />
+              ) : (
+                <WifiOff className="h-4 w-4 text-red-500" />
+              )}
+              <span className="text-xs text-muted-foreground hidden md:inline">
+                {isConnected ? 'Online' : 'Offline'}
+              </span>
+            </div>
              <div className="hidden lg:flex items-center gap-1">
               <button onClick={() => setScale(prev => Math.max(prev / 1.2, MIN_SCALE))} className="h-8 w-8 rounded-full hover:bg-muted transition-colors flex items-center justify-center"><ZoomOut className="h-3.5 w-3.5" /></button>
               <span className="px-2 text-xs font-medium min-w-[50px] text-center">{Math.round(scale * 100)}%</span>
@@ -1146,7 +1214,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
           <svg ref={svgRef} viewBox={viewBox} width="100%" height="100%" onClick={handleSVGClick} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel} onContextMenu={(e) => e.preventDefault()} className="max-w-full max-h-full" style={{ cursor: isDragging ? 'grabbing' : isDrawingMode ? 'crosshair' : 'pointer', aspectRatio: '1 / 1' }}>
             {activeMap?.mapImageUrl && (<image href={activeMap.mapImageUrl} x="0" y="0" width={SVG_SIZE} height={SVG_SIZE} preserveAspectRatio="xMidYMid slice" />)}
             {territories.map(territory => (<TerritoryPolygon key={territory.id} territory={territory} isSelected={selectedTerritory?.id === territory.id} onClick={(e) => handleTerritoryClick(territory, e)} onContextMenu={(e) => handleTerritoryContextMenu(territory, e)} scale={scale} />))}
-            {isDrawingMode && currentPoints.length > 0 && (<DrawingPoints points={currentPoints} color={newSpotForm.color} scale={scale} />)}
+            {isDrawingMode && currentPoints.length > 0 && (<DrawingPoints points={currentPoints} color={"#000000"} scale={scale} />)}
           </svg>
           
           {isAdminMode && isDrawingMode && (
@@ -1189,113 +1257,226 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
           )}
           
           <div className="p-4 border-b">
-             <h3 className="font-semibold flex items-center gap-2 mb-3"><Users className="h-4 w-4" />Локации и игроки</h3>
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {territories.length === 0 ? (
-                  <div className="text-center py-6 text-muted-foreground"><MapPin className="h-6 w-6 mx-auto mb-2 opacity-50" /><p className="text-sm">Нет локаций на этой карте</p></div>
-                ) : (
-                  territories.map(territory => {
-  const uniqueClaims = territory.claims ? territory.claims.filter((claim, index, self) => 
-    index === self.findIndex(c => c.userId === claim.userId)
-  ) : [];
-  
-  const isExpanded = expandedTerritories[territory.id];
-  const territoryClaims = uniqueClaims;
-  const playerCount = uniqueClaims.length;
-  const maxPlayers = territory.maxPlayers || 1; 
-  const isFull = maxPlayers < 999 && playerCount >= maxPlayers;
-                    return (
-                      <div key={territory.id} className="border rounded-lg overflow-hidden bg-card">
-                        <button onClick={() => { toggleTerritoryExpanded(territory.id); setSelectedTerritory(territory); }} className={cn("w-full px-3 py-2 text-left hover:bg-muted transition-colors", selectedTerritory?.id === territory.id && 'bg-primary/10')}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 flex-1 min-w-0"><div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: territory.color }} /><div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{territory.name}</div>{maxPlayers < 999 && (
-      <div className="text-xs text-muted-foreground">Макс: {maxPlayers}</div>
-    )}</div></div>
-                            <div className="flex items-center gap-2 flex-shrink-0"><Badge variant={isFull ? 'destructive' : 'secondary'} className="text-xs">
-  {playerCount}
-  {maxPlayers < 999 && ` / ${maxPlayers}`}
-</Badge><ChevronDown className={cn('h-4 w-4 transition-transform', isExpanded && 'rotate-180')} /></div>
-                          </div>
-                        </button>
-                        {isExpanded && (
-                          <div className="border-t">
-                            {territoryClaims.length === 0 ? (<div className="px-3 py-3 text-center text-xs text-muted-foreground">Нет игроков на этой локации</div>) : (
-                              <div className="space-y-1 p-2 bg-muted/30">
-                                {territoryClaims.map((claim, index) => (
-                                  <div key={`${claim.userId}-${index}`} className="flex items-center justify-between p-2 bg-background rounded border border-border group hover:bg-muted/50 transition-colors">
-                                    <div className="flex items-center gap-2 flex-1 min-w-0"><User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" /><div className="min-w-0 flex-1"><div className="text-xs font-medium truncate">{claim.displayName || 'Неизвестный'}</div><div className="text-xs text-muted-foreground truncate">@{claim.username || 'unknown'}</div></div></div>
-                                    {isAdminMode && user?.isAdmin && (<button onClick={() => handleRemovePlayerFromTerritory(territory.id, claim.userId)} className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2 h-6 w-6 rounded bg-destructive/10 hover:bg-destructive/20 flex items-center justify-center text-destructive" title="Убрать с локации"><X className="h-3.5 w-3.5" /></button>)}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {isAdminMode && user?.isAdmin && playerCount < maxPlayers && (
-  <div className="p-2 border-t bg-blue-50/50 dark:bg-blue-950/20">
-    <button 
-      onClick={() => { 
-        setAssignPlayerForm({ territoryId: territory.id, playerId: '' }); 
-        setSelectedTerritory(territory); 
-      }} 
-      className="w-full h-7 text-xs rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-600 dark:text-blue-400 flex items-center justify-center gap-1 transition-colors font-medium"
-    >
-      <Plus className="h-3 w-3" />
-      Добавить игрока
-    </button>
-    {assignPlayerForm.territoryId === territory.id && (
-  <div className="mt-2 p-2 bg-background rounded border border-border space-y-2">
- <select
-  value={assignPlayerForm.playerId}
-  onChange={(e) => setAssignPlayerForm({ ...assignPlayerForm, playerId: e.target.value })}
-  className="w-full h-10 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
->
-  <option value="">Выберите игрока</option>
-  {eligiblePlayers.map((p) => (
-    <option key={p.id} value={p.id}>
-      {p.displayName} (@{p.user?.username || 'unknown'})
-    </option>
-  ))}
-</select>
-<Button 
-  onClick={() => {
-    if (assignPlayerForm.playerId && assignPlayerForm.territoryId) {
-      handleAssignPlayerToTerritory(assignPlayerForm.territoryId, assignPlayerForm.playerId);
+             <h3 className="font-semibold flex items-center gap-2 mb-3"><Users className="h-4 w-4" />Игроки</h3>
+              <div className="space-y-2">
+  {(() => {
+    // Собираем всех игроков с их территориями
+    const allPlayers = territories.flatMap(territory => {
+      const uniqueClaims = territory.claims ? territory.claims.filter((claim, index, self) => 
+        index === self.findIndex(c => c.userId === claim.userId)
+      ) : [];
+      
+      return uniqueClaims.map(claim => ({
+        ...claim,
+        territory,
+        territoryColor: territory.color
+      }));
+    });
+
+    if (allPlayers.length === 0) {
+      return (
+        <div className="text-center py-6 text-muted-foreground">
+          <Users className="h-6 w-6 mx-auto mb-2 opacity-50" />
+          <p className="text-sm">Нет игроков на карте</p>
+        </div>
+      );
     }
-  }} 
-  disabled={!assignPlayerForm.territoryId || !assignPlayerForm.playerId} 
-  className="w-full"
->
-  Добавить
-</Button>
-  </div>
-)}
-  </div>
-)}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
+
+    // Группируем игроков по территориям
+    const playersByTerritory = territories.map(territory => {
+      const uniqueClaims = territory.claims ? territory.claims.filter((claim, index, self) => 
+        index === self.findIndex(c => c.userId === claim.userId)
+      ) : [];
+      
+      return {
+        territory,
+        players: uniqueClaims
+      };
+    }).filter(group => group.players.length > 0);
+
+    return playersByTerritory.map(({ territory, players }) => (
+      <div key={territory.id} className="border rounded-lg overflow-hidden bg-card">
+        <div className="space-y-1 p-2">
+          {players.map((claim, index) => (
+            <button
+              key={`${claim.userId}-${index}`}
+              onClick={() => {
+                setSelectedTerritory(territory);
+                // Зумим на территорию
+                const centerX = territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length;
+                const centerY = territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length;
+                setPanOffset({ x: SVG_SIZE / 2 - centerX, y: SVG_SIZE / 2 - centerY });
+                setScale(2);
+              }}
+              className="w-full flex items-center justify-between p-2 bg-background rounded border border-border group hover:bg-muted/50 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: territory.color }} />
+                <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                <div className="min-w-0 flex-1 text-left">
+                  <div className="text-xs font-medium truncate">{claim.displayName || 'Неизвестный'}</div>
+                  <div className="text-xs text-muted-foreground truncate">@{claim.username || 'unknown'}</div>
+                </div>
               </div>
-          </div>
+              {isAdminMode && user?.isAdmin && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemovePlayerFromTerritory(territory.id, claim.userId);
+                  }}
+                  className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2 h-6 w-6 rounded bg-destructive/10 hover:bg-destructive/20 flex items-center justify-center text-destructive"
+                  title="Убрать с локации"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    ));
+  })()}
+</div>
+              </div>
+             {isAdminMode && user?.isAdmin && (
+  <div className="p-4 border-b">
+    <h3 className="font-semibold flex items-center gap-2 mb-3">
+      <LinkIcon className="h-4 w-4" />
+      Инвайт-коды
+    </h3>
+    
+    {/* Счетчики */}
+    <div className="grid grid-cols-2 gap-2 mb-3">
+      <div className="px-3 py-2 bg-green-500/10 rounded-lg border border-green-500/20">
+        <div className="text-xs text-muted-foreground">Активные</div>
+        <div className="text-lg font-semibold text-green-600">
+          {inviteCodes.filter(i => !i.isUsed && (!i.expiresAt || new Date(i.expiresAt) >= new Date())).length}
+        </div>
+      </div>
+      <div className="px-3 py-2 bg-blue-500/10 rounded-lg border border-blue-500/20">
+        <div className="text-xs text-muted-foreground">Использованные</div>
+        <div className="text-lg font-semibold text-blue-600">
+          {inviteCodes.filter(i => i.isUsed).length}
+        </div>
+      </div>
+    </div>
+
+    <div className="space-y-2">
+      {inviteCodes.length === 0 ? (
+        <div className="text-center py-6 text-muted-foreground">
+          <LinkIcon className="h-6 w-6 mx-auto mb-2 opacity-50" />
+          <p className="text-sm">Нет созданных инвайтов</p>
+          <p className="text-xs mt-1">Создайте инвайт для приглашения игроков</p>
+        </div>
+      ) : (
+        inviteCodes.map(invite => {
+          const isExpired = invite.expiresAt && new Date(invite.expiresAt) < new Date();
+          const isActive = !invite.isUsed && !isExpired;
+          const inviteUrl = `${window.location.origin}/dropmap/invite/${invite.code}`;
           
-          {selectedTerritory && (
-            <div className="p-4 border-b">
-              <h3 className="font-semibold mb-3">{selectedTerritory.name}</h3>
-              <div className="space-y-3">
-                {selectedTerritory.owner ? (
-                  <div className="p-3 bg-green-500/10 rounded-lg"><div className="flex items-center gap-2 mb-2"><Crown className="h-4 w-4 text-green-500" /><span className="font-medium">Заклеймлена</span></div><div className="space-y-2"><div className="text-sm"><div className="font-medium">{selectedTerritory.owner.displayName}</div><div className="text-muted-foreground text-xs">@{selectedTerritory.owner.username}</div></div></div></div>
-                ) : (
-                  <div className="p-3 bg-muted/50 rounded-lg"><div className="flex items-center gap-2 mb-2"><MapPin className="h-4 w-4 text-muted-foreground" /><span className="text-muted-foreground">Свободная локация</span></div>
-                    {!activeMap?.isLocked && isUserEligible && (<Button size="sm" className="w-full" onClick={() => handleClaimTerritory(selectedTerritory.id)} disabled={isLoading}>{isLoading ? 'Клеймим...' : 'Заклеймить локацию'}</Button>)}
-                    {activeMap?.isLocked && !user?.isAdmin && (<div className="text-xs text-red-600 text-center font-medium">Карта заблокирована администратором</div>)}
-                    {activeMap?.isLocked && user?.isAdmin && (<Button size="sm" className="w-full" onClick={() => handleClaimTerritory(selectedTerritory.id)} disabled={isLoading}>{isLoading ? 'Клеймим...' : 'Заклеймить (админ)'}</Button>)}
-                    {!isUserEligible && !user?.isAdmin && !activeMap?.isLocked && (<div className="text-xs text-yellow-600 text-center">Вы не допущены к участию</div>)}
+          // Определяем статус и цвет
+          let statusBadge;
+          let colorClass;
+          
+          if (invite.isUsed) {
+            statusBadge = { text: 'Использован', variant: 'default' as const };
+            colorClass = 'bg-blue-500';
+          } else if (isExpired) {
+            statusBadge = { text: 'Истёк', variant: 'destructive' as const };
+            colorClass = 'bg-red-500';
+          } else {
+            statusBadge = { text: 'Активен', variant: 'secondary' as const };
+            colorClass = 'bg-green-500';
+          }
+          
+          return (
+            <div key={invite.id} className="border rounded-lg overflow-hidden bg-card">
+              <div className="px-3 py-2">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className={cn("w-3 h-3 rounded-full flex-shrink-0", colorClass)} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        {invite.displayName}
+                      </div>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        {invite.code}
+                      </div>
+                    </div>
                   </div>
-                )}
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {isActive && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(inviteUrl);
+                            showNotification('success', 'Скопировано', 'Ссылка на инвайт скопирована в буфер обмена');
+                          } catch (error) {
+                            showNotification('error', 'Ошибка', 'Не удалось скопировать ссылку');
+                          }
+                        }}
+                        className="h-7 w-7 rounded-md bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center transition-all flex-shrink-0"
+                        title="Скопировать ссылку на инвайт"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+                    )}
+                    {!invite.isUsed && (
+                      <button
+                        onClick={() => handleDeleteInvite(invite.code)}
+                        className="h-7 w-7 rounded-md bg-destructive/10 hover:bg-destructive/20 text-destructive flex items-center justify-center transition-all flex-shrink-0"
+                        title="Удалить инвайт"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="space-y-1">
+                  {/* Статус */}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Статус</span>
+                    <Badge variant={statusBadge.variant} className="text-xs">
+                      {statusBadge.text}
+                    </Badge>
+                  </div>
+                  
+                  
+                  {/* Использован */}
+                  {invite.isUsed && invite.usedAt && (
+                    <div className="flex items-center justify-between text-xs pt-1 border-t">
+                      <span className="text-muted-foreground">Использован</span>
+                      <span className="text-blue-600 dark:text-blue-400 font-medium">
+                        {new Date(invite.usedAt).toLocaleDateString('ru-RU')}
+                      </span>
+                    </div>
+                  )}
+                  
+                  {/* На какой территории использован */}
+                  {invite.isUsed && invite.territoryId && (() => {
+                    const territory = territories.find(t => t.id === invite.territoryId);
+                    return territory ? (
+                      <div className="flex items-center justify-between text-xs pt-1">
+                        <span className="text-muted-foreground">Локация</span>
+                        <span className="text-primary font-medium truncate ml-2">
+                          {territory.name}
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
+                </div>
               </div>
             </div>
-          )}
+          );
+        })
+      )}
+    </div>
+  </div>
+)}
+          
+          
+         
         </aside>
       </div>
 
@@ -1305,7 +1486,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
           <DialogHeader><DialogTitle>Новая карта</DialogTitle><DialogDescription>Создайте пустую карту или скопируйте существующую</DialogDescription></DialogHeader>
           <div className="space-y-4">
             <div><Label>Название новой карты</Label><Input value={mapForm.name} onChange={(e) => setMapForm({ ...mapForm, name: e.target.value })} placeholder="Введите название..." /></div>
-            <div><Label>Описание (опционально)</Label><Textarea value={mapForm.description} onChange={(e) => setMapForm({ ...mapForm, description: e.target.value })} /></div>
+            
             <div><Label>Скопировать из (опционально)</Label>
               <Select 
   value={mapForm.sourceMapId || 'empty'} 
@@ -1330,7 +1511,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
               <h4 className="font-semibold text-sm">Основные настройки</h4>
               <div><Label>Название</Label><Input value={editTerritoryForm.name} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, name: e.target.value })} /></div>
               <div><Label>Макс. игроков</Label><Input type="number" min="1" max="10" value={editTerritoryForm.maxPlayers} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, maxPlayers: parseInt(e.target.value) || 999 })} /></div>
-              <div><Label>Описание</Label><Textarea value={editTerritoryForm.description} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, description: e.target.value })} /></div>
+              
             </div>
             {user?.isAdmin && isAdminMode && selectedTerritory && (
               <div className="space-y-4">
@@ -1447,7 +1628,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
         <DialogContent>
           <DialogHeader><DialogTitle>Создать инвайт-код</DialogTitle><DialogDescription>Создайте код для приглашения игроков</DialogDescription></DialogHeader>
           <div className="space-y-4">
-            <div><Label>Отображаемое имя</Label><Input value={inviteForm.displayName} onChange={(e) => setInviteForm({ ...inviteForm, displayName: e.target.value })} placeholder="Например: Турнир #1" /></div>
+            <div><Label>Отображаемое имя</Label><Input value={inviteForm.displayName} onChange={(e) => setInviteForm({ ...inviteForm, displayName: e.target.value })} placeholder="Например: Malibuca" /></div>
             <div><Label>Срок действия (дней)</Label><Input type="number" min="1" max="365" value={inviteForm.expiresInDays} onChange={(e) => setInviteForm({ ...inviteForm, expiresInDays: parseInt(e.target.value) })} /></div>
             <Button onClick={handleCreateInvite} className="w-full">Создать код</Button>
           </div>

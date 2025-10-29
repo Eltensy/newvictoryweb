@@ -731,6 +731,23 @@ export const insertKillHistorySchema = createInsertSchema(killHistory).omit({
   createdAt: true,
 });
 
+export const revokeKillSchema = z.object({
+  userId: z.string().uuid(),
+  killType: z.enum(['gold', 'silver', 'bronze']),
+  amount: z.number().min(1).max(100).default(1),
+  reason: z.string().min(1, "Reason is required"),
+  deductBalance: z.boolean().default(false), // Опция: отнимать ли баланс
+  balanceAmount: z.number().min(0).optional(), // Сумма для отнятия с баланса
+});
+
+export const manualKillGrantSchema = z.object({
+  userId: z.string().uuid(),
+  killType: z.enum(['gold', 'silver', 'bronze']),
+  amount: z.number().min(1).max(100).default(1),
+  rewardAmount: z.number().min(0),
+  reason: z.string().min(1, "Reason is required"),
+});
+
 export const insertTournamentSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().optional(),
@@ -1252,3 +1269,5 @@ export const createTerritorySchema = createTerritoryRequestSchema;
 export const claimTerritorySchema = claimTerritoryRequestSchema;
 export const assignTerritorySchema = assignTerritoryRequestSchema;
 export const updateTerritorySchema = updateTerritoryRequestSchema;
+export type RevokeKillInput = z.infer<typeof revokeKillSchema>;
+export type ManualKillGrantInput = z.infer<typeof manualKillGrantSchema>;

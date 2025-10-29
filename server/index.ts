@@ -1,3 +1,4 @@
+// server/index.ts - С поддержкой WebSocket
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes.js";
 import { setupVite, serveStatic, log } from "./vite.js";
@@ -7,13 +8,18 @@ import { registerTerritoryRoutes } from './territory-routes';
 import { startPremiumCronJob } from './premiumCron';
 import { startDiscordPremiumCron } from './discordPremiumCron';
 import { territoryStorage } from './territory-storage';
-import { v2 as cloudinary } from 'cloudinary';
+import { setupWebSocket } from './websocket-server';
+import { Server as SocketIOServer } from 'socket.io';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
 app.use(express.json());
+
+// Глобальная переменная для Socket.IO (экспортируется)
+export let io: SocketIOServer | null = null;
+
 registerTerritoryRoutes(app);
 startPremiumCronJob();
 startDiscordPremiumCron();
@@ -77,13 +83,17 @@ app.use((req, res, next) => {
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '3000', 10);
   server.listen(port, '0.0.0.0', () => {
-  console.log(`Server running on port ${port}`);
-  
-  // Запуск бота если есть токен
-  if (process.env.TELEGRAM_BOT_TOKEN) {
-    import('../server/telegram-bot.js').catch(err => {
-      console.error('Failed to start Telegram bot:', err);
-    });
-  }
-});
+    console.log(`✅ Server running on port ${port}`);
+    
+    // ✅ Инициализируем WebSocket после запуска HTTP сервера
+    io = setupWebSocket(server);
+    console.log('✅ WebSocket server initialized');
+    
+    // Запуск бота если есть токен
+    if (process.env.TELEGRAM_BOT_TOKEN) {
+      import('./telegram-bot.js').catch(err => {
+        console.error('Failed to start Telegram bot:', err);
+      });
+    }
+  });
 })();
