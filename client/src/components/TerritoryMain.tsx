@@ -346,7 +346,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
 
   useEffect(() => {
     if (authLoading) return;
-    if (!isLoggedIn || user?.subscriptionScreenshotStatus !== 'approved') {
+    if (!isLoggedIn) {
       setLocation('/');
     }
   }, [isLoggedIn, user, setLocation, authLoading]);

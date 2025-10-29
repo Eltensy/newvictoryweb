@@ -184,7 +184,7 @@ export default function SubmissionPage({
       <BalanceModal
         isOpen={balanceModalOpen}
         onClose={() => setBalanceModalOpen(false)}
-        user={user}
+        user={user} 
         getAuthToken={getAuthToken}
         onRefreshUser={onRefreshUser}
       />
