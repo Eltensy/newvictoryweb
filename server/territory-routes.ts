@@ -438,20 +438,16 @@ export function registerTerritoryRoutes(app: Express) {
 
       const result = await territoryStorage.claimTerritory(territoryId, authResult.userId);
 
-      console.log('🔍 [Claim] About to broadcast, io exists:', !!io, 'mapId:', territory.mapId, 'territoryId:', territoryId, 'oldTerritoryId:', result.oldTerritoryId);
-
       if (io) {
         // Broadcast для новой территории
         await broadcastTerritoryClaim(io, territory.mapId, territoryId);
-        console.log('✅ [Claim] Broadcast completed for new territory');
 
         // Если была старая территория - broadcast и для неё
         if (result.oldTerritoryId) {
           await broadcastTerritoryClaim(io, territory.mapId, result.oldTerritoryId);
-          console.log('✅ [Claim] Broadcast completed for old territory');
         }
       } else {
-        console.error('❌ [Claim] io is null, cannot broadcast!');
+        console.error('[Claim] io is null, cannot broadcast!');
       }
 
       res.json({ message: "Территория успешно заклеймлена", claim: result.claim, immediate: true });
@@ -674,14 +670,8 @@ export function registerTerritoryRoutes(app: Express) {
   // Администратор добавляет игрока на территорию
   app.post("/api/admin/territories/:territoryId/assign-player", async (req, res) => {
     try {
-      console.log('🔵 [Admin Assign] Request received:', {
-        territoryId: req.params.territoryId,
-        userId: req.body.userId
-      });
-
       const authResult = await authenticateAdmin(req);
       if ('error' in authResult) {
-        console.error('❌ [Admin Assign] Auth failed:', authResult.error);
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
@@ -689,22 +679,17 @@ export function registerTerritoryRoutes(app: Express) {
       const { userId } = req.body;
 
       if (!userId) {
-        console.error('❌ [Admin Assign] Missing userId');
         return res.status(400).json({ error: "Требуется userId" });
       }
 
-      console.log('🔍 [Admin Assign] Looking for territory:', territoryId);
       const [territory] = await db
         .select()
         .from(territories)
         .where(eq(territories.id, territoryId));
 
       if (!territory) {
-        console.error('❌ [Admin Assign] Territory not found:', territoryId);
         return res.status(404).json({ error: "Территория не найдена" });
       }
-
-      console.log('✅ [Admin Assign] Territory found:', territory.name);
 
       // Проверяем, является ли это виртуальным игроком (инвайт) или реальным пользователем
       const isVirtualPlayer = userId.startsWith('virtual-');
@@ -721,31 +706,23 @@ export function registerTerritoryRoutes(app: Express) {
           ));
 
         if (!eligiblePlayer) {
-          console.error('❌ [Admin Assign] Virtual player not found in eligible players:', userId);
           return res.status(404).json({ error: "Игрок не найден" });
         }
         displayName = eligiblePlayer.displayName || 'Инвайтнутый игрок';
-        console.log('✅ [Admin Assign] Virtual player found:', displayName);
       } else {
         const user = await storage.getUser(userId);
         if (!user) {
-          console.error('❌ [Admin Assign] User not found:', userId);
           return res.status(404).json({ error: "Пользователь не найден" });
         }
         displayName = user.displayName;
-        console.log('✅ [Admin Assign] User found:', displayName);
       }
 
       const existingClaim = await territoryStorage.getUserTerritoryClaimForTerritory(territoryId, userId);
       if (existingClaim) {
-        console.warn('⚠️ [Admin Assign] User already has claim');
         return res.status(400).json({ error: "Этот игрок уже заклеймил эту локацию" });
       }
 
-      console.log('🎯 [Admin Assign] Claiming territory...');
       const result = await territoryStorage.claimTerritory(territoryId, userId);
-
-      console.log('✅ [Admin Assign] Claim successful, broadcasting...');
 
       // Broadcast для новой территории
       if (io) {
@@ -768,14 +745,12 @@ export function registerTerritoryRoutes(app: Express) {
         }
       );
 
-      console.log('✅ [Admin Assign] Complete');
-
       res.json({
         message: "Игрок добавлен на территорию",
         claim: result.claim,
       });
     } catch (error) {
-      console.error('❌ [Admin Assign] Error:', error);
+      console.error('[Admin Assign] Error:', error);
       res.status(500).json({ error: "Не удалось назначить игрока" });
     }
   });
@@ -833,7 +808,6 @@ export function registerTerritoryRoutes(app: Express) {
       // Broadcast обновление территории
       if (io) {
         await broadcastTerritoryClaim(io, territory.mapId, territoryId);
-        console.log('✅ [Admin Remove] Broadcast sent');
       }
 
       await territoryStorage.logAdminActivity(
@@ -852,7 +826,7 @@ export function registerTerritoryRoutes(app: Express) {
         message: "Игрок убран с территории",
       });
     } catch (error) {
-      console.error('❌ [Admin Remove] Error:', error);
+      console.error('[Admin Remove] Error:', error);
       res.status(500).json({ error: "Не удалось убрать игрока" });
     }
   });
@@ -1438,13 +1412,6 @@ app.get("/api/maps/:mapId/full-data", async (req, res) => {
       return res.status(404).json({ error: "Карта не найдена" });
     }
 
-    console.log('📦 [Full Data] Eligible players raw sample:',
-      eligiblePlayers.slice(0, 2).map(p => ({
-        keys: Object.keys(p),
-        data: p
-      }))
-    );
-
     res.json({
       map: mapData,
       territories,
@@ -1503,13 +1470,8 @@ app.post("/api/claim-with-invite", async (req, res) => {
       .from(territories)
       .where(eq(territories.id, territoryId));
 
-    console.log('🔍 [Claim Invite] About to broadcast, io exists:', !!io, 'territory exists:', !!territory, 'mapId:', territory?.mapId);
-
     if (territory && io) {
       await broadcastTerritoryClaim(io, territory.mapId, territoryId);
-      console.log('✅ [Claim Invite] Broadcast completed');
-    } else {
-      console.warn('⚠️ WebSocket broadcast skipped - missing territory or io');
     }
 
     res.json({

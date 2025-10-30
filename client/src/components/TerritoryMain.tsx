@@ -299,6 +299,7 @@ export default function TerritoryMain() {
   const [activeMap, setActiveMap] = useState<DropMap | null>(null);
   const [selectedTerritory, setSelectedTerritory] = useState<Territory | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isMapLoading, setIsMapLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingMapId, setEditingMapId] = useState<string | null>(null);
   const [editingMapName, setEditingMapName] = useState('');
@@ -327,7 +328,7 @@ export default function TerritoryMain() {
   
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<{ x: number; y: number }[]>([]);
-  const [newSpotForm, setNewSpotForm] = useState({ name: '', description: '', maxPlayers: 999 });
+  const [newSpotForm, setNewSpotForm] = useState<{ name: string; description: string; maxPlayers: number | string }>({ name: '', description: '', maxPlayers: 999 });
   
   // Dialog states
   const [showCreateMapDialog, setShowCreateMapDialog] = useState(false);
@@ -340,10 +341,15 @@ export default function TerritoryMain() {
   
   // Form states
   const [mapForm, setMapForm] = useState({ sourceMapId: '', name: '', description: '' });
-  const [editTerritoryForm, setEditTerritoryForm] = useState({ 
-  id: '', 
-  name: '', 
-  description: '', 
+  const [editTerritoryForm, setEditTerritoryForm] = useState<{
+  id: string;
+  name: string;
+  description: string;
+  maxPlayers: number | string;
+}>({
+  id: '',
+  name: '',
+  description: '',
   maxPlayers: 999
 });
 const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
@@ -522,16 +528,6 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
 
        const fullData = await fullDataResponse.json();
 
-       console.log('📦 [Init] Full data received:', {
-         territoriesCount: fullData.territories?.length,
-         eligiblePlayersCount: fullData.eligiblePlayers?.length,
-         eligiblePlayersSample: fullData.eligiblePlayers?.slice(0, 2).map((p: any) => ({
-           id: p.id,
-           userId: p.userId,
-           displayName: p.displayName
-         }))
-       });
-
        setTerritories(fullData.territories || []);
        setEligiblePlayers(fullData.eligiblePlayers || []);
        setIsUserEligible(fullData.isUserEligible || false);
@@ -570,24 +566,16 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
 const { isConnected } = useTerritorySocket(
   activeMap?.id ?? null,
   useCallback((update: { territoryId: string; territory: any; timestamp: string }) => {
-    console.log('🔔 [TerritoryMain] Territory update received:', {
-      territoryId: update.territoryId,
-      territory: update.territory?.name,
-      claimCount: update.territory?.claims?.length || 0
-    });
-
     setTerritories(prev => {
       const updated = prev.map(t =>
         t.id === update.territoryId
           ? { ...t, ...update.territory, claims: update.territory.claims || [] }
           : t
       );
-      console.log('✅ [TerritoryMain] State updated, new territories:', updated.length);
       return updated;
     });
   }, []),
   useCallback((update: { mapId: string; timestamp: string }) => {
-    console.log('🔄 [TerritoryMain] Full map reload triggered for:', update.mapId);
     if (activeMap?.id === update.mapId) {
       loadMapData(update.mapId);
     }
@@ -626,19 +614,25 @@ const { isConnected } = useTerritorySocket(
     }
   };
 
-  const handleSelectMap = useCallback((mapId: string) => {
+  const handleSelectMap = useCallback(async (mapId: string) => {
   setLocation(`/dropmap/${mapId}`, { replace: true });
   const foundMap = allMaps.find(m => m.id === mapId);
   if (foundMap) {
-    setActiveMap(foundMap);
-    
-    // ✅ Загружаем данные БЕЗ БЛОКИРОВКИ UI
-    loadMapData(foundMap.id);
+    // Показываем индикатор загрузки
+    setIsMapLoading(true);
 
+    // Загружаем данные карты
+    await loadMapData(foundMap.id);
+
+    // После загрузки данных устанавливаем активную карту
+    setActiveMap(foundMap);
     setSettingsForm({
       isLocked: foundMap.isLocked,
       mapImageFile: null,
     });
+
+    // Скрываем индикатор загрузки
+    setIsMapLoading(false);
   }
 }, [allMaps, setLocation, loadMapData]);
   
@@ -915,10 +909,14 @@ const { isConnected } = useTerritorySocket(
     try {
       const token = getAuthToken();
       if (!token) return;
+
+      // Убеждаемся что maxPlayers - это число
+      const maxPlayers = typeof editTerritoryForm.maxPlayers === 'number' ? editTerritoryForm.maxPlayers : (parseInt(editTerritoryForm.maxPlayers) || 999);
+
       const response = await fetch(`/api/territories/${editTerritoryForm.id}`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editTerritoryForm.name, description: editTerritoryForm.description, maxPlayers: editTerritoryForm.maxPlayers }),
+        body: JSON.stringify({ name: editTerritoryForm.name, description: editTerritoryForm.description, maxPlayers }),
       });
       if (response.ok) {
         showNotification('success', 'Успешно', 'Локация обновлена');
@@ -942,10 +940,14 @@ const { isConnected } = useTerritorySocket(
     try {
       const token = getAuthToken();
       if (!token) return;
+
+      // Убеждаемся что maxPlayers - это число
+      const maxPlayers = typeof newSpotForm.maxPlayers === 'number' ? newSpotForm.maxPlayers : (parseInt(newSpotForm.maxPlayers) || 999);
+
       const response = await fetch(`/api/maps/${activeMap.id}/territories`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newSpotForm, points: currentPoints }),
+        body: JSON.stringify({ ...newSpotForm, maxPlayers, points: currentPoints }),
       });
       if (response.ok) {
         showNotification('success', 'Успешно', 'Локация создана');
@@ -963,7 +965,6 @@ const { isConnected } = useTerritorySocket(
   };
   
  const handleAssignPlayerToTerritory = async (territoryId: string, playerId: string) => {
-  console.log('📤 [Assign Player] Request:', { territoryId, playerId });
   if (!territoryId || !playerId) {
     showNotification('error', 'Ошибка', 'Выберите локацию и игрока');
     return;
@@ -971,7 +972,7 @@ const { isConnected } = useTerritorySocket(
   try {
     const token = getAuthToken();
     if (!token) {
-      console.error('❌ [Assign Player] No token');
+      console.error('[Assign Player] No token');
       return;
     }
 
@@ -980,11 +981,6 @@ const { isConnected } = useTerritorySocket(
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: playerId }), // playerId уже содержит userId
-    });
-
-    console.log('📥 [Assign Player] Response:', {
-      status: response.status,
-      ok: response.ok
     });
     
     if (response.ok) {
@@ -1266,18 +1262,27 @@ const resetZoom = useCallback(() => {
         </aside>
 
         <main className="flex-1 relative bg-background overflow-hidden flex items-center justify-center">
-          <svg ref={svgRef} viewBox={viewBox} width="100%" height="100%" onClick={handleSVGClick} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel} onContextMenu={(e) => e.preventDefault()} className="max-w-full max-h-full" style={{ cursor: isDragging ? 'grabbing' : isDrawingMode ? 'crosshair' : 'pointer', aspectRatio: '1 / 1' }}>
-            {activeMap?.mapImageUrl && (<image href={activeMap.mapImageUrl} x="0" y="0" width={SVG_SIZE} height={SVG_SIZE} preserveAspectRatio="xMidYMid slice" />)}
-            {territories.map(territory => (<TerritoryPolygon key={territory.id} territory={territory} isSelected={selectedTerritory?.id === territory.id} onClick={(e) => handleTerritoryClick(territory, e)} onContextMenu={(e) => handleTerritoryContextMenu(territory, e)} scale={scale} />))}
-            {isDrawingMode && currentPoints.length > 0 && (<DrawingPoints points={currentPoints} color={"#000000"} scale={scale} />)}
-          </svg>
+          {isMapLoading ? (
+            <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
+              <div className="text-center">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-primary" />
+                <p className="text-sm text-muted-foreground">Загрузка карты...</p>
+              </div>
+            </div>
+          ) : (
+            <svg ref={svgRef} viewBox={viewBox} width="100%" height="100%" onClick={handleSVGClick} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel} onContextMenu={(e) => e.preventDefault()} className="max-w-full max-h-full" style={{ cursor: isDragging ? 'grabbing' : isDrawingMode ? 'crosshair' : 'pointer', aspectRatio: '1 / 1' }}>
+              {activeMap?.mapImageUrl && (<image href={activeMap.mapImageUrl} x="0" y="0" width={SVG_SIZE} height={SVG_SIZE} preserveAspectRatio="xMidYMid slice" />)}
+              {territories.map(territory => (<TerritoryPolygon key={territory.id} territory={territory} isSelected={selectedTerritory?.id === territory.id} onClick={(e) => handleTerritoryClick(territory, e)} onContextMenu={(e) => handleTerritoryContextMenu(territory, e)} scale={scale} />))}
+              {isDrawingMode && currentPoints.length > 0 && (<DrawingPoints points={currentPoints} color={"#000000"} scale={scale} />)}
+            </svg>
+          )}
           
           {isAdminMode && isDrawingMode && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-card border rounded-lg p-4 shadow-2xl z-10 min-w-[300px]">
               <h3 className="font-semibold mb-3">Новая локация</h3>
               <div className="space-y-3">
                 <div><Label>Название</Label><Input value={newSpotForm.name} onChange={(e) => setNewSpotForm({ ...newSpotForm, name: e.target.value })} placeholder="Введите название..." /></div>
-                <div><Label>Макс. игроков</Label><Input type="number" min="1" max="10" value={newSpotForm.maxPlayers} onChange={(e) => setNewSpotForm({ ...newSpotForm, maxPlayers: parseInt(e.target.value) || 1 })} /></div>
+                <div><Label>Макс. игроков</Label><Input value={newSpotForm.maxPlayers} onChange={(e) => { const val = e.target.value; if (val === '') { setNewSpotForm({ ...newSpotForm, maxPlayers: '' }); } else { const num = parseInt(val); if (!isNaN(num) && num > 0) { setNewSpotForm({ ...newSpotForm, maxPlayers: num }); } } }} placeholder="999" /></div>
                 <div className="text-xs text-muted-foreground">Точек: {currentPoints.length} (мин. 3)</div>
                 <div className="flex gap-2">
                   <Button size="sm" onClick={handleSaveNewSpot} disabled={currentPoints.length < 3 || !newSpotForm.name.trim()} className="flex-1"><Save className="h-4 w-4 mr-2" />Сохранить</Button>
@@ -1561,7 +1566,7 @@ const resetZoom = useCallback(() => {
             <div className="space-y-4 pb-4 border-b">
               <h4 className="font-semibold text-sm">Основные настройки</h4>
               <div><Label>Название</Label><Input value={editTerritoryForm.name} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, name: e.target.value })} /></div>
-              <div><Label>Макс. игроков</Label><Input type="number" min="1" max="10" value={editTerritoryForm.maxPlayers} onChange={(e) => setEditTerritoryForm({ ...editTerritoryForm, maxPlayers: parseInt(e.target.value) || 999 })} /></div>
+              <div><Label>Макс. игроков</Label><Input value={editTerritoryForm.maxPlayers} onChange={(e) => { const val = e.target.value; if (val === '') { setEditTerritoryForm({ ...editTerritoryForm, maxPlayers: '' }); } else { const num = parseInt(val); if (!isNaN(num) && num > 0) { setEditTerritoryForm({ ...editTerritoryForm, maxPlayers: num }); } } }} placeholder="999" /></div>
               
             </div>
             {user?.isAdmin && isAdminMode && selectedTerritory && (
@@ -1587,26 +1592,7 @@ const resetZoom = useCallback(() => {
                   const currentPlayerCount = selectedTerritory.claims?.length || 0;
                   const canAddMore = currentPlayerCount < editTerritoryForm.maxPlayers;
 
-                  console.log('🔍 [Available Players] Before filter:', {
-                    eligiblePlayersCount: eligiblePlayers.length,
-                    eligiblePlayersSample: eligiblePlayers.slice(0, 2).map(p => ({
-                      id: p.id,
-                      userId: p.userId,
-                      displayName: p.displayName
-                    })),
-                    selectedTerritoryClaims: selectedTerritory.claims?.map(c => c.userId)
-                  });
-
                   const availablePlayers = eligiblePlayers.filter(p => !selectedTerritory.claims?.some(claim => claim.userId === p.userId));
-
-                  console.log('🔍 [Available Players] After filter:', {
-                    count: availablePlayers.length,
-                    sample: availablePlayers.slice(0, 2).map(p => ({
-                      id: p.id,
-                      userId: p.userId,
-                      displayName: p.displayName
-                    }))
-                  });
 
                 return canAddMore ? (
   <div className="space-y-3 p-3 border rounded-lg bg-blue-50/50 dark:bg-blue-950/20">
@@ -1619,48 +1605,23 @@ const resetZoom = useCallback(() => {
         <select
   value={localSelectedPlayer}
   onChange={(e) => {
-    console.log('🔽 [Select] Changed:', {
-      value: e.target.value,
-      availablePlayers: availablePlayers.map(p => ({
-        id: p.id,
-        userId: p.userId,
-        displayName: p.displayName
-      }))
-    });
     setLocalSelectedPlayer(e.target.value);
   }}
   className="w-full h-10 px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-input"
 >
   <option value="">Выберите игрока...</option>
-  {availablePlayers.map((p) => {
-    console.log('🔹 [Option] Rendering:', {
-      id: p.id,
-      userId: p.userId,
-      displayName: p.displayName
-    });
-    return (
-      <option key={p.id} value={p.userId}>
-        {p.displayName} (@{p.user?.username || 'unknown'})
-      </option>
-    );
-  })}
+  {availablePlayers.map((p) => (
+    <option key={p.id} value={p.userId}>
+      {p.displayName} (@{p.user?.username || 'unknown'})
+    </option>
+  ))}
 </select>
 <Button
   size="sm"
   onClick={async () => {
-    console.log('🔘 [Add Player] Button clicked:', {
-      localSelectedPlayer,
-      selectedTerritoryId: selectedTerritory?.id,
-      eligiblePlayersCount: eligiblePlayers.length
-    });
     if (localSelectedPlayer && selectedTerritory) {
       await handleAssignPlayerToTerritory(selectedTerritory.id, localSelectedPlayer);
       setLocalSelectedPlayer('');
-    } else {
-      console.warn('⚠️ [Add Player] Missing data:', {
-        hasLocalSelectedPlayer: !!localSelectedPlayer,
-        hasSelectedTerritory: !!selectedTerritory
-      });
     }
   }}
   disabled={!localSelectedPlayer}

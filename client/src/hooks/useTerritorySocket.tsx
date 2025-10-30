@@ -20,8 +20,6 @@ export function useTerritorySocket(
 
   // Создаем сокет один раз при монтировании
   useEffect(() => {
-    console.log('🔌 [Socket] Initializing socket connection');
-
     const socket = io('/', {
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -32,22 +30,19 @@ export function useTerritorySocket(
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('✅ [Socket] Connected');
       setIsConnected(true);
       // Если есть текущая карта, присоединяемся к ней
       if (currentMapIdRef.current) {
-        console.log('📍 [Socket] Rejoining map:', currentMapIdRef.current);
         socket.emit('join-map', currentMapIdRef.current);
       }
     });
 
     socket.on('disconnect', (reason) => {
-      console.log('❌ [Socket] Disconnected:', reason);
       setIsConnected(false);
     });
 
     socket.on('connect_error', (error) => {
-      console.error('❌ [Socket] Connection error:', error.message);
+      console.error('[Socket] Connection error:', error.message);
       setIsConnected(false);
     });
 
@@ -64,11 +59,10 @@ export function useTerritorySocket(
     });
 
     socket.on('error', (error) => {
-      console.error('❌ [Socket] Socket error:', error);
+      console.error('[Socket] Socket error:', error);
     });
 
     return () => {
-      console.log('🧹 [Socket] Disconnecting');
       socket.disconnect();
       socketRef.current = null;
     };
@@ -83,13 +77,11 @@ export function useTerritorySocket(
 
     // Покидаем старую карту
     if (previousMapId && previousMapId !== mapId) {
-      console.log('📤 [Socket] Leaving map:', previousMapId);
       socket.emit('leave-map', previousMapId);
     }
 
     // Присоединяемся к новой карте
     if (mapId) {
-      console.log('📥 [Socket] Joining map:', mapId);
       currentMapIdRef.current = mapId;
       if (socket.connected) {
         socket.emit('join-map', mapId);

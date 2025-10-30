@@ -569,13 +569,6 @@ export class DatabaseTerritoryStorage {
         throw new Error('Territory not found');
       }
 
-      console.log('🔒 [claimTerritory] Territory locked:', {
-        id: territory.id,
-        name: territory.name,
-        mapId: territory.mapId,
-        maxPlayers: territory.maxPlayers
-      });
-
       // 2. Проверяем старые клеймы пользователя на этой карте
       const oldClaims = await tx
         .select({
@@ -676,14 +669,6 @@ export class DatabaseTerritoryStorage {
           )
         );
 
-      console.log('🔍 [claimTerritory] Current claims:', {
-        territoryId,
-        currentCount: currentClaims.length,
-        maxPlayers: territory.maxPlayers,
-        userId,
-        currentUserIds: currentClaims.map(c => c.userId)
-      });
-
       // Проверка: уже заклеймлено максимум игроков?
       const maxPlayers = territory.maxPlayers || 999;
 
@@ -691,7 +676,6 @@ export class DatabaseTerritoryStorage {
       const userAlreadyOnThisTerritory = currentClaims.some(c => c.userId === userId);
 
       if (userAlreadyOnThisTerritory) {
-        console.log('✅ [claimTerritory] User already on this territory, returning existing claim');
         const [existingClaim] = await tx
           .select()
           .from(territoryClaims)
@@ -707,10 +691,6 @@ export class DatabaseTerritoryStorage {
 
       // Если территория заполнена и пользователя там нет - ошибка
       if (currentClaims.length >= maxPlayers) {
-        console.error('❌ [claimTerritory] Territory full:', {
-          currentCount: currentClaims.length,
-          maxPlayers
-        });
         throw new Error(`Максимум ${maxPlayers} игрок(ов) на локации`);
       }
 
@@ -750,14 +730,6 @@ export class DatabaseTerritoryStorage {
           claimType: 'claim'
         })
         .returning();
-
-      console.log('✅ [claimTerritory] Claim successful:', {
-        territoryId,
-        userId,
-        newClaimId: newClaim.id,
-        totalClaimsNow: newClaimCount,
-        oldTerritoryId
-      });
 
       return { claim: newClaim, oldTerritoryId };
     });
@@ -1017,19 +989,15 @@ export class DatabaseTerritoryStorage {
   // ===== Admin & Logging =====
   
   async logAdminActivity(
-    adminId: string, 
-    actionType: string, 
-    description: string, 
+    adminId: string,
+    actionType: string,
+    description: string,
     metadata?: any
   ): Promise<void> {
-    console.log(
-      `[ADMIN LOG] User: ${adminId}, Action: ${actionType}, Details: ${description}`, 
-      metadata
-    );
+    // Admin activity logging can be implemented here if needed
   }
 
   async getAdminActivityLogs(limit: number): Promise<any[]> {
-    console.log(`Fetching last ${limit} admin logs... (Not implemented)`);
     return [];
   }
 
