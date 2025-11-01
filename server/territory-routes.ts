@@ -1394,18 +1394,25 @@ app.get("/api/maps/:mapId/full-data", async (req, res) => {
     const isAdmin = authResult.user.isAdmin;
 
     // ✅ ПАРАЛЛЕЛЬНАЯ загрузка всех данных
-    const [map, territories, eligiblePlayers, isEligible, invites] = await Promise.all([
-      db.select().from(dropMapSettings).where(eq(dropMapSettings.id, mapId)).limit(1),
-      
+    const [mapResult, territories, eligiblePlayers, isEligible, invites] = await Promise.all([
+      db.select({
+        map: dropMapSettings,
+        tournament: tournaments
+      })
+        .from(dropMapSettings)
+        .leftJoin(tournaments, eq(dropMapSettings.tournamentId, tournaments.id))
+        .where(eq(dropMapSettings.id, mapId))
+        .limit(1),
+
       // 2. Территории с claims (оптимизированный запрос)
       territoryStorage.getMapTerritories(mapId),
-      
+
       // 3. Список игроков
       db.select().from(dropMapEligiblePlayers)
         .leftJoin(users, eq(dropMapEligiblePlayers.userId, users.id))
         .where(eq(dropMapEligiblePlayers.settingsId, mapId))
         .orderBy(desc(dropMapEligiblePlayers.addedAt)),
-      
+
       // 4. Проверка eligibility текущего юзера (одним запросом)
       db.select({ count: sql`count(*)` })
         .from(dropMapEligiblePlayers)
@@ -1414,19 +1421,27 @@ app.get("/api/maps/:mapId/full-data", async (req, res) => {
           eq(dropMapEligiblePlayers.userId, userId)
         ))
         .then(r => r[0]?.count > 0),
-      
+
       // 5. Инвайты (только для админа, иначе пустой массив)
-      isAdmin 
+      isAdmin
         ? db.select().from(dropMapInviteCodes)
             .where(eq(dropMapInviteCodes.settingsId, mapId))
             .orderBy(desc(dropMapInviteCodes.createdAt))
         : Promise.resolve([])
     ]);
 
-    const [mapData] = map;
-    if (!mapData) {
+    const mapWithTournament = mapResult[0];
+    if (!mapWithTournament?.map) {
       return res.status(404).json({ error: "Карта не найдена" });
     }
+
+    const mapData = {
+      ...mapWithTournament.map,
+      tournament: mapWithTournament.tournament ? {
+        id: mapWithTournament.tournament.id,
+        name: mapWithTournament.tournament.name,
+      } : null
+    };
 
     res.json({
       map: mapData,

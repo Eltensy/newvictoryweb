@@ -9,6 +9,7 @@ import {
   tournamentRegistrations,
   tournamentTeams,
   tournamentTeamMembers,
+  tournaments,
   users,
   type Territory,
   type TerritoryClaim,
@@ -106,12 +107,25 @@ export class DatabaseTerritoryStorage {
     });
   }
 
-  async getMap(id: string): Promise<DropMapSettings | undefined> {
-    const [map] = await db
-      .select()
+  async getMap(id: string): Promise<any | undefined> {
+    const [result] = await db
+      .select({
+        map: dropMapSettings,
+        tournament: tournaments
+      })
       .from(dropMapSettings)
+      .leftJoin(tournaments, eq(dropMapSettings.tournamentId, tournaments.id))
       .where(eq(dropMapSettings.id, id));
-    return map;
+
+    if (!result) return undefined;
+
+    return {
+      ...result.map,
+      tournament: result.tournament ? {
+        id: result.tournament.id,
+        name: result.tournament.name,
+      } : null
+    };
   }
 
   async getAllMaps(): Promise<DropMapSettings[]> {
@@ -569,6 +583,7 @@ export class DatabaseTerritoryStorage {
       .limit(1);
 
     if (mapSettings?.tournamentId) {
+      // Check if user is directly registered (solo mode)
       const [registration] = await db
         .select()
         .from(tournamentRegistrations)
@@ -582,6 +597,49 @@ export class DatabaseTerritoryStorage {
         .limit(1);
 
       if (registration) return true;
+
+      // Check if user is a team leader with registered team (team mode)
+      const [teamLeader] = await db
+        .select()
+        .from(tournamentTeams)
+        .innerJoin(
+          tournamentRegistrations,
+          eq(tournamentTeams.id, tournamentRegistrations.teamId)
+        )
+        .where(
+          and(
+            eq(tournamentTeams.tournamentId, mapSettings.tournamentId),
+            eq(tournamentTeams.leaderId, userId),
+            sql`${tournamentRegistrations.status} IN ('registered', 'paid')`
+          )
+        )
+        .limit(1);
+
+      if (teamLeader) return true;
+
+      // Check if user is a team member with registered team (team mode)
+      const [teamMember] = await db
+        .select()
+        .from(tournamentTeamMembers)
+        .innerJoin(
+          tournamentTeams,
+          eq(tournamentTeamMembers.teamId, tournamentTeams.id)
+        )
+        .innerJoin(
+          tournamentRegistrations,
+          eq(tournamentTeams.id, tournamentRegistrations.teamId)
+        )
+        .where(
+          and(
+            eq(tournamentTeams.tournamentId, mapSettings.tournamentId),
+            eq(tournamentTeamMembers.userId, userId),
+            eq(tournamentTeamMembers.status, 'accepted'),
+            sql`${tournamentRegistrations.status} IN ('registered', 'paid')`
+          )
+        )
+        .limit(1);
+
+      if (teamMember) return true;
     }
 
     return false;

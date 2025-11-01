@@ -1302,10 +1302,28 @@ const resetZoom = useCallback(() => {
             </div>
             
             {activeMap && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant="secondary">
                   {activeMap.name}
                 </Badge>
+                {activeMap.tournamentId && activeMap.tournament?.name && (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/50 flex items-center gap-1">
+                      <Trophy className="h-3 w-3" />
+                      Турнир: {activeMap.tournament.name}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setLocation(`/tournament/${activeMap.tournamentId}`)}
+                      className="h-7 px-2 text-xs"
+                      title="Перейти к турниру"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5 mr-1" />
+                      К турниру
+                    </Button>
+                  </div>
+                )}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -1317,7 +1335,7 @@ const resetZoom = useCallback(() => {
                 </Button>
               </div>
             )}
-            
+
             {activeMap?.isLocked && (
               <Badge variant="destructive">
                 <Lock className="h-3 w-3 mr-1" />
