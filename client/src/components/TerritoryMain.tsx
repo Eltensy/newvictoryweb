@@ -175,21 +175,35 @@ const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContext
           });
         });
       } else {
-        // Team - show all members together
-        const teamName = members[0].teamName || 'Team';
+        // Team - show each member on separate line
         const leader = members.find(m => m.isTeamLeader);
-        const memberNames = members.map(m => m.displayName || 'Unknown').join(', ');
 
-        result.push({
-          displayText: `${teamName}: ${memberNames}`,
-          isTeamLeader: !!leader,
-          teamName: teamName,
+        // Add each member as separate entry
+        members.forEach(member => {
+          result.push({
+            displayText: member.displayName || 'Unknown',
+            isTeamLeader: member.userId === leader?.userId,
+            teamName: member.teamName || null,
+          });
         });
+
+        // Calculate how many slots are empty based on maxPlayers
+        const teamMaxPlayers = territory.maxPlayers || 1;
+        const emptySlots = Math.max(0, teamMaxPlayers - members.length);
+
+        // Add "?" for empty slots
+        for (let i = 0; i < emptySlots; i++) {
+          result.push({
+            displayText: '?',
+            isTeamLeader: false,
+            teamName: members[0]?.teamName || null,
+          });
+        }
       }
     });
 
     return result;
-  }, [uniqueClaims, territory.name]);
+  }, [uniqueClaims, territory.name, territory.maxPlayers]);
 
   const hasClaims = uniqueClaims.length > 0;
   const claimCount = groupedClaims.length;

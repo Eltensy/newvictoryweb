@@ -2825,6 +2825,58 @@ app.post("/api/tournament/team/invite/:inviteId/respond", async (req, res) => {
         }
       }
 
+      // Auto-add team member to linked dropmaps
+      try {
+        const linkedDropmaps = await db
+          .select()
+          .from(dropMapSettings)
+          .where(eq(dropMapSettings.tournamentId, invite.tournamentId));
+
+        for (const dropmap of linkedDropmaps) {
+          // Check if member is already in eligible players
+          const [existing] = await db
+            .select()
+            .from(dropMapEligiblePlayers)
+            .where(and(
+              eq(dropMapEligiblePlayers.settingsId, dropmap.id),
+              eq(dropMapEligiblePlayers.userId, authResult.userId)
+            ))
+            .limit(1);
+
+          if (!existing) {
+            await db.insert(dropMapEligiblePlayers).values({
+              settingsId: dropmap.id,
+              userId: authResult.userId,
+              displayName: user.displayName,
+              sourceType: 'tournament_registration',
+              addedBy: null,
+            });
+            console.log(`✅ Team member ${authResult.userId} auto-added to dropmap ${dropmap.id}`);
+          }
+
+          // Broadcast territory updates for this map via WebSocket
+          const io = (req as any).app.get('io');
+          if (io) {
+            // Get all territories for this map with updated claims
+            const territories = await territoryStorage.getMapTerritories(dropmap.id);
+
+            // Broadcast each territory update
+            territories.forEach((territory: any) => {
+              io.to(`map:${dropmap.id}`).emit('territoryUpdate', {
+                territoryId: territory.id,
+                territory: territory,
+                timestamp: new Date().toISOString()
+              });
+            });
+
+            console.log(`📡 Broadcasted territory updates for map ${dropmap.id} after team member join`);
+          }
+        }
+      } catch (dropmapError) {
+        console.error('❌ Failed to add team member to dropmaps:', dropmapError);
+        // Don't fail team join if dropmap update fails
+      }
+
       res.json({ message: "Successfully joined team", teamId: invite.teamId });
     } else {
       // Decline invite - remove pending member slot
