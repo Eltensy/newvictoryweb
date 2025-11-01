@@ -164,13 +164,15 @@ const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContext
     // Convert to display format
     const result: Array<{ displayText: string; isTeamLeader: boolean; teamName: string | null }> = [];
 
-    // Only show team slots for the first team that claimed (if it's a team-based territory)
+    // Check if this is a single team territory
     const entries = Object.entries(teamGroups);
-    const firstTeamEntry = entries.find(([teamId]) => teamId !== 'solo');
+    const teamEntries = entries.filter(([teamId]) => teamId !== 'solo');
+    const soloEntries = entries.filter(([teamId]) => teamId === 'solo');
 
-    if (firstTeamEntry && entries.length === 1 && firstTeamEntry[0] !== 'solo') {
+    // Only show team slots if there's exactly one team and no solo players
+    if (teamEntries.length === 1 && soloEntries.length === 0) {
       // Single team claim - show members + empty slots
-      const [teamId, members] = firstTeamEntry;
+      const [teamId, members] = teamEntries[0];
       const leader = members.find(m => m.isTeamLeader);
 
       // Add each member as separate entry
@@ -709,11 +711,13 @@ const { isConnected } = useTerritorySocket(
     // Показываем индикатор загрузки
     setIsMapLoading(true);
 
-    // Загружаем данные карты
+    // Временно устанавливаем карту из allMaps (без tournament)
+    setActiveMap(foundMap);
+
+    // Загружаем полные данные карты (включая tournament)
+    // loadMapData сам обновит activeMap с правильными данными
     await loadMapData(foundMap.id);
 
-    // После загрузки данных устанавливаем активную карту
-    setActiveMap(foundMap);
     setSettingsForm({
       isLocked: foundMap.isLocked,
       mapImageFile: null,
