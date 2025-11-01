@@ -12,10 +12,10 @@ import { useTerritorySocket } from '@/hooks/useTerritorySocket';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation, useRoute } from "wouter";
 import LoadingScreen from './LoadingScreen';
-import { 
-  Trophy, Crown, MapPin, Home, User, Settings, Loader2, 
-  AlertCircle, Users, CheckCircle, XCircle, AlertTriangle, Info, ZoomIn, 
-  ZoomOut, RotateCcw, Lock, Unlock, Copy, ExternalLink, Plus, Trash2, 
+import {
+  Trophy, Crown, MapPin, Home, User, Settings, Loader2,
+  AlertCircle, Users, CheckCircle, XCircle, AlertTriangle, Info, ZoomIn,
+  ZoomOut, RotateCcw, Lock, Unlock, Copy, Plus, Trash2,
   Edit, Save, X, Undo, UserPlus, Upload, Link as LinkIcon, Image as ImageIcon, ChevronDown,
   Wifi, WifiOff
 } from 'lucide-react';
@@ -1302,28 +1302,10 @@ const resetZoom = useCallback(() => {
             </div>
             
             {activeMap && (
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
                 <Badge variant="secondary">
                   {activeMap.name}
                 </Badge>
-                {activeMap.tournamentId && activeMap.tournament?.name && (
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/50 flex items-center gap-1">
-                      <Trophy className="h-3 w-3" />
-                      Турнир: {activeMap.tournament.name}
-                    </Badge>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setLocation(`/tournament/${activeMap.tournamentId}`)}
-                      className="h-7 px-2 text-xs"
-                      title="Перейти к турниру"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5 mr-1" />
-                      К турниру
-                    </Button>
-                  </div>
-                )}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -1355,6 +1337,21 @@ const resetZoom = useCallback(() => {
                 {isConnected ? 'Online' : 'Offline'}
               </span>
             </div>
+
+            {activeMap?.tournamentId && activeMap.tournament?.name && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setLocation(`/tournament/${activeMap.tournamentId}`)}
+                className="h-8 px-3 bg-amber-500/5 hover:bg-amber-500/10 border-amber-500/30"
+                title={`Перейти к турниру: ${activeMap.tournament.name}`}
+              >
+                <Trophy className="h-4 w-4 mr-1.5 text-amber-600" />
+                <LinkIcon className="h-3 w-3 mr-1.5 text-amber-600" />
+                <span className="text-sm font-medium">{activeMap.tournament.name}</span>
+              </Button>
+            )}
+
              <div className="hidden lg:flex items-center gap-1">
               <button onClick={() => setScale(prev => Math.max(prev / 1.2, MIN_SCALE))} className="h-8 w-8 rounded-full hover:bg-muted transition-colors flex items-center justify-center"><ZoomOut className="h-3.5 w-3.5" /></button>
               <span className="px-2 text-xs font-medium min-w-[50px] text-center">{Math.round(scale * 100)}%</span>
