@@ -1,6 +1,8 @@
 // client/src/types/tournament.ts
 // Tournament-related TypeScript types for client-side
 
+export type TeamMode = 'solo' | 'duo' | 'trio' | 'squad';
+
 export interface Tournament {
   id: string;
   name: string;
@@ -9,10 +11,8 @@ export interface Tournament {
   rules: string | null;
   prize: number;
   entryFee: number;
-  registrationStartDate: string;
-  registrationEndDate: string;
-  startDate: string;
-  endDate: string | null;
+  registrationOpen: boolean;
+  teamMode: TeamMode;
   maxParticipants: number | null;
   currentParticipants: number;
   status: TournamentStatus;
@@ -21,6 +21,13 @@ export interface Tournament {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  // Discord Integration
+  discordRoleId?: string | null;
+  discordCategoryId?: string | null;
+  discordInfoChannelId?: string | null;
+  discordChatChannelId?: string | null;
+  discordPasswordChannelId?: string | null;
+  autoCreateDiscordChannels?: boolean;
 }
 
 export type TournamentStatus = 
@@ -85,10 +92,6 @@ export interface CreateTournamentRequest {
   rules?: string;
   prize: number;
   entryFee: number;
-  registrationStartDate: string;
-  registrationEndDate: string;
-  startDate: string;
-  endDate?: string;
   maxParticipants?: number;
   imageUrl?: string;
 }
@@ -100,11 +103,8 @@ export interface UpdateTournamentRequest {
   rules?: string;
   prize?: number;
   entryFee?: number;
-  registrationStartDate?: string;
-  registrationEndDate?: string;
-  startDate?: string;
-  endDate?: string;
   maxParticipants?: number;
+  registrationOpen?: boolean;
   status?: TournamentStatus;
   imageUrl?: string;
 }
@@ -112,4 +112,11 @@ export interface UpdateTournamentRequest {
 export interface RegisterForTournamentRequest {
   teamName?: string;
   additionalInfo?: any;
+}
+
+export interface DiscordStatus {
+  hasDiscord: boolean;
+  hasRole: boolean;
+  discordUsername: string | null;
+  tournamentHasDiscordIntegration: boolean;
 }

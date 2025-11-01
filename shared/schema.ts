@@ -34,7 +34,7 @@ export const notificationTypeEnum = pgEnum('notification_type', [
 // Tournament enums
 export const tournamentStatusEnum = pgEnum('tournament_status', [
   'upcoming',
-  'registration_open', 
+  'registration_open',
   'registration_closed',
   'in_progress',
   'completed',
@@ -44,6 +44,26 @@ export const tournamentStatusEnum = pgEnum('tournament_status', [
 export const tournamentRegistrationStatusEnum = pgEnum('tournament_registration_status', [
   'registered',
   'paid',
+  'cancelled'
+]);
+
+export const tournamentTeamModeEnum = pgEnum('tournament_team_mode', [
+  'solo',
+  'duo',
+  'trio',
+  'squad'
+]);
+
+export const teamMemberStatusEnum = pgEnum('team_member_status', [
+  'pending',
+  'accepted',
+  'declined'
+]);
+
+export const teamInviteStatusEnum = pgEnum('team_invite_status', [
+  'pending',
+  'accepted',
+  'declined',
   'cancelled'
 ]);
 
@@ -151,24 +171,38 @@ export const tournaments = pgTable("tournaments", {
   description: text("description"),
   mapUrl: text("map_url"),
   rules: text("rules"),
-  
+
   prize: integer("prize").notNull().default(0),
   entryFee: integer("entry_fee").notNull().default(0),
   prizeDistribution: jsonb("prize_distribution"),
-  
-  registrationStartDate: timestamp("registration_start_date").notNull(),
-  registrationEndDate: timestamp("registration_end_date").notNull(),
-  startDate: timestamp("start_date").notNull(),
-  endDate: timestamp("end_date"),
-  
+
+  // Регистрация открывается автоматически при создании
+  registrationOpen: boolean("registration_open").notNull().default(true),
+
+  // Режим команды: solo (1), duo (2), trio (3), squad (4)
+  teamMode: tournamentTeamModeEnum("team_mode").notNull().default('solo'),
+
   maxParticipants: integer("max_participants"),
   currentParticipants: integer("current_participants").notNull().default(0),
-  
+
   status: tournamentStatusEnum("status").notNull().default('upcoming'),
-  
+
   imageUrl: text("image_url"),
   cloudinaryPublicId: varchar("cloudinary_public_id", { length: 255 }),
-  
+
+  // Discord Integration Fields
+  discordRoleId: text("discord_role_id"),
+  discordCategoryId: text("discord_category_id"),
+  discordInfoChannelId: text("discord_info_channel_id"),
+  discordChatChannelId: text("discord_chat_channel_id"),
+  discordPasswordChannelId: text("discord_password_channel_id"),
+  discordMapChannelId: text("discord_map_channel_id"),
+  discordMapMessageId: text("discord_map_message_id"),
+  autoCreateDiscordChannels: boolean("auto_create_discord_channels").default(false),
+
+  // DropMap Integration
+  dropMapId: uuid("drop_map_id").references((): any => dropMapSettings.id, { onDelete: 'set null' }),
+
   createdBy: uuid("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -179,16 +213,57 @@ export const tournamentRegistrations = pgTable("tournament_registrations", {
   id: uuid("id").primaryKey().defaultRandom(),
   tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id, { onDelete: 'cascade' }),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
-  
+  teamId: uuid("team_id").references((): any => tournamentTeams.id, { onDelete: 'cascade' }),
+
   status: tournamentRegistrationStatusEnum("status").notNull().default('registered'),
   teamName: varchar("team_name", { length: 100 }),
   additionalInfo: text("additional_info"),
-  
+
   paidAmount: integer("paid_amount"),
   paidAt: timestamp("paid_at"),
-  
+
   registeredAt: timestamp("registered_at").notNull().defaultNow(),
   cancelledAt: timestamp("cancelled_at"),
+});
+
+// Tournament Teams table (для duo/trio/squad)
+export const tournamentTeams = pgTable("tournament_teams", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id, { onDelete: 'cascade' }),
+  name: varchar("name", { length: 100 }).notNull(),
+  leaderId: text("leader_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+
+  status: tournamentRegistrationStatusEnum("status").notNull().default('registered'),
+  paidAmount: integer("paid_amount"),
+  paidAt: timestamp("paid_at"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Team Members table
+export const tournamentTeamMembers = pgTable("tournament_team_members", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  teamId: uuid("team_id").notNull().references(() => tournamentTeams.id, { onDelete: 'cascade' }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+
+  status: teamMemberStatusEnum("status").notNull().default('accepted'),
+
+  joinedAt: timestamp("joined_at").notNull().defaultNow(),
+});
+
+// Team Invites table
+export const tournamentTeamInvites = pgTable("tournament_team_invites", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  teamId: uuid("team_id").notNull().references(() => tournamentTeams.id, { onDelete: 'cascade' }),
+  tournamentId: uuid("tournament_id").notNull().references(() => tournaments.id, { onDelete: 'cascade' }),
+  fromUserId: text("from_user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  toUserId: text("to_user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+
+  status: teamInviteStatusEnum("status").notNull().default('pending'),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  respondedAt: timestamp("responded_at"),
 });
 
 // Submissions table
@@ -272,12 +347,15 @@ export const dropMapSettings = pgTable('drop_map_settings', {
   name: text('name').notNull(),
   description: text('description'),
   mapImageUrl: text('map_image_url'),
-  
+
   createdFrom: uuid('created_from').references((): any => dropMapSettings.id, { onDelete: 'set null' }),
-  
+
   mode: dropMapModeEnum('mode').notNull().default('practice'),
+  teamMode: tournamentTeamModeEnum('team_mode').default('solo'),
   isLocked: boolean('is_locked').notNull().default(false),
-  
+
+  tournamentId: uuid('tournament_id').references((): any => tournaments.id, { onDelete: 'cascade' }),
+
   createdBy: uuid('created_by').references(() => users.id),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -484,6 +562,10 @@ export const tournamentsRelations = relations(tournaments, ({ one, many }) => ({
   }),
   registrations: many(tournamentRegistrations),
   templates: many(territoryTemplates),
+  dropMap: one(dropMapSettings, {
+    fields: [tournaments.dropMapId],
+    references: [dropMapSettings.id],
+  }),
 }));
 
 export const tournamentRegistrationsRelations = relations(tournamentRegistrations, ({ one }) => ({
@@ -493,6 +575,54 @@ export const tournamentRegistrationsRelations = relations(tournamentRegistration
   }),
   user: one(users, {
     fields: [tournamentRegistrations.userId],
+    references: [users.id],
+  }),
+  team: one(tournamentTeams, {
+    fields: [tournamentRegistrations.teamId],
+    references: [tournamentTeams.id],
+  }),
+}));
+
+export const tournamentTeamsRelations = relations(tournamentTeams, ({ one, many }) => ({
+  tournament: one(tournaments, {
+    fields: [tournamentTeams.tournamentId],
+    references: [tournaments.id],
+  }),
+  leader: one(users, {
+    fields: [tournamentTeams.leaderId],
+    references: [users.id],
+  }),
+  members: many(tournamentTeamMembers),
+  invites: many(tournamentTeamInvites),
+  registrations: many(tournamentRegistrations),
+}));
+
+export const tournamentTeamMembersRelations = relations(tournamentTeamMembers, ({ one }) => ({
+  team: one(tournamentTeams, {
+    fields: [tournamentTeamMembers.teamId],
+    references: [tournamentTeams.id],
+  }),
+  user: one(users, {
+    fields: [tournamentTeamMembers.userId],
+    references: [users.id],
+  }),
+}));
+
+export const tournamentTeamInvitesRelations = relations(tournamentTeamInvites, ({ one }) => ({
+  team: one(tournamentTeams, {
+    fields: [tournamentTeamInvites.teamId],
+    references: [tournamentTeams.id],
+  }),
+  tournament: one(tournaments, {
+    fields: [tournamentTeamInvites.tournamentId],
+    references: [tournaments.id],
+  }),
+  fromUser: one(users, {
+    fields: [tournamentTeamInvites.fromUserId],
+    references: [users.id],
+  }),
+  toUser: one(users, {
+    fields: [tournamentTeamInvites.toUserId],
     references: [users.id],
   }),
 }));
@@ -628,6 +758,10 @@ export const dropMapSettingsRelations = relations(dropMapSettings, ({ one, many 
     fields: [dropMapSettings.createdFrom],
     references: [dropMapSettings.id],
   }),
+  tournament: one(tournaments, {
+    fields: [dropMapSettings.tournamentId],
+    references: [tournaments.id],
+  }),
   eligiblePlayers: many(dropMapEligiblePlayers),
   inviteCodes: many(dropMapInviteCodes),
   territories: many(territories),
@@ -755,14 +889,13 @@ export const insertTournamentSchema = z.object({
   prize: z.number().min(0),
   entryFee: z.number().min(0),
   prizeDistribution: z.record(z.string(), z.number().positive()).optional(),
-  registrationStartDate: z.coerce.date(),
-  registrationEndDate: z.coerce.date(),
-  startDate: z.coerce.date(),
-  endDate: z.coerce.date().optional().nullable(),
+  teamMode: z.enum(['solo', 'duo', 'trio', 'squad']).default('solo'),
   maxParticipants: z.number().min(1).optional().nullable(),
   createdBy: z.string().uuid(),
   imageUrl: z.string().optional().nullable(),
   cloudinaryPublicId: z.string().optional().nullable(),
+  autoCreateDiscordChannels: z.boolean().optional().default(false),
+  discordRoleId: z.string().optional().nullable(),
 });
 
 export const updateTournamentSchema = z.object({
@@ -773,11 +906,8 @@ export const updateTournamentSchema = z.object({
   prize: z.number().min(0).optional(),
   entryFee: z.number().min(0).optional(),
   prizeDistribution: z.record(z.string(), z.number().positive()).optional(),
-  registrationStartDate: z.coerce.date().optional(),
-  registrationEndDate: z.coerce.date().optional(),
-  startDate: z.coerce.date().optional(),
-  endDate: z.coerce.date().optional().nullable(),
   maxParticipants: z.number().min(1).optional().nullable(),
+  registrationOpen: z.boolean().optional(),
   status: z.enum(['upcoming', 'registration_open', 'registration_closed', 'in_progress', 'completed', 'cancelled']).optional(),
 });
 
@@ -972,6 +1102,22 @@ export const claimWithInviteSchema = z.object({
   territoryId: z.string().uuid(),
 });
 
+// Team management schemas
+export const createTeamSchema = z.object({
+  tournamentId: z.string().uuid(),
+  name: z.string().min(1).max(100),
+});
+
+export const inviteToTeamSchema = z.object({
+  teamId: z.string().uuid(),
+  userId: z.string().uuid(),
+});
+
+export const respondToInviteSchema = z.object({
+  inviteId: z.string().uuid(),
+  accept: z.boolean(),
+});
+
 // ===== TYPES =====
 
 export type KillHistory = typeof killHistory.$inferSelect & {
@@ -1064,6 +1210,50 @@ export type TournamentWithDetails = Tournament & {
   isUserRegistered?: boolean;
   userRegistration?: TournamentRegistration;
 };
+
+export type TournamentTeam = typeof tournamentTeams.$inferSelect & {
+  leader?: {
+    id: string;
+    username: string;
+    displayName: string;
+  };
+  members?: Array<{
+    id: string;
+    userId: string;
+    status: string;
+    user?: {
+      id: string;
+      username: string;
+      displayName: string;
+    };
+  }>;
+};
+export type InsertTournamentTeam = typeof tournamentTeams.$inferInsert;
+
+export type TournamentTeamMember = typeof tournamentTeamMembers.$inferSelect;
+export type InsertTournamentTeamMember = typeof tournamentTeamMembers.$inferInsert;
+
+export type TournamentTeamInvite = typeof tournamentTeamInvites.$inferSelect & {
+  team?: {
+    id: string;
+    name: string;
+  };
+  fromUser?: {
+    id: string;
+    username: string;
+    displayName: string;
+  };
+  toUser?: {
+    id: string;
+    username: string;
+    displayName: string;
+  };
+  tournament?: {
+    id: string;
+    name: string;
+  };
+};
+export type InsertTournamentTeamInvite = typeof tournamentTeamInvites.$inferInsert;
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = typeof notifications.$inferInsert;

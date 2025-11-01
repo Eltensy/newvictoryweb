@@ -3,65 +3,65 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Trophy, Calendar, Users, Coins, MapPin, Clock, ArrowLeft, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { Trophy, Users, Coins, MapPin, ArrowLeft, CheckCircle2, AlertCircle, Loader2, UserCheck, Shield, Target, ChevronDown, ChevronUp, Crown } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { useParams } from 'wouter';
+import { TournamentTeamManager } from './TournamentTeamManager';
+import { TeamInvitesPopup } from './TeamInvitesPopup';
+import type { TournamentWithDetails } from '@/types/tournament';
 
-interface TournamentDetail {
-  id: string;
-  name: string;
-  description: string | null;
-  mapUrl: string | null;
-  rules: string | null;
-  prize: number;
-  entryFee: number;
-  registrationStartDate: string;
-  registrationEndDate: string;
-  startDate: string;
-  endDate: string | null;
-  maxParticipants: number | null;
-  currentParticipants: number;
-  status: string;
-  imageUrl: string | null;
-  isUserRegistered: boolean;
-  userRegistration?: any;
+interface TournamentDetail extends TournamentWithDetails {
   prizeDistribution?: Record<string, number>;
-  creator: {
+}
+
+interface TeamMember {
+  id: string;
+  userId: string;
+  status: 'pending' | 'accepted';
+  user: {
+    id: string;
     username: string;
     displayName: string;
   };
-  registrations: Array<{
+}
+
+interface TournamentTeam {
+  id: string;
+  name: string;
+  leaderId: string;
+  members: TeamMember[];
+  leader: {
     id: string;
-    userId: string;
-    status: string;
-    teamName: string | null;
-    user: {
-      username: string;
-      displayName: string;
-    };
-  }>;
+    username: string;
+    displayName: string;
+  };
 }
 
 function TournamentDetailPage() {
   const { id } = useParams();
-  const { getAuthToken, user, isLoggedIn } = useAuth();
+  const { getAuthToken, user, isLoggedIn, refreshProfile } = useAuth();
   const { toast } = useToast();
   const [tournament, setTournament] = useState<TournamentDetail | null>(null);
+  const [teams, setTeams] = useState<TournamentTeam[]>([]);
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
+  const [discordLinked, setDiscordLinked] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [registering, setRegistering] = useState(false);
   const [cancelling, setCancelling] = useState(false);
-  const [teamName, setTeamName] = useState('');
   const [showRegistrationDialog, setShowRegistrationDialog] = useState(false);
+  const [showTeamInvitesPopup, setShowTeamInvitesPopup] = useState(false);
 
   useEffect(() => {
     if (id) {
       fetchTournament();
+      fetchTeams();
+      if (isLoggedIn) {
+        checkDiscordStatus();
+      }
     }
-  }, [id]);
+  }, [id, isLoggedIn]);
 
   const fetchTournament = async () => {
     setLoading(true);
@@ -74,8 +74,13 @@ function TournamentDetailPage() {
 
       const response = await fetch(`/api/tournament/${id}`, { headers });
       if (!response.ok) throw new Error('Failed to fetch tournament');
-      
+
       const data = await response.json();
+      console.log('📥 Tournament data received:', {
+        id: data.id,
+        isUserRegistered: data.isUserRegistered,
+        userRegistration: data.userRegistration
+      });
       setTournament(data);
     } catch (error) {
       console.error('Fetch tournament error:', error);
@@ -87,6 +92,45 @@ function TournamentDetailPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const checkDiscordStatus = async () => {
+    try {
+      const response = await fetch(`/api/tournament/${id}/discord-status`, {
+        headers: {
+          'Authorization': `Bearer ${getAuthToken()}`,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setDiscordLinked(data.hasDiscord);
+      }
+    } catch (error) {
+      console.error('Check Discord status error:', error);
+    }
+  };
+
+  const fetchTeams = async () => {
+    try {
+      const response = await fetch(`/api/tournament/${id}/teams`);
+      if (!response.ok) throw new Error('Failed to fetch teams');
+      const data = await response.json();
+      setTeams(data);
+    } catch (error) {
+      console.error('Fetch teams error:', error);
+    }
+  };
+
+  const toggleTeamExpansion = (teamId: string) => {
+    setExpandedTeams(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(teamId)) {
+        newSet.delete(teamId);
+      } else {
+        newSet.add(teamId);
+      }
+      return newSet;
+    });
   };
 
   const handleRegister = async () => {
@@ -109,9 +153,7 @@ function TournamentDetailPage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${getAuthToken()}`,
         },
-        body: JSON.stringify({
-          teamName: teamName || undefined,
-        }),
+        body: JSON.stringify({}),
       });
 
       if (!response.ok) {
@@ -125,8 +167,12 @@ function TournamentDetailPage() {
       });
 
       setShowRegistrationDialog(false);
-      setTeamName('');
-      await fetchTournament();
+      // Обновляем данные турнира, команды и профиль пользователя (для обновления баланса)
+      await Promise.all([
+        fetchTournament(),
+        fetchTeams(),
+        refreshProfile()
+      ]);
     } catch (error: any) {
       toast({
         title: 'Ошибка',
@@ -156,15 +202,22 @@ function TournamentDetailPage() {
       }
 
       const data = await response.json();
-      
+
       toast({
         title: 'Регистрация отменена',
-        description: data.refundAmount > 0 
+        description: data.refundAmount > 0
           ? `Вам возвращено ${data.refundAmount} ₽`
           : 'Ваша регистрация отменена',
       });
 
-      await fetchTournament();
+      // Обновляем данные турнира, команды и профиль пользователя (для обновления баланса)
+      console.log('🔄 Refreshing tournament data after cancellation...');
+      await Promise.all([
+        fetchTournament(),
+        fetchTeams(),
+        refreshProfile()
+      ]);
+      console.log('✅ Tournament data refreshed');
     } catch (error: any) {
       toast({
         title: 'Ошибка',
@@ -179,16 +232,11 @@ function TournamentDetailPage() {
   const canRegister = () => {
     if (!tournament || !isLoggedIn) return false;
     if (tournament.isUserRegistered) return false;
+    if (!tournament.registrationOpen) return false;
     if (tournament.status !== 'registration_open' && tournament.status !== 'upcoming') return false;
-    
-    const now = new Date();
-    const regStart = new Date(tournament.registrationStartDate);
-    const regEnd = new Date(tournament.registrationEndDate);
-    
-    if (now < regStart || now > regEnd) return false;
     if (tournament.maxParticipants && tournament.currentParticipants >= tournament.maxParticipants) return false;
     if (tournament.entryFee > 0 && user && user.balance < tournament.entryFee) return false;
-    
+
     return true;
   };
 
@@ -197,48 +245,30 @@ function TournamentDetailPage() {
     return tournament.status !== 'in_progress' && tournament.status !== 'completed';
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('ru-RU', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const getStatusColor = (status: string) => {
+  const getStatusBadge = (status: string) => {
     switch (status) {
       case 'registration_open':
-        return 'bg-gaming-success text-white';
+        return <Badge className="bg-green-600 text-white border-0">Регистрация открыта</Badge>;
       case 'upcoming':
-        return 'bg-blue-500 text-white';
+        return <Badge className="bg-blue-500 text-white border-0">Скоро</Badge>;
       case 'registration_closed':
-        return 'bg-gaming-warning text-black';
+        return <Badge className="bg-gray-600 text-white border-0">Регистрация закрыта</Badge>;
       case 'in_progress':
-        return 'bg-gaming-secondary text-white';
+        return <Badge className="bg-orange-500 text-white border-0">Идёт</Badge>;
       case 'completed':
-        return 'bg-muted text-muted-foreground';
+        return <Badge className="bg-gray-500 text-white border-0">Завершён</Badge>;
       default:
-        return 'bg-muted text-muted-foreground';
+        return <Badge variant="outline">{status}</Badge>;
     }
   };
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'registration_open':
-        return 'Регистрация открыта';
-      case 'upcoming':
-        return 'Скоро';
-      case 'registration_closed':
-        return 'Регистрация закрыта';
-      case 'in_progress':
-        return 'Идёт';
-      case 'completed':
-        return 'Завершён';
-      default:
-        return status;
+  const getTeamModeText = (mode: string) => {
+    switch (mode) {
+      case 'solo': return 'Соло';
+      case 'duo': return 'Дуо';
+      case 'trio': return 'Трио';
+      case 'squad': return 'Отряд';
+      default: return mode;
     }
   };
 
@@ -254,41 +284,23 @@ function TournamentDetailPage() {
       case 1: return '🥇';
       case 2: return '🥈';
       case 3: return '🥉';
-      default: return '🏅';
-    }
-  };
-
-  const getPlaceColor = (place: number) => {
-    switch(place) {
-      case 1: return 'bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border-yellow-500/30';
-      case 2: return 'bg-gradient-to-r from-gray-400/20 to-gray-500/20 border-gray-400/30';
-      case 3: return 'bg-gradient-to-r from-amber-600/20 to-amber-700/20 border-amber-600/30';
-      default: return 'bg-muted/30 border-muted';
-    }
-  };
-
-  const getPlaceName = (place: number) => {
-    switch(place) {
-      case 1: return 'Первое место';
-      case 2: return 'Второе место';
-      case 3: return 'Третье место';
-      default: return `${place}-е место`;
+      default: return `${place}`;
     }
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
 
   if (!tournament) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
         <div className="container mx-auto px-4 py-8">
-          <Card>
+          <Card className="backdrop-blur-sm bg-background/50">
             <CardContent className="flex flex-col items-center justify-center py-12">
               <AlertCircle className="h-16 w-16 text-destructive mb-4" />
               <p className="text-lg font-medium mb-2">Турнир не найден</p>
@@ -304,11 +316,11 @@ function TournamentDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
       <div className="container mx-auto px-4 py-8">
         {/* Back Button */}
-        <Button 
-          variant="ghost" 
+        <Button
+          variant="ghost"
           className="mb-6"
           onClick={() => window.location.href = '/tournaments'}
         >
@@ -320,29 +332,7 @@ function TournamentDetailPage() {
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
             {/* Tournament Header */}
-            <Card>
-              {tournament.imageUrl && (
-                <div className="relative h-64 overflow-hidden rounded-t-lg">
-                  <img 
-                    src={tournament.imageUrl} 
-                    alt={tournament.name}
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute top-4 right-4">
-                    <Badge className={getStatusColor(tournament.status)}>
-                      {getStatusText(tournament.status)}
-                    </Badge>
-                  </div>
-                  {tournament.isUserRegistered && (
-                    <div className="absolute top-4 left-4">
-                      <Badge className="bg-green-600 text-white">
-                        <CheckCircle2 className="h-3 w-3 mr-1" />
-                        Вы зарегистрированы
-                      </Badge>
-                    </div>
-                  )}
-                </div>
-              )}
+            <Card className="backdrop-blur-md bg-background/80 border-primary/10">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
@@ -355,124 +345,80 @@ function TournamentDetailPage() {
                       </CardDescription>
                     )}
                   </div>
-                  {!tournament.imageUrl && (
-                    <Badge className={getStatusColor(tournament.status)}>
-                      {getStatusText(tournament.status)}
-                    </Badge>
-                  )}
+                  {getStatusBadge(tournament.status)}
                 </div>
               </CardHeader>
             </Card>
 
-            {/* PRIZE DISTRIBUTION CARD - НОВОЕ */}
+            {/* Prize Distribution */}
             {tournament.prizeDistribution && Object.keys(tournament.prizeDistribution).length > 0 && (
-              <Card>
+              <Card className="backdrop-blur-md bg-background/80 border-primary/10">
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="font-gaming flex items-center gap-2">
-                      <Trophy className="h-5 w-5 text-gaming-warning" />
-                      Призовой фонд
-                    </CardTitle>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-gaming-success">
-                        {tournament.prize.toLocaleString()} ₽
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Общий призовой фонд
-                      </div>
-                    </div>
-                  </div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Trophy className="h-5 w-5 text-yellow-500" />
+                    Призовой фонд
+                  </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Prize Places */}
+                <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     {formatPrizeDistribution(tournament.prizeDistribution).map(({ place, amount }) => (
                       <div
                         key={place}
-                        className={`p-4 rounded-lg border-2 transition-all hover:scale-105 ${getPlaceColor(place)}`}
+                        className="backdrop-blur-sm bg-background/50 border border-primary/10 rounded-lg p-4 hover:bg-background/70 transition-all"
                       >
                         <div className="flex items-center gap-3">
-                          <div className="flex-shrink-0 text-3xl">
-                            {getPlaceIcon(place)}
-                          </div>
-                          <div className="flex-1 min-w-0">
+                          <span className="text-3xl">{getPlaceIcon(place)}</span>
+                          <div>
                             <div className="text-sm font-medium text-muted-foreground">
-                              {getPlaceName(place)}
+                              {place} место
                             </div>
-                            <div className="text-xl font-bold text-gaming-success">
+                            <div className="text-xl font-bold text-green-500">
                               {amount.toLocaleString()} ₽
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {((amount / tournament.prize) * 100).toFixed(1)}% от фонда
                             </div>
                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
-
-                  {/* Prize Distribution Bar */}
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium text-muted-foreground">
-                      Визуальное распределение призового фонда
-                    </div>
-                    <div className="flex h-4 rounded-full overflow-hidden bg-muted">
-                      {formatPrizeDistribution(tournament.prizeDistribution).map(({ place, amount }, index) => {
-                        const percentage = (amount / tournament.prize) * 100;
-                        const colors = [
-                          'bg-yellow-500',
-                          'bg-gray-400', 
-                          'bg-amber-600',
-                          'bg-blue-500',
-                          'bg-green-500',
-                          'bg-purple-500',
-                          'bg-pink-500',
-                          'bg-indigo-500'
-                        ];
-                        return (
-                          <div
-                            key={place}
-                            className={`${colors[index % colors.length]} transition-all hover:opacity-80 cursor-pointer`}
-                            style={{ width: `${percentage}%` }}
-                            title={`${place} место: ${amount.toLocaleString()} ₽ (${percentage.toFixed(1)}%)`}
-                          />
-                        );
-                      })}
-                    </div>
-                  </div>
                 </CardContent>
               </Card>
             )}
 
             {/* Tournament Details */}
-            <Card>
+            <Card className="backdrop-blur-md bg-background/80 border-primary/10">
               <CardHeader>
-                <CardTitle className="font-gaming">Информация о турнире</CardTitle>
+                <CardTitle>Информация о турнире</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                    <Trophy className="h-5 w-5 text-gaming-warning" />
+                  <div className="flex items-center gap-3 p-3 backdrop-blur-sm bg-background/50 rounded-lg border border-primary/10">
+                    <div className="w-10 h-10 rounded-full bg-yellow-500/20 backdrop-blur-sm flex items-center justify-center">
+                      <Trophy className="h-5 w-5 text-yellow-500" />
+                    </div>
                     <div>
                       <div className="text-sm text-muted-foreground">Призовой фонд</div>
-                      <div className="font-bold text-gaming-success">
+                      <div className="font-bold text-green-500">
                         {tournament.prize.toLocaleString()} ₽
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                    <Coins className="h-5 w-5 text-gaming-warning" />
+                  <div className="flex items-center gap-3 p-3 backdrop-blur-sm bg-background/50 rounded-lg border border-primary/10">
+                    <div className="w-10 h-10 rounded-full bg-orange-500/20 backdrop-blur-sm flex items-center justify-center">
+                      <Coins className="h-5 w-5 text-orange-500" />
+                    </div>
                     <div>
                       <div className="text-sm text-muted-foreground">Взнос</div>
-                      <div className={`font-bold ${tournament.entryFee === 0 ? 'text-gaming-success' : ''}`}>
+                      <div className="font-bold">
                         {tournament.entryFee === 0 ? 'Бесплатно' : `${tournament.entryFee.toLocaleString()} ₽`}
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                    <Users className="h-5 w-5 text-primary" />
+                  <div className="flex items-center gap-3 p-3 backdrop-blur-sm bg-background/50 rounded-lg border border-primary/10">
+                    <div className="w-10 h-10 rounded-full bg-blue-500/20 backdrop-blur-sm flex items-center justify-center">
+                      <Users className="h-5 w-5 text-blue-500" />
+                    </div>
                     <div>
                       <div className="text-sm text-muted-foreground">Участники</div>
                       <div className="font-bold">
@@ -482,20 +428,20 @@ function TournamentDetailPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                    <Calendar className="h-5 w-5 text-primary" />
+                  <div className="flex items-center gap-3 p-3 backdrop-blur-sm bg-background/50 rounded-lg border border-primary/10">
+                    <div className="w-10 h-10 rounded-full bg-purple-500/20 backdrop-blur-sm flex items-center justify-center">
+                      <UserCheck className="h-5 w-5 text-purple-500" />
+                    </div>
                     <div>
-                      <div className="text-sm text-muted-foreground">Начало турнира</div>
-                      <div className="font-medium text-sm">
-                        {formatDate(tournament.startDate)}
-                      </div>
+                      <div className="text-sm text-muted-foreground">Режим</div>
+                      <div className="font-bold">{getTeamModeText(tournament.teamMode)}</div>
                     </div>
                   </div>
                 </div>
 
                 {tournament.mapUrl && (
-                  <div className="pt-4 border-t">
-                    <a 
+                  <div className="pt-4 border-t border-primary/10">
+                    <a
                       href={tournament.mapUrl}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -511,12 +457,15 @@ function TournamentDetailPage() {
 
             {/* Rules */}
             {tournament.rules && (
-              <Card>
+              <Card className="backdrop-blur-md bg-background/80 border-primary/10">
                 <CardHeader>
-                  <CardTitle className="font-gaming">Правила турнира</CardTitle>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-5 w-5 text-blue-500" />
+                    Правила турнира
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-foreground">
+                  <div className="text-sm whitespace-pre-wrap">
                     {tournament.rules}
                   </div>
                 </CardContent>
@@ -524,45 +473,120 @@ function TournamentDetailPage() {
             )}
 
             {/* Participants */}
-            <Card>
+            <Card className="backdrop-blur-md bg-background/80 border-primary/10">
               <CardHeader>
-                <CardTitle className="font-gaming">
-                  Участники ({tournament.registrations.length})
+                <CardTitle className="flex items-center gap-2">
+                  <Target className="h-5 w-5 text-purple-500" />
+                  {tournament.teamMode === 'solo'
+                    ? `Участники (${tournament.registrations.length})`
+                    : `Команды (${teams.length})`
+                  }
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {tournament.registrations.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">
-                    Пока нет зарегистрированных участников
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {tournament.registrations.map((reg, index) => (
-                      <div 
-                        key={reg.id}
-                        className="flex items-center justify-between p-3 bg-muted/30 rounded-lg"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
+                {tournament.teamMode === 'solo' ? (
+                  // Solo mode - show individual participants
+                  tournament.registrations.length === 0 ? (
+                    <p className="text-center text-muted-foreground py-8">
+                      Пока нет зарегистрированных участников
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {tournament.registrations.map((reg, index) => (
+                        <div
+                          key={reg.id}
+                          className="flex items-center gap-3 p-3 backdrop-blur-sm bg-background/50 border border-primary/10 rounded-lg hover:bg-background/70 transition-colors"
+                        >
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 backdrop-blur-sm flex items-center justify-center font-bold text-primary text-sm">
                             {index + 1}
                           </div>
-                          <div>
-                            <div className="font-medium">{reg.user.displayName}</div>
-                            {reg.teamName && (
-                              <div className="text-sm text-muted-foreground">
-                                Команда: {reg.teamName}
+                          <div className="font-medium">{reg.user.displayName}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  // Team mode - show teams with expandable member lists
+                  teams.length === 0 ? (
+                    <p className="text-center text-muted-foreground py-8">
+                      Пока нет зарегистрированных команд
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {teams.map((team, index) => {
+                        const isExpanded = expandedTeams.has(team.id);
+                        return (
+                          <div
+                            key={team.id}
+                            className="backdrop-blur-sm bg-background/50 border border-primary/10 rounded-lg overflow-hidden"
+                          >
+                            {/* Team Header - Always visible */}
+                            <div
+                              className="flex items-center justify-between p-3 cursor-pointer hover:bg-background/70 transition-colors"
+                              onClick={() => toggleTeamExpansion(team.id)}
+                            >
+                              <div className="flex items-center gap-3 flex-1">
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 backdrop-blur-sm flex items-center justify-center font-bold text-primary text-sm">
+                                  {index + 1}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Crown className="h-4 w-4 text-yellow-500" />
+                                  <div>
+                                    <div className="font-medium">{team.leader.displayName}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {team.members.length} {team.members.length === 1 ? 'участник' : 'участника'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline" className="text-xs">
+                                  {team.name}
+                                </Badge>
+                                {isExpanded ? (
+                                  <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                                ) : (
+                                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Team Members - Expandable */}
+                            {isExpanded && team.members.length > 0 && (
+                              <div className="border-t border-primary/10 bg-background/30 p-3">
+                                <div className="text-xs font-medium text-muted-foreground mb-2 px-2">
+                                  Состав команды:
+                                </div>
+                                <div className="space-y-1">
+                                  {team.members.map((member) => (
+                                    <div
+                                      key={member.id}
+                                      className="flex items-center gap-2 p-2 rounded hover:bg-background/50 transition-colors"
+                                    >
+                                      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500/20 to-cyan-500/20 backdrop-blur-sm flex items-center justify-center">
+                                        <Users className="h-3 w-3 text-blue-500" />
+                                      </div>
+                                      <span className="text-sm">
+                                        {member.user.displayName}
+                                        {member.status === 'pending' && (
+                                          <span className="text-xs text-muted-foreground ml-2">
+                                            (Ожидает подтверждения)
+                                          </span>
+                                        )}
+                                      </span>
+                                      {member.userId === team.leaderId && (
+                                        <Crown className="h-3 w-3 text-yellow-500 ml-auto" />
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </div>
-                        </div>
-                        {reg.status === 'paid' && (
-                          <Badge variant="outline" className="text-gaming-success border-gaming-success">
-                            Оплачено
-                          </Badge>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )
                 )}
               </CardContent>
             </Card>
@@ -570,34 +594,56 @@ function TournamentDetailPage() {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            {/* Discord Warning */}
+            {isLoggedIn && discordLinked === false && (
+              <Card className="backdrop-blur-md bg-[#5865F2]/10 border-[#5865F2]/30">
+                <CardContent className="pt-6">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="h-5 w-5 text-[#5865F2] flex-shrink-0 mt-0.5" />
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-[#5865F2]">
+                        Discord не привязан
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Для участия в турнире необходимо привязать Discord аккаунт.
+                        После регистрации вам будет автоматически выдана роль турнира.
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full mt-2 border-[#5865F2]/50 text-[#5865F2] hover:bg-[#5865F2]/10"
+                        onClick={() => window.location.href = '/profile'}
+                      >
+                        Привязать Discord
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Registration Card */}
-            <Card>
+            <Card className="backdrop-blur-md bg-background/80 border-primary/10">
               <CardHeader>
-                <CardTitle className="font-gaming">Регистрация</CardTitle>
+                <CardTitle>Регистрация</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Начало регистрации:</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm">{formatDate(tournament.registrationStartDate)}</span>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Конец регистрации:</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm">{formatDate(tournament.registrationEndDate)}</span>
+                  <div className="pt-2">
+                    {tournament.registrationOpen ? (
+                      <Badge className="bg-green-600 text-white w-full justify-center border-0">
+                        Регистрация открыта
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="w-full justify-center">
+                        Регистрация закрыта
+                      </Badge>
+                    )}
                   </div>
                 </div>
 
                 {isLoggedIn && user && tournament.entryFee > 0 && (
-                  <div className="pt-4 border-t">
+                  <div className="pt-4 border-t border-primary/10">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Ваш баланс:</span>
                       <span className="font-bold">{user.balance.toLocaleString()} ₽</span>
@@ -611,8 +657,8 @@ function TournamentDetailPage() {
                 )}
 
                 {tournament.isUserRegistered ? (
-                  <div className="space-y-3 pt-4 border-t">
-                    <div className="flex items-center gap-2 text-gaming-success">
+                  <div className="space-y-3 pt-4 border-t border-primary/10">
+                    <div className="flex items-center gap-2 text-green-500">
                       <CheckCircle2 className="h-5 w-5" />
                       <span className="font-medium">Вы зарегистрированы</span>
                     </div>
@@ -626,39 +672,80 @@ function TournamentDetailPage() {
                         {cancelling ? 'Отмена...' : 'Отменить регистрацию'}
                       </Button>
                     )}
+                    {/* Map button for registered users */}
+                    {tournament.dropMapId && (
+                      <Button
+                        className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white border-0 shadow-lg"
+                        onClick={() => window.location.href = `/dropmap/${tournament.dropMapId}`}
+                      >
+                        <MapPin className="h-4 w-4 mr-2" />
+                        Открыть карту турнира
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <Dialog open={showRegistrationDialog} onOpenChange={setShowRegistrationDialog}>
                     <DialogTrigger asChild>
-                      <Button 
-                        className="w-full"
+                      <Button
+                        className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white border-0"
                         disabled={!canRegister()}
                       >
                         {!isLoggedIn ? 'Войдите для регистрации' : 'Зарегистрироваться'}
                       </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="sm:max-w-md backdrop-blur-md bg-background/95">
                       <DialogHeader>
-                        <DialogTitle>Регистрация на турнир</DialogTitle>
-                        <DialogDescription>
-                          {tournament.entryFee > 0 
-                            ? `С вашего баланса будет списано ${tournament.entryFee} ₽`
-                            : 'Заполните форму для регистрации'
-                          }
+                        <DialogTitle className="text-center text-xl">
+                          Регистрация на турнир
+                        </DialogTitle>
+                        <DialogDescription className="text-center">
+                          Подтвердите участие в турнире
                         </DialogDescription>
                       </DialogHeader>
-                      <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="teamName">Название команды (необязательно)</Label>
-                          <Input
-                            id="teamName"
-                            placeholder="Введите название команды"
-                            value={teamName}
-                            onChange={(e) => setTeamName(e.target.value)}
-                            maxLength={100}
-                          />
+
+                      <div className="space-y-4 py-6">
+                        <div className="text-center space-y-2">
+                          <h3 className="font-semibold text-lg">{tournament.name}</h3>
+                          {tournament.teamMode !== 'solo' && (
+                            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                              <Users className="w-4 h-4" />
+                              <span className="capitalize">{getTeamModeText(tournament.teamMode)}</span>
+                            </div>
+                          )}
                         </div>
+
+                        {tournament.entryFee > 0 ? (
+                          <div className="backdrop-blur-sm bg-muted/30 rounded-lg p-4 space-y-3 border">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-muted-foreground">Взнос за участие:</span>
+                              <span className="font-bold text-lg flex items-center gap-1">
+                                <Coins className="w-5 h-5 text-yellow-500" />
+                                {tournament.entryFee} ₽
+                              </span>
+                            </div>
+                            {user && (
+                              <div className="pt-3 border-t border-border/50">
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-muted-foreground">Ваш баланс:</span>
+                                  <span className="font-semibold">{user.balance.toLocaleString()} ₽</span>
+                                </div>
+                                {user.balance < tournament.entryFee && (
+                                  <p className="text-xs text-destructive mt-2 text-center">
+                                    ⚠️ Недостаточно средств
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 text-center backdrop-blur-sm">
+                            <p className="text-sm text-green-600 font-medium">
+                              ✓ Участие бесплатное
+                            </p>
+                          </div>
+                        )}
                       </div>
+
                       <div className="flex gap-3">
                         <Button
                           variant="outline"
@@ -669,10 +756,17 @@ function TournamentDetailPage() {
                         </Button>
                         <Button
                           onClick={handleRegister}
-                          disabled={registering}
-                          className="flex-1"
+                          disabled={registering || (tournament.entryFee > 0 && user ? user.balance < tournament.entryFee : false)}
+                          className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
                         >
-                          {registering ? 'Регистрация...' : 'Подтвердить'}
+                          {registering ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Регистрация...
+                            </>
+                          ) : (
+                            'Подтвердить'
+                          )}
                         </Button>
                       </div>
                     </DialogContent>
@@ -681,30 +775,26 @@ function TournamentDetailPage() {
               </CardContent>
             </Card>
 
-            {/* Organizer Info */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="font-gaming text-sm">Организатор</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-2">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <span className="font-bold text-primary">
-                      {tournament.creator.displayName.charAt(0).toUpperCase()}
-                    </span>
-                  </div>
-                  <div>
-                    <div className="font-medium">{tournament.creator.displayName}</div>
-                    <div className="text-sm text-muted-foreground">
-                      @{tournament.creator.username}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            {/* Team Management */}
+            {tournament.teamMode !== 'solo' && isLoggedIn && tournament.isUserRegistered && (
+              <TournamentTeamManager
+                tournament={tournament}
+                onTeamCreated={() => {
+                  fetchTournament();
+                  fetchTeams();
+                }}
+              />
+            )}
           </div>
         </div>
       </div>
+
+      {/* Team Invites Popup */}
+      <TeamInvitesPopup
+        open={showTeamInvitesPopup}
+        onOpenChange={setShowTeamInvitesPopup}
+        onInviteResponded={() => fetchTournament()}
+      />
     </div>
   );
 }

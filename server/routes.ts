@@ -5,14 +5,27 @@ import path from "path";
 import crypto from 'crypto';
 import { fileTypeFromBuffer } from "file-type";
 import { storage } from "./storage";
+import { territoryStorage } from "./territory-storage";
 import { promises as fs } from 'fs';
 import { cloudStorage } from './fileStorage.js';
 import { discordPremiumService } from './discordPremiumService';
+import { discordTournamentService } from './discordTournamentService';
+import { db } from "./db";
+import {
+  users,
+  tournaments,
+  tournamentRegistrations,
+  tournamentTeams,
+  tournamentTeamMembers,
+  tournamentTeamInvites,
+  balanceTransactions
+} from "@shared/schema";
+import { eq, and, sql } from "drizzle-orm";
 import dotenv from "dotenv";
 dotenv.config();
-import { 
-  insertSubmissionSchema, 
-  reviewSubmissionSchema, 
+import {
+  insertSubmissionSchema,
+  reviewSubmissionSchema,
   updateUserBalanceSchema,
   processWithdrawalSchema,
   createWithdrawalRequestSchema,
@@ -569,12 +582,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      
+
       const { epicGamesId, ...safeUser } = user;
       res.json(safeUser);
     } catch (error) {
       console.error('Get user error:', error);
       res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/users/search", async (req, res) => {
+    try {
+      const authResult = await authenticateUser(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const { query } = req.query;
+      if (query === undefined || query === null || typeof query !== 'string') {
+        return res.status(400).json({ error: "Query parameter is required" });
+      }
+
+      const searchTerm = query.toLowerCase();
+
+      // If query is empty, return all users (limited to 100)
+      let matchingUsers;
+      if (searchTerm.trim() === '') {
+        matchingUsers = await db
+          .select({
+            id: users.id,
+            username: users.username,
+            displayName: users.displayName,
+          })
+          .from(users)
+          .limit(100);
+      } else {
+        // Search by username or displayName
+        matchingUsers = await db
+          .select({
+            id: users.id,
+            username: users.username,
+            displayName: users.displayName,
+          })
+          .from(users)
+          .where(
+            sql`LOWER(${users.username}) LIKE ${`%${searchTerm}%`} OR LOWER(${users.displayName}) LIKE ${`%${searchTerm}%`}`
+          )
+          .limit(100);
+      }
+
+      res.json(matchingUsers);
+    } catch (error) {
+      console.error('User search error:', error);
+      res.status(500).json({ error: "Failed to search users" });
     }
   });
 
@@ -1733,6 +1793,11 @@ app.get("/api/tournament/:id", async (req, res) => {
             tournament.id,
             authResult.userId
           );
+          console.log(`🔍 Checking registration for user ${authResult.userId} in tournament ${tournament.id}:`, {
+            found: !!registration,
+            registrationId: registration?.id,
+            teamId: registration?.teamId
+          });
           return res.json({
             ...tournament,
             isUserRegistered: !!registration,
@@ -1748,6 +1813,119 @@ app.get("/api/tournament/:id", async (req, res) => {
   } catch (error) {
     console.error('Get tournament error:', error);
     res.status(500).json({ error: "Failed to fetch tournament" });
+  }
+});
+
+// Get tournament teams with members
+app.get("/api/tournament/:id/teams", async (req, res) => {
+  try {
+    const tournamentId = req.params.id;
+
+    // Get all teams for this tournament with their members
+    const teams = await db
+      .select({
+        id: tournamentTeams.id,
+        name: tournamentTeams.name,
+        leaderId: tournamentTeams.leaderId,
+        status: tournamentTeams.status,
+      })
+      .from(tournamentTeams)
+      .where(eq(tournamentTeams.tournamentId, tournamentId));
+
+    // For each team, get the leader info and members
+    const teamsWithMembers = await Promise.all(
+      teams.map(async (team) => {
+        // Get leader info
+        const [leader] = await db
+          .select({
+            id: users.id,
+            username: users.username,
+            displayName: users.displayName,
+          })
+          .from(users)
+          .where(eq(users.id, team.leaderId));
+
+        // Get all team members (both accepted and pending)
+        const members = await db
+          .select({
+            id: tournamentTeamMembers.id,
+            userId: tournamentTeamMembers.userId,
+            status: tournamentTeamMembers.status,
+            user: {
+              id: users.id,
+              username: users.username,
+              displayName: users.displayName,
+            },
+          })
+          .from(tournamentTeamMembers)
+          .innerJoin(users, eq(tournamentTeamMembers.userId, users.id))
+          .where(eq(tournamentTeamMembers.teamId, team.id));
+
+        return {
+          id: team.id,
+          name: team.name,
+          leaderId: team.leaderId,
+          leader,
+          members,
+        };
+      })
+    );
+
+    // Filter out teams with no members (edge case after deletion)
+    const activeTeams = teamsWithMembers.filter(team => team.members.length > 0);
+
+    console.log(`📊 Tournament ${tournamentId}: Total teams: ${teamsWithMembers.length}, Active teams (with members): ${activeTeams.length}`);
+
+    res.json(activeTeams);
+  } catch (error) {
+    console.error('Get tournament teams error:', error);
+    res.status(500).json({ error: "Failed to fetch teams" });
+  }
+});
+
+// Check Discord status for tournament participant
+app.get("/api/tournament/:id/discord-status", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { user } = authResult;
+    const tournamentId = req.params.id;
+
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    // Check if user has Discord linked
+    const hasDiscord = !!user.discordId;
+
+    // Check if user has tournament role (only if Discord is linked and tournament has role)
+    let hasRole = false;
+    if (hasDiscord && user.discordId && tournament.discordRoleId) {
+      try {
+        hasRole = await discordTournamentService.hasRole(
+          user.discordId,
+          tournament.discordRoleId
+        );
+      } catch (error) {
+        console.error('Failed to check Discord role:', error);
+        // Don't fail the request if role check fails
+      }
+    }
+
+    res.json({
+      hasDiscord,
+      hasRole,
+      discordUsername: user.discordUsername || null,
+      tournamentHasDiscordIntegration: !!tournament.discordRoleId,
+    });
+
+  } catch (error) {
+    console.error('Discord status check error:', error);
+    res.status(500).json({ error: "Failed to check Discord status" });
   }
 });
 
@@ -1780,12 +1958,8 @@ app.post("/api/tournament/:id/register", async (req, res) => {
     }
 
     // Check if registration is open
-    const now = new Date();
-    if (now < new Date(tournament.registrationStartDate)) {
-      return res.status(400).json({ error: "Registration has not started yet" });
-    }
-    if (now > new Date(tournament.registrationEndDate)) {
-      return res.status(400).json({ error: "Registration has closed" });
+    if (!tournament.registrationOpen) {
+      return res.status(400).json({ error: "Registration is closed" });
     }
     if (tournament.status !== 'registration_open' && tournament.status !== 'upcoming') {
       return res.status(400).json({ error: "Registration is not available" });
@@ -1832,15 +2006,65 @@ app.post("/api/tournament/:id/register", async (req, res) => {
       additionalInfo: additionalInfo || null,
     });
 
+    // For team-based tournaments, automatically create a team with the user as captain
+    if (tournament.teamMode !== 'solo') {
+      console.log(`🔧 Tournament teamMode: ${tournament.teamMode}, creating team for user ${userId}`);
+      try {
+        // Generate a unique team name
+        const generatedTeamName = teamName || `Team ${crypto.randomBytes(4).toString('hex')}`;
+        console.log(`🔧 Generated team name: ${generatedTeamName}`);
+
+        // Create the team
+        const [team] = await db.insert(tournamentTeams).values({
+          tournamentId,
+          name: generatedTeamName,
+          leaderId: userId,
+          status: 'registered',
+        }).returning();
+
+        console.log(`🔧 Team created with ID: ${team.id}`);
+
+        // Add the captain as the first member
+        await db.insert(tournamentTeamMembers).values({
+          teamId: team.id,
+          userId,
+          status: 'accepted',
+          joinedAt: new Date(),
+        });
+
+        console.log(`✅ Team ${team.id} created for user ${userId} in tournament ${tournamentId}`);
+      } catch (teamError) {
+        console.error('❌ Failed to create team:', teamError);
+        // Don't fail registration if team creation fails
+      }
+    } else {
+      console.log(`ℹ️ Tournament is solo mode, skipping team creation`);
+    }
+
     // Increment participant count
     await storage.incrementTournamentParticipants(tournamentId);
 
-    // Update tournament status if needed
+    // Auto-close registration if max participants reached
     const updatedTournament = await storage.getTournament(tournamentId);
-    if (updatedTournament && 
-        updatedTournament.status === 'upcoming' && 
-        now >= new Date(tournament.registrationStartDate)) {
-      await storage.updateTournament(tournamentId, { status: 'registration_open' });
+    if (updatedTournament &&
+        updatedTournament.maxParticipants &&
+        updatedTournament.currentParticipants >= updatedTournament.maxParticipants) {
+      await storage.updateTournament(tournamentId, { registrationOpen: false });
+      console.log(`🔒 Registration auto-closed for tournament ${tournamentId} (max participants reached)`);
+    }
+
+    // Discord Integration: Assign tournament role if Discord is linked
+    if (user.discordId && tournament.discordRoleId) {
+      try {
+        await discordTournamentService.assignTournamentRole(
+          user.discordId,
+          tournament.discordRoleId
+        );
+        console.log(`✅ Discord role ${tournament.discordRoleId} assigned to user ${userId}`);
+      } catch (discordError) {
+        console.error('Failed to assign Discord role:', discordError);
+        // Don't fail registration if Discord role assignment fails
+      }
     }
 
     console.log(`✅ User ${userId} registered for tournament ${tournamentId}`);
@@ -1885,6 +2109,63 @@ app.delete("/api/tournament/:id/register", async (req, res) => {
       return res.status(400).json({ error: "Cannot cancel registration for ongoing or completed tournament" });
     }
 
+    // Always check if user is a team leader in this tournament
+    const userTeams = await db
+      .select()
+      .from(tournamentTeams)
+      .where(and(
+        eq(tournamentTeams.tournamentId, tournamentId),
+        eq(tournamentTeams.leaderId, userId)
+      ));
+
+    console.log(`🔍 Found ${userTeams.length} team(s) where user ${userId} is leader:`, userTeams.map(t => t.id));
+
+    if (userTeams.length > 0) {
+      // User is a team leader - delete all their teams (should be only 1)
+      for (const team of userTeams) {
+        console.log(`🗑️  Deleting team ${team.id} and all its members (cascade)...`);
+        await db
+          .delete(tournamentTeams)
+          .where(eq(tournamentTeams.id, team.id));
+        console.log(`✅ Team ${team.id} deleted successfully`);
+      }
+    } else {
+      // User is not a leader, check if they're a team member
+      const teamMemberships = await db
+        .select()
+        .from(tournamentTeamMembers)
+        .innerJoin(tournamentTeams, eq(tournamentTeamMembers.teamId, tournamentTeams.id))
+        .where(and(
+          eq(tournamentTeams.tournamentId, tournamentId),
+          eq(tournamentTeamMembers.userId, userId)
+        ));
+
+      console.log(`🔍 Found ${teamMemberships.length} team membership(s) for user ${userId}`);
+
+      if (teamMemberships.length > 0) {
+        // Remove user from all teams they're a member of
+        for (const membership of teamMemberships) {
+          await db
+            .delete(tournamentTeamMembers)
+            .where(and(
+              eq(tournamentTeamMembers.teamId, membership.tournament_teams.id),
+              eq(tournamentTeamMembers.userId, userId)
+            ));
+          console.log(`🗑️  Removed user ${userId} from team ${membership.tournament_teams.id}`);
+        }
+      }
+    }
+
+    // Verify team was actually deleted
+    const remainingTeams = await db
+      .select()
+      .from(tournamentTeams)
+      .where(and(
+        eq(tournamentTeams.tournamentId, tournamentId),
+        eq(tournamentTeams.leaderId, userId)
+      ));
+    console.log(`🔍 After deletion, found ${remainingTeams.length} team(s) for user ${userId}`);
+
     // Refund entry fee if paid
     if (registration.paidAmount && registration.paidAmount > 0) {
       await storage.updateUserBalance(
@@ -1898,7 +2179,9 @@ app.delete("/api/tournament/:id/register", async (req, res) => {
     }
 
     // Delete registration
+    console.log(`🗑️  Attempting to delete registration ${registration.id} for user ${userId}`);
     await storage.cancelTournamentRegistration(registration.id);
+    console.log(`✅ Registration ${registration.id} deleted from database`);
 
     // Decrement participant count
     await storage.decrementTournamentParticipants(tournamentId);
@@ -1946,6 +2229,792 @@ app.get("/api/user/:id/tournaments", async (req, res) => {
   } catch (error) {
     console.error('Get user tournaments error:', error);
     res.status(500).json({ error: "Failed to fetch user tournaments" });
+  }
+});
+
+// ===== TOURNAMENT TEAM ROUTES =====
+
+// Create a team for a tournament
+app.post("/api/tournament/:tournamentId/team", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { tournamentId } = req.params;
+    const { name } = req.body;
+
+    if (!name || name.trim().length === 0) {
+      return res.status(400).json({ error: "Team name is required" });
+    }
+
+    // Verify tournament exists and is team-based
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    if (tournament.teamMode === 'solo') {
+      return res.status(400).json({ error: "This tournament is solo mode, teams are not allowed" });
+    }
+
+    // Check if user is already registered for this tournament
+    const existingRegistration = await db
+      .select()
+      .from(tournamentRegistrations)
+      .where(
+        and(
+          eq(tournamentRegistrations.tournamentId, tournamentId),
+          eq(tournamentRegistrations.userId, authResult.userId)
+        )
+      );
+
+    if (existingRegistration.length > 0) {
+      return res.status(400).json({ error: "You are already registered for this tournament" });
+    }
+
+    // Check if user is already in a team for this tournament
+    const existingTeamMembership = await db
+      .select({ teamId: tournamentTeams.id })
+      .from(tournamentTeams)
+      .innerJoin(
+        tournamentTeamMembers,
+        eq(tournamentTeamMembers.teamId, tournamentTeams.id)
+      )
+      .where(
+        and(
+          eq(tournamentTeams.tournamentId, tournamentId),
+          eq(tournamentTeamMembers.userId, authResult.userId),
+          eq(tournamentTeamMembers.status, 'accepted')
+        )
+      );
+
+    if (existingTeamMembership.length > 0) {
+      return res.status(400).json({ error: "You are already in a team for this tournament" });
+    }
+
+    // Create the team
+    const [newTeam] = await db
+      .insert(tournamentTeams)
+      .values({
+        tournamentId,
+        name: name.trim(),
+        leaderId: authResult.userId,
+        status: 'registered',
+      })
+      .returning();
+
+    // Add leader as a team member
+    await db.insert(tournamentTeamMembers).values({
+      teamId: newTeam.id,
+      userId: authResult.userId,
+      status: 'accepted',
+    });
+
+    res.json(newTeam);
+  } catch (error) {
+    console.error('Create team error:', error);
+    res.status(500).json({ error: "Failed to create team" });
+  }
+});
+
+// Get teams for a tournament
+app.get("/api/tournament/:tournamentId/teams", async (req, res) => {
+  try {
+    const { tournamentId } = req.params;
+
+    const teams = await db
+      .select({
+        id: tournamentTeams.id,
+        name: tournamentTeams.name,
+        leaderId: tournamentTeams.leaderId,
+        status: tournamentTeams.status,
+        createdAt: tournamentTeams.createdAt,
+        leader: {
+          id: users.id,
+          username: users.username,
+          displayName: users.displayName,
+        },
+      })
+      .from(tournamentTeams)
+      .innerJoin(users, eq(users.id, tournamentTeams.leaderId))
+      .where(eq(tournamentTeams.tournamentId, tournamentId));
+
+    // Get members for each team
+    const teamsWithMembers = await Promise.all(
+      teams.map(async (team) => {
+        const members = await db
+          .select({
+            id: tournamentTeamMembers.id,
+            userId: tournamentTeamMembers.userId,
+            status: tournamentTeamMembers.status,
+            joinedAt: tournamentTeamMembers.joinedAt,
+            user: {
+              id: users.id,
+              username: users.username,
+              displayName: users.displayName,
+            },
+          })
+          .from(tournamentTeamMembers)
+          .innerJoin(users, eq(users.id, tournamentTeamMembers.userId))
+          .where(eq(tournamentTeamMembers.teamId, team.id));
+
+        return {
+          ...team,
+          members,
+          memberCount: members.filter(m => m.status === 'accepted').length,
+        };
+      })
+    );
+
+    res.json(teamsWithMembers);
+  } catch (error) {
+    console.error('Get teams error:', error);
+    res.status(500).json({ error: "Failed to fetch teams" });
+  }
+});
+
+// Get user's team for a tournament
+app.get("/api/tournament/:tournamentId/my-team", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { tournamentId } = req.params;
+    console.log(`🔍 Loading team for user ${authResult.userId} in tournament ${tournamentId}`);
+
+    const teamMembership = await db
+      .select({
+        teamId: tournamentTeams.id,
+        teamName: tournamentTeams.name,
+        leaderId: tournamentTeams.leaderId,
+        status: tournamentTeams.status,
+        memberStatus: tournamentTeamMembers.status,
+      })
+      .from(tournamentTeamMembers)
+      .innerJoin(tournamentTeams, eq(tournamentTeams.id, tournamentTeamMembers.teamId))
+      .where(
+        and(
+          eq(tournamentTeams.tournamentId, tournamentId),
+          eq(tournamentTeamMembers.userId, authResult.userId)
+        )
+      );
+
+    console.log(`🔍 Found ${teamMembership.length} team membership(s)`);
+
+    if (teamMembership.length === 0) {
+      console.log(`ℹ️ No team found for user ${authResult.userId}`);
+      return res.json(null);
+    }
+
+    const team = teamMembership[0];
+
+    // Get all team members
+    const members = await db
+      .select({
+        id: tournamentTeamMembers.id,
+        userId: tournamentTeamMembers.userId,
+        status: tournamentTeamMembers.status,
+        joinedAt: tournamentTeamMembers.joinedAt,
+        user: {
+          id: users.id,
+          username: users.username,
+          displayName: users.displayName,
+        },
+      })
+      .from(tournamentTeamMembers)
+      .innerJoin(users, eq(users.id, tournamentTeamMembers.userId))
+      .where(eq(tournamentTeamMembers.teamId, team.teamId));
+
+    res.json({
+      id: team.teamId,
+      name: team.teamName,
+      leaderId: team.leaderId,
+      status: team.status,
+      members,
+      isLeader: team.leaderId === authResult.userId,
+    });
+  } catch (error) {
+    console.error('Get my team error:', error);
+    res.status(500).json({ error: "Failed to fetch your team" });
+  }
+});
+
+// Invite user to team
+app.post("/api/tournament/team/:teamId/invite", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { teamId } = req.params;
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    // Verify team exists
+    const [team] = await db
+      .select()
+      .from(tournamentTeams)
+      .where(eq(tournamentTeams.id, teamId));
+
+    if (!team) {
+      return res.status(404).json({ error: "Team not found" });
+    }
+
+    // Only team leader can invite
+    if (team.leaderId !== authResult.userId) {
+      return res.status(403).json({ error: "Only team leader can invite members" });
+    }
+
+    // Get tournament to check team size limits
+    const tournament = await storage.getTournament(team.tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    const maxTeamSize = { solo: 1, duo: 2, trio: 3, squad: 4 }[tournament.teamMode];
+
+    // Check current team size (including pending invites)
+    const currentMembers = await db
+      .select()
+      .from(tournamentTeamMembers)
+      .where(eq(tournamentTeamMembers.teamId, teamId));
+
+    if (currentMembers.length >= maxTeamSize) {
+      return res.status(400).json({ error: `Team is full (max ${maxTeamSize} members)` });
+    }
+
+    // Check if user is already in a team or invited
+    const existingMembership = await db
+      .select()
+      .from(tournamentTeamMembers)
+      .innerJoin(tournamentTeams, eq(tournamentTeams.id, tournamentTeamMembers.teamId))
+      .where(
+        and(
+          eq(tournamentTeams.tournamentId, team.tournamentId),
+          eq(tournamentTeamMembers.userId, userId)
+        )
+      );
+
+    if (existingMembership.length > 0) {
+      return res.status(400).json({ error: "User is already in a team for this tournament" });
+    }
+
+    // Check for existing pending invite
+    const existingInvite = await db
+      .select()
+      .from(tournamentTeamInvites)
+      .where(
+        and(
+          eq(tournamentTeamInvites.teamId, teamId),
+          eq(tournamentTeamInvites.toUserId, userId),
+          eq(tournamentTeamInvites.status, 'pending')
+        )
+      );
+
+    if (existingInvite.length > 0) {
+      return res.status(400).json({ error: "Приглашение уже отправлено этому игроку" });
+    }
+
+    // Delete old non-pending invites for this user and team (both accepted and declined)
+    await db
+      .delete(tournamentTeamInvites)
+      .where(
+        and(
+          eq(tournamentTeamInvites.teamId, teamId),
+          eq(tournamentTeamInvites.toUserId, userId),
+          sql`${tournamentTeamInvites.status} != 'pending'`
+        )
+      );
+
+    // Create invite
+    const [invite] = await db
+      .insert(tournamentTeamInvites)
+      .values({
+        teamId,
+        tournamentId: team.tournamentId,
+        fromUserId: authResult.userId,
+        toUserId: userId,
+        status: 'pending',
+      })
+      .returning();
+
+    // Create a pending team member slot (reserves the slot immediately)
+    await db
+      .insert(tournamentTeamMembers)
+      .values({
+        teamId,
+        userId,
+        status: 'pending', // Shows as "Ожидает подтверждения"
+      });
+
+    console.log(`✉️  Created pending team member slot for user ${userId} in team ${teamId}`);
+
+    res.json(invite);
+  } catch (error) {
+    console.error('Invite to team error:', error);
+    res.status(500).json({ error: "Failed to send invite" });
+  }
+});
+
+// Get user's pending invites
+app.get("/api/tournament/team/invites", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const invitesData = await db
+      .select({
+        id: tournamentTeamInvites.id,
+        teamId: tournamentTeamInvites.teamId,
+        tournamentId: tournamentTeamInvites.tournamentId,
+        fromUserId: tournamentTeamInvites.fromUserId,
+        status: tournamentTeamInvites.status,
+        createdAt: tournamentTeamInvites.createdAt,
+        teamName: tournamentTeams.name,
+        tournamentName: tournaments.name,
+        tournamentTeamMode: tournaments.teamMode,
+      })
+      .from(tournamentTeamInvites)
+      .innerJoin(tournamentTeams, eq(tournamentTeams.id, tournamentTeamInvites.teamId))
+      .innerJoin(tournaments, eq(tournaments.id, tournamentTeamInvites.tournamentId))
+      .where(
+        and(
+          eq(tournamentTeamInvites.toUserId, authResult.userId),
+          eq(tournamentTeamInvites.status, 'pending')
+        )
+      );
+
+    // Fetch user details for each invite
+    const invites = await Promise.all(
+      invitesData.map(async (invite) => {
+        const [fromUser] = await db
+          .select({
+            id: users.id,
+            username: users.username,
+            displayName: users.displayName,
+          })
+          .from(users)
+          .where(eq(users.id, invite.fromUserId));
+
+        return {
+          id: invite.id,
+          teamId: invite.teamId,
+          tournamentId: invite.tournamentId,
+          status: invite.status,
+          createdAt: invite.createdAt,
+          team: {
+            id: invite.teamId,
+            name: invite.teamName,
+          },
+          fromUser,
+          tournament: {
+            id: invite.tournamentId,
+            name: invite.tournamentName,
+            teamMode: invite.tournamentTeamMode,
+          },
+        };
+      })
+    );
+
+    res.json(invites);
+  } catch (error) {
+    console.error('Get invites error:', error);
+    res.status(500).json({ error: "Failed to fetch invites" });
+  }
+});
+
+// Respond to team invite (accept/decline)
+app.post("/api/tournament/team/invite/:inviteId/respond", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { inviteId } = req.params;
+    const { accept } = req.body;
+
+    if (typeof accept !== 'boolean') {
+      return res.status(400).json({ error: "Accept parameter must be a boolean" });
+    }
+
+    // Get invite
+    const [invite] = await db
+      .select()
+      .from(tournamentTeamInvites)
+      .where(eq(tournamentTeamInvites.id, inviteId));
+
+    if (!invite) {
+      return res.status(404).json({ error: "Invite not found" });
+    }
+
+    if (invite.toUserId !== authResult.userId) {
+      return res.status(403).json({ error: "This invite is not for you" });
+    }
+
+    if (invite.status !== 'pending') {
+      return res.status(400).json({ error: "This invite has already been responded to" });
+    }
+
+    if (accept) {
+      // Get team and tournament info
+      const [team] = await db.select().from(tournamentTeams).where(eq(tournamentTeams.id, invite.teamId));
+      const tournament = await storage.getTournament(invite.tournamentId);
+
+      if (!team || !tournament) {
+        return res.status(404).json({ error: "Team or tournament not found" });
+      }
+
+      const maxTeamSize = { solo: 1, duo: 2, trio: 3, squad: 4 }[tournament.teamMode];
+
+      // Check team isn't full (count only accepted members)
+      const currentMembers = await db
+        .select()
+        .from(tournamentTeamMembers)
+        .where(
+          and(
+            eq(tournamentTeamMembers.teamId, invite.teamId),
+            eq(tournamentTeamMembers.status, 'accepted')
+          )
+        );
+
+      if (currentMembers.length >= maxTeamSize) {
+        return res.status(400).json({ error: "Team is now full" });
+      }
+
+      // Update existing pending member slot to accepted
+      await db
+        .update(tournamentTeamMembers)
+        .set({ status: 'accepted' })
+        .where(
+          and(
+            eq(tournamentTeamMembers.teamId, invite.teamId),
+            eq(tournamentTeamMembers.userId, authResult.userId),
+            eq(tournamentTeamMembers.status, 'pending')
+          )
+        );
+
+      console.log(`✅ User ${authResult.userId} accepted invite and joined team ${invite.teamId}`);
+
+      // Charge entry fee if applicable
+      if (tournament.entryFee > 0) {
+        const user = authResult.user;
+        if (user.balance < tournament.entryFee) {
+          // Rollback - remove from team
+          await db
+            .delete(tournamentTeamMembers)
+            .where(
+              and(
+                eq(tournamentTeamMembers.teamId, invite.teamId),
+                eq(tournamentTeamMembers.userId, authResult.userId)
+              )
+            );
+
+          return res.status(400).json({ error: "Insufficient balance to join team" });
+        }
+
+        // Deduct entry fee
+        await db
+          .update(users)
+          .set({ balance: sql`${users.balance} - ${tournament.entryFee}` })
+          .where(eq(users.id, authResult.userId));
+
+        // Record transaction
+        await db.insert(balanceTransactions).values({
+          userId: authResult.userId,
+          type: 'tournament_entry',
+          amount: -tournament.entryFee,
+          description: `Entry fee for joining team "${team.name}" in tournament "${tournament.name}"`,
+          sourceType: 'tournament_team',
+          sourceId: invite.teamId,
+        });
+      }
+
+      // Update invite status
+      await db
+        .update(tournamentTeamInvites)
+        .set({ status: 'accepted', respondedAt: new Date() })
+        .where(eq(tournamentTeamInvites.id, inviteId));
+
+      // Discord Integration: Assign tournament role if Discord is linked
+      const user = authResult.user;
+      if (user.discordId && tournament.discordRoleId) {
+        try {
+          await discordTournamentService.assignTournamentRole(
+            user.discordId,
+            tournament.discordRoleId
+          );
+          console.log(`✅ Discord role assigned to user ${user.id} for tournament ${tournament.id} (joined team)`);
+        } catch (discordError) {
+          console.error('Failed to assign Discord role on team join:', discordError);
+          // Don't fail the team join if Discord role assignment fails
+        }
+      }
+
+      res.json({ message: "Successfully joined team", teamId: invite.teamId });
+    } else {
+      // Decline invite - remove pending member slot
+      await db
+        .delete(tournamentTeamMembers)
+        .where(
+          and(
+            eq(tournamentTeamMembers.teamId, invite.teamId),
+            eq(tournamentTeamMembers.userId, authResult.userId),
+            eq(tournamentTeamMembers.status, 'pending')
+          )
+        );
+
+      await db
+        .update(tournamentTeamInvites)
+        .set({ status: 'declined', respondedAt: new Date() })
+        .where(eq(tournamentTeamInvites.id, inviteId));
+
+      console.log(`❌ User ${authResult.userId} declined invite to team ${invite.teamId}`);
+
+      res.json({ message: "Invite declined" });
+    }
+  } catch (error) {
+    console.error('Respond to invite error:', error);
+    res.status(500).json({ error: "Failed to respond to invite" });
+  }
+});
+
+// Leave team endpoint
+app.post("/api/tournament/team/:teamId/leave", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { teamId } = req.params;
+
+    // Get team
+    const [team] = await db.select().from(tournamentTeams).where(eq(tournamentTeams.id, teamId));
+    if (!team) {
+      return res.status(404).json({ error: "Team not found" });
+    }
+
+    // Cannot leave if you're the leader
+    if (team.leaderId === authResult.userId) {
+      return res.status(400).json({ error: "Team leader cannot leave the team. Disband the team instead." });
+    }
+
+    // Check if user is in the team
+    const [membership] = await db
+      .select()
+      .from(tournamentTeamMembers)
+      .where(
+        and(
+          eq(tournamentTeamMembers.teamId, teamId),
+          eq(tournamentTeamMembers.userId, authResult.userId)
+        )
+      );
+
+    if (!membership) {
+      return res.status(404).json({ error: "You are not in this team" });
+    }
+
+    // Remove from team
+    await db
+      .delete(tournamentTeamMembers)
+      .where(
+        and(
+          eq(tournamentTeamMembers.teamId, teamId),
+          eq(tournamentTeamMembers.userId, authResult.userId)
+        )
+      );
+
+    // Get tournament for refund
+    const tournament = await storage.getTournament(team.tournamentId);
+    if (tournament && tournament.entryFee > 0) {
+      // Refund entry fee
+      await db
+        .update(users)
+        .set({ balance: sql`${users.balance} + ${tournament.entryFee}` })
+        .where(eq(users.id, authResult.userId));
+
+      // Record transaction
+      await db.insert(balanceTransactions).values({
+        userId: authResult.userId,
+        type: 'refund',
+        amount: tournament.entryFee,
+        description: `Refund for leaving team "${team.name}"`,
+        sourceType: 'tournament_team',
+        sourceId: teamId,
+      });
+    }
+
+    res.json({ message: "Successfully left the team" });
+  } catch (error) {
+    console.error('Leave team error:', error);
+    res.status(500).json({ error: "Failed to leave team" });
+  }
+});
+
+// Kick player from team endpoint
+app.post("/api/tournament/team/:teamId/kick", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { teamId } = req.params;
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+
+    // Get team
+    const [team] = await db.select().from(tournamentTeams).where(eq(tournamentTeams.id, teamId));
+    if (!team) {
+      return res.status(404).json({ error: "Team not found" });
+    }
+
+    // Only leader can kick
+    if (team.leaderId !== authResult.userId) {
+      return res.status(403).json({ error: "Only team leader can kick members" });
+    }
+
+    // Cannot kick yourself
+    if (userId === authResult.userId) {
+      return res.status(400).json({ error: "Cannot kick yourself" });
+    }
+
+    // Check if user is in the team
+    const [membership] = await db
+      .select()
+      .from(tournamentTeamMembers)
+      .where(
+        and(
+          eq(tournamentTeamMembers.teamId, teamId),
+          eq(tournamentTeamMembers.userId, userId)
+        )
+      );
+
+    if (!membership) {
+      return res.status(404).json({ error: "User is not in this team" });
+    }
+
+    // Remove from team
+    await db
+      .delete(tournamentTeamMembers)
+      .where(
+        and(
+          eq(tournamentTeamMembers.teamId, teamId),
+          eq(tournamentTeamMembers.userId, userId)
+        )
+      );
+
+    // Get tournament for refund
+    const tournament = await storage.getTournament(team.tournamentId);
+    if (tournament && tournament.entryFee > 0) {
+      // Refund entry fee
+      await db
+        .update(users)
+        .set({ balance: sql`${users.balance} + ${tournament.entryFee}` })
+        .where(eq(users.id, userId));
+
+      // Record transaction
+      await db.insert(balanceTransactions).values({
+        userId: userId,
+        type: 'refund',
+        amount: tournament.entryFee,
+        description: `Refund for being kicked from team "${team.name}"`,
+        sourceType: 'tournament_team',
+        sourceId: teamId,
+      });
+    }
+
+    res.json({ message: "Player kicked successfully" });
+  } catch (error) {
+    console.error('Kick player error:', error);
+    res.status(500).json({ error: "Failed to kick player" });
+  }
+});
+
+// Cancel team invite (remove pending member)
+app.post("/api/tournament/team/:teamId/cancel-invite", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { teamId } = req.params;
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+
+    // Get team
+    const [team] = await db.select().from(tournamentTeams).where(eq(tournamentTeams.id, teamId));
+    if (!team) {
+      return res.status(404).json({ error: "Team not found" });
+    }
+
+    // Only leader can cancel invites
+    if (team.leaderId !== authResult.userId) {
+      return res.status(403).json({ error: "Only team leader can cancel invites" });
+    }
+
+    // Check if user has pending invitation
+    const [membership] = await db
+      .select()
+      .from(tournamentTeamMembers)
+      .where(
+        and(
+          eq(tournamentTeamMembers.teamId, teamId),
+          eq(tournamentTeamMembers.userId, userId),
+          eq(tournamentTeamMembers.status, 'pending')
+        )
+      );
+
+    if (!membership) {
+      return res.status(404).json({ error: "No pending invitation found for this user" });
+    }
+
+    // Delete pending member and invitation
+    await db
+      .delete(tournamentTeamMembers)
+      .where(
+        and(
+          eq(tournamentTeamMembers.teamId, teamId),
+          eq(tournamentTeamMembers.userId, userId),
+          eq(tournamentTeamMembers.status, 'pending')
+        )
+      );
+
+    // Also delete the invite record
+    await db
+      .delete(tournamentTeamInvites)
+      .where(
+        and(
+          eq(tournamentTeamInvites.teamId, teamId),
+          eq(tournamentTeamInvites.toUserId, userId),
+          eq(tournamentTeamInvites.status, 'pending')
+        )
+      );
+
+    console.log(`✅ Team leader ${authResult.userId} cancelled invite for user ${userId} in team ${teamId}`);
+
+    res.json({ message: "Invite cancelled successfully" });
+  } catch (error) {
+    console.error('Cancel invite error:', error);
+    res.status(500).json({ error: "Failed to cancel invite" });
   }
 });
 
@@ -2008,6 +3077,9 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
       ? Object.values(prizeDistribution).reduce((sum: number, amount) => sum + parseFloat(amount as string), 0)
       : parseInt(req.body.prize) || 0;
 
+    const autoCreateDiscordChannels = req.body.autoCreateDiscordChannels === 'true' || req.body.autoCreateDiscordChannels === true;
+    const discordRoleId = req.body.discordRoleId || null;
+
     const tournamentData = {
       ...req.body,
       prize: totalPrize,
@@ -2017,24 +3089,130 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
       imageUrl,
       cloudinaryPublicId,
       createdBy: authResult.adminId,
+      autoCreateDiscordChannels,
+      discordRoleId,
     };
 
     const validation = insertTournamentSchema.safeParse(tournamentData);
     if (!validation.success) {
-      return res.status(400).json({ 
-        error: "Invalid tournament data", 
-        details: validation.error.errors 
+      return res.status(400).json({
+        error: "Invalid tournament data",
+        details: validation.error.errors
       });
     }
 
     const tournament = await storage.createTournament(validation.data);
+
+    // DropMap Integration: Create map for tournament
+    let dropMap = null;
+    try {
+      console.log(`🗺️  Creating dropmap for tournament: ${tournament.name}`);
+      dropMap = await territoryStorage.createEmptyMap(
+        `${tournament.name} - Карта`,
+        `Карта для турнира: ${tournament.name}`,
+        tournament.imageUrl || undefined,
+        authResult.adminId,
+        tournament.id,
+        tournament.teamMode
+      );
+
+      // Link dropmap to tournament
+      await storage.updateTournament(tournament.id, {
+        dropMapId: dropMap.id
+      });
+
+      console.log(`✅ DropMap created: ${dropMap.id} for tournament ${tournament.id}`);
+    } catch (dropMapError) {
+      console.error('DropMap creation error:', dropMapError);
+      // Tournament created but dropmap failed - continue anyway
+    }
+
+    // Discord Integration: Create role and channels if requested
+    if (autoCreateDiscordChannels) {
+      try {
+        console.log(`🔄 Creating Discord role and channels for tournament: ${tournament.name}`);
+
+        // Create Discord role
+        const roleId = await discordTournamentService.createTournamentRole(tournament.name);
+
+        // Create Discord channels
+        const channels = await discordTournamentService.createTournamentChannels(
+          tournament.name,
+          roleId
+        );
+
+        // Update tournament with Discord IDs
+        await storage.updateTournament(tournament.id, {
+          discordRoleId: roleId,
+          discordCategoryId: channels.categoryId,
+          discordInfoChannelId: channels.infoChannelId,
+          discordChatChannelId: channels.chatChannelId,
+          discordPasswordChannelId: channels.passwordChannelId,
+          discordMapChannelId: channels.mapChannelId,
+        });
+
+        // Post tournament info to info channel
+        await discordTournamentService.postTournamentInfo(
+          channels.infoChannelId,
+          {
+            ...tournament,
+            discordRoleId: roleId,
+            discordCategoryId: channels.categoryId,
+            discordInfoChannelId: channels.infoChannelId,
+            discordChatChannelId: channels.chatChannelId,
+            discordPasswordChannelId: channels.passwordChannelId,
+          }
+        );
+
+        console.log(`✅ Discord integration complete for tournament: ${tournament.id}`);
+
+        // Return updated tournament data
+        const updatedTournament = await storage.getTournamentById(tournament.id);
+        await storage.createAdminAction({
+          adminId: authResult.adminId,
+          action: 'create_tournament',
+          targetType: 'tournament',
+          targetId: tournament.id,
+          details: JSON.stringify({
+            name: tournament.name,
+            prize: tournament.prize,
+            prizeDistribution: tournament.prizeDistribution,
+            entryFee: tournament.entryFee,
+            discordIntegration: true,
+            roleId,
+          })
+        });
+
+        console.log(`✅ Tournament created: ${tournament.id} by admin ${authResult.adminId}`);
+        return res.json(updatedTournament);
+
+      } catch (discordError) {
+        console.error('Discord integration error:', discordError);
+        // Tournament created but Discord integration failed
+        // Return tournament anyway but log the error
+        await storage.createAdminAction({
+          adminId: authResult.adminId,
+          action: 'create_tournament',
+          targetType: 'tournament',
+          targetId: tournament.id,
+          details: JSON.stringify({
+            name: tournament.name,
+            prize: tournament.prize,
+            discordIntegrationError: (discordError as Error).message,
+          })
+        });
+
+        console.log(`⚠️ Tournament created: ${tournament.id} but Discord integration failed`);
+        return res.json(tournament);
+      }
+    }
 
     await storage.createAdminAction({
       adminId: authResult.adminId,
       action: 'create_tournament',
       targetType: 'tournament',
       targetId: tournament.id,
-      details: JSON.stringify({ 
+      details: JSON.stringify({
         name: tournament.name,
         prize: tournament.prize,
         prizeDistribution: tournament.prizeDistribution,
@@ -2333,6 +3511,116 @@ app.patch("/api/admin/tournament/:id", async (req, res) => {
   } catch (error) {
     console.error('Update tournament error:', error);
     res.status(500).json({ error: "Failed to update tournament" });
+  }
+});
+
+// Link existing dropmap to tournament
+app.post("/api/admin/tournament/:id/link-dropmap", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { dropMapId } = req.body;
+    if (!dropMapId) {
+      return res.status(400).json({ error: "dropMapId is required" });
+    }
+
+    const tournamentId = req.params.id;
+
+    // Verify tournament exists
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    // Verify dropmap exists
+    const [dropMap] = await db
+      .select()
+      .from(dropMapSettings)
+      .where(eq(dropMapSettings.id, dropMapId))
+      .limit(1);
+
+    if (!dropMap) {
+      return res.status(404).json({ error: "DropMap not found" });
+    }
+
+    // Check if dropmap is already linked to another tournament
+    if (dropMap.tournamentId && dropMap.tournamentId !== tournamentId) {
+      return res.status(400).json({
+        error: "This dropmap is already linked to another tournament"
+      });
+    }
+
+    // Update tournament with dropMapId
+    await storage.updateTournament(tournamentId, { dropMapId });
+
+    // Update dropmap with tournamentId and teamMode
+    await db
+      .update(dropMapSettings)
+      .set({
+        tournamentId: tournamentId,
+        teamMode: tournament.teamMode,
+        mode: 'tournament',
+      })
+      .where(eq(dropMapSettings.id, dropMapId));
+
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: 'link_dropmap',
+      targetType: 'tournament',
+      targetId: tournamentId,
+      details: JSON.stringify({ dropMapId })
+    });
+
+    console.log(`✅ Linked dropmap ${dropMapId} to tournament ${tournamentId}`);
+    res.json({ success: true, dropMapId });
+  } catch (error) {
+    console.error('Link dropmap error:', error);
+    res.status(500).json({ error: "Failed to link dropmap" });
+  }
+});
+
+// Toggle registration open/closed
+app.post("/api/admin/tournament/:id/toggle-registration", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const tournamentId = req.params.id;
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    const newRegistrationState = !tournament.registrationOpen;
+    const updatedTournament = await storage.updateTournament(tournamentId, {
+      registrationOpen: newRegistrationState
+    });
+
+    await storage.createAdminAction({
+      adminId: authResult.adminId,
+      action: newRegistrationState ? 'open_tournament_registration' : 'close_tournament_registration',
+      targetType: 'tournament',
+      targetId: tournamentId,
+      details: JSON.stringify({
+        registrationOpen: newRegistrationState,
+        tournamentName: tournament.name
+      })
+    });
+
+    console.log(`🔄 Tournament ${tournamentId} registration ${newRegistrationState ? 'opened' : 'closed'} by admin ${authResult.adminId}`);
+
+    res.json({
+      message: `Registration ${newRegistrationState ? 'opened' : 'closed'} successfully`,
+      tournament: updatedTournament
+    });
+  } catch (error) {
+    console.error('Toggle registration error:', error);
+    res.status(500).json({ error: "Failed to toggle registration" });
   }
 });
 

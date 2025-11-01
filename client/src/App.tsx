@@ -15,6 +15,7 @@ import TournamentDetailPage from './components/TournamentDetailPage';
 import DropMapInvitePage from './components/DropMapInvitePage';
 import MySubmissionsPage from './components/MySubmissions';
 import { DevLogin } from './components/DevLogin';
+import ProfilePage from './components/ProfilePage';
 
 function GameApp() {
   return (
@@ -124,7 +125,16 @@ function Router() {
           <TournamentDetailPage />
         </>
       )} />
-      
+
+      <Route path="/profile" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <ProfilePage />
+        </>
+      )} />
+
       <Route path="/dropmap/invite/:code" component={() => (
         <>
           <div className="fixed top-4 right-4 z-50">

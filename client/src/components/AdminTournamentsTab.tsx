@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Trophy, Plus, Edit, Trash2, Users, Calendar, Coins, Eye, Gift, X } from 'lucide-react';
+import { Trophy, Plus, Edit, Trash2, Users, Calendar, Coins, Eye, Gift, X, MessageCircle, Link as LinkIcon } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 
 interface Tournament {
@@ -18,13 +19,14 @@ interface Tournament {
   description: string | null;
   prize: number;
   entryFee: number;
-  startDate: string;
-  endDate: string | null;
+  registrationOpen: boolean;
   maxParticipants: number | null;
   currentParticipants: number;
   status: string;
   imageUrl: string | null;
+  teamMode: 'solo' | 'duo' | 'trio' | 'squad';
   prizeDistribution?: Record<string, number>;
+  dropMapId?: string | null;
 }
 
 interface TournamentRegistration {
@@ -50,10 +52,12 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
   const { toast } = useToast();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showPrizeDialog, setShowPrizeDialog] = useState(false);
+  const [showLinkDropMapDialog, setShowLinkDropMapDialog] = useState(false);
   const [selectedTournament, setSelectedTournament] = useState<Tournament | null>(null);
   const [tournamentParticipants, setTournamentParticipants] = useState<TournamentRegistration[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
   const [loadingParticipants, setLoadingParticipants] = useState(false);
+  const [dropMapIdInput, setDropMapIdInput] = useState('');
 
   // Prize distribution state
   const [prizeDistribution, setPrizeDistribution] = useState<Record<string, number>>({});
@@ -70,11 +74,10 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
     mapUrl: '',
     rules: '',
     entryFee: 0,
-    registrationStartDate: '',
-    registrationEndDate: '',
-    startDate: '',
-    endDate: '',
     maxParticipants: '',
+    teamMode: 'solo' as 'solo' | 'duo' | 'trio' | 'squad',
+    autoCreateDiscordChannels: false,
+    discordRoleId: '',
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
 
@@ -85,11 +88,10 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       mapUrl: '',
       rules: '',
       entryFee: 0,
-      registrationStartDate: '',
-      registrationEndDate: '',
-      startDate: '',
-      endDate: '',
       maxParticipants: '',
+      teamMode: 'solo',
+      autoCreateDiscordChannels: false,
+      discordRoleId: '',
     });
     setPrizeInputs([{ place: 1, amount: 0 }]);
     setImageFile(null);
@@ -223,7 +225,7 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
   };
 
   const handleCreateTournament = async () => {
-    if (!formData.name || !formData.startDate || !formData.registrationStartDate || !formData.registrationEndDate) {
+    if (!formData.name) {
       toast({
         title: 'Ошибка',
         description: 'Заполните обязательные поля',
@@ -250,7 +252,7 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       if (formData.description) formDataToSend.append('description', formData.description);
       if (formData.mapUrl) formDataToSend.append('mapUrl', formData.mapUrl);
       if (formData.rules) formDataToSend.append('rules', formData.rules);
-      
+
       // Build prize distribution object
       const prizeDistributionObj: Record<string, number> = {};
       prizeInputs.forEach(prize => {
@@ -258,16 +260,17 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
           prizeDistributionObj[prize.place.toString()] = prize.amount;
         }
       });
-      
+
       formDataToSend.append('prizeDistribution', JSON.stringify(prizeDistributionObj));
       formDataToSend.append('prize', totalPrize.toString());
       formDataToSend.append('entryFee', formData.entryFee.toString());
-      formDataToSend.append('registrationStartDate', new Date(formData.registrationStartDate).toISOString());
-      formDataToSend.append('registrationEndDate', new Date(formData.registrationEndDate).toISOString());
-      formDataToSend.append('startDate', new Date(formData.startDate).toISOString());
-      if (formData.endDate) formDataToSend.append('endDate', new Date(formData.endDate).toISOString());
       if (formData.maxParticipants) formDataToSend.append('maxParticipants', formData.maxParticipants);
+      formDataToSend.append('teamMode', formData.teamMode);
       if (imageFile) formDataToSend.append('image', imageFile);
+
+      // Discord Integration
+      formDataToSend.append('autoCreateDiscordChannels', formData.autoCreateDiscordChannels.toString());
+      if (formData.discordRoleId) formDataToSend.append('discordRoleId', formData.discordRoleId);
 
       const response = await fetch('/api/admin/tournament', {
         method: 'POST',
@@ -335,6 +338,38 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
     }
   };
 
+  const handleToggleRegistration = async (tournamentId: string) => {
+    setActionLoading(true);
+    try {
+      const response = await fetch(`/api/admin/tournament/${tournamentId}/toggle-registration`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to toggle registration');
+      }
+
+      toast({
+        title: 'Успешно',
+        description: 'Регистрация обновлена',
+      });
+
+      onRefresh();
+    } catch (error: any) {
+      toast({
+        title: 'Ошибка',
+        description: error.message || 'Не удалось обновить регистрацию',
+        variant: 'destructive',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleDeleteTournament = async (tournamentId: string) => {
     if (!confirm('Вы уверены? Всем участникам будет возвращён взнос.')) {
       return;
@@ -364,6 +399,58 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       toast({
         title: 'Ошибка',
         description: error.message || 'Не удалось удалить турнир',
+        variant: 'destructive',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleOpenLinkDropMapDialog = (tournament: Tournament) => {
+    setSelectedTournament(tournament);
+    setDropMapIdInput('');
+    setShowLinkDropMapDialog(true);
+  };
+
+  const handleLinkDropMap = async () => {
+    if (!selectedTournament || !dropMapIdInput.trim()) {
+      toast({
+        title: 'Ошибка',
+        description: 'Введите ID карты',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const response = await fetch(`/api/admin/tournament/${selectedTournament.id}/link-dropmap`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ dropMapId: dropMapIdInput.trim() }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to link dropmap');
+      }
+
+      toast({
+        title: 'Успешно',
+        description: 'Карта привязана к турниру',
+      });
+
+      setShowLinkDropMapDialog(false);
+      setDropMapIdInput('');
+      setSelectedTournament(null);
+      onRefresh();
+    } catch (error: any) {
+      toast({
+        title: 'Ошибка',
+        description: error.message || 'Не удалось привязать карту',
         variant: 'destructive',
       });
     } finally {
@@ -541,48 +628,24 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="registrationStartDate">Начало регистрации *</Label>
-                      <Input
-                        id="registrationStartDate"
-                        type="datetime-local"
-                        value={formData.registrationStartDate}
-                        onChange={(e) => setFormData({ ...formData, registrationStartDate: e.target.value })}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="registrationEndDate">Конец регистрации *</Label>
-                      <Input
-                        id="registrationEndDate"
-                        type="datetime-local"
-                        value={formData.registrationEndDate}
-                        onChange={(e) => setFormData({ ...formData, registrationEndDate: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="startDate">Начало турнира *</Label>
-                      <Input
-                        id="startDate"
-                        type="datetime-local"
-                        value={formData.startDate}
-                        onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="endDate">Конец турнира</Label>
-                      <Input
-                        id="endDate"
-                        type="datetime-local"
-                        value={formData.endDate}
-                        onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                      />
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="teamMode">Режим команды</Label>
+                    <Select value={formData.teamMode} onValueChange={(value: 'solo' | 'duo' | 'trio' | 'squad') => setFormData({ ...formData, teamMode: value })}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="solo">Solo (1 игрок)</SelectItem>
+                        <SelectItem value="duo">Duo (2 игрока)</SelectItem>
+                        <SelectItem value="trio">Trio (3 игрока)</SelectItem>
+                        <SelectItem value="squad">Squad (4 игрока)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {formData.teamMode === 'solo'
+                        ? 'Игроки участвуют индивидуально'
+                        : `Игроки формируют команды по ${formData.teamMode === 'duo' ? '2' : formData.teamMode === 'trio' ? '3' : '4'} человека`}
+                    </p>
                   </div>
 
                   <div className="space-y-2">
@@ -618,6 +681,55 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                     <p className="text-xs text-muted-foreground">
                       JPEG, PNG или WebP, макс. 5MB
                     </p>
+                  </div>
+
+                  {/* Discord Integration Section */}
+                  <div className="space-y-4 border p-4 rounded-lg">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <MessageCircle className="h-4 w-4" />
+                      Discord интеграция
+                    </h4>
+
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={formData.autoCreateDiscordChannels}
+                        onCheckedChange={(checked) =>
+                          setFormData({...formData, autoCreateDiscordChannels: checked as boolean})
+                        }
+                        id="autoCreateDiscordChannels"
+                      />
+                      <Label htmlFor="autoCreateDiscordChannels" className="cursor-pointer">
+                        Автоматически создать роль и каналы в Discord
+                      </Label>
+                    </div>
+
+                    {!formData.autoCreateDiscordChannels && (
+                      <div className="space-y-2">
+                        <Label htmlFor="discordRoleId">ID роли Discord (опционально)</Label>
+                        <Input
+                          id="discordRoleId"
+                          value={formData.discordRoleId}
+                          onChange={(e) => setFormData({...formData, discordRoleId: e.target.value})}
+                          placeholder="Введите ID существующей роли"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Если указана, участникам будет автоматически выдаваться эта роль
+                        </p>
+                      </div>
+                    )}
+
+                    {formData.autoCreateDiscordChannels && (
+                      <div className="bg-muted/50 p-3 rounded text-sm">
+                        <p className="font-medium mb-2">Будут созданы:</p>
+                        <ul className="space-y-1 text-muted-foreground">
+                          <li>• Роль "Турнир - {formData.name || 'Название турнира'}"</li>
+                          <li>• Категория "🏆 {formData.name || 'Название турнира'}"</li>
+                          <li>• Канал "📋-информация" (только чтение)</li>
+                          <li>• Канал "💬-чат" (участники могут писать)</li>
+                          <li>• Канал "🔐-пароль" (только для админов)</li>
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-3">
@@ -657,7 +769,7 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                   <TableHead>Статус</TableHead>
                   <TableHead>Участники</TableHead>
                   <TableHead>Призы</TableHead>
-                  <TableHead>Даты</TableHead>
+                  <TableHead>Регистрация</TableHead>
                   <TableHead>Действия</TableHead>
                 </TableRow>
               </TableHeader>
@@ -738,15 +850,36 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-sm">
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <Calendar className="h-3 w-3" />
-                          {new Date(tournament.startDate).toLocaleDateString('ru-RU')}
-                        </div>
+                      <div className="space-y-1">
+                        <Badge
+                          variant={tournament.registrationOpen ? "default" : "secondary"}
+                          className={tournament.registrationOpen ? "bg-green-600" : ""}
+                        >
+                          {tournament.registrationOpen ? "Открыта" : "Закрыта"}
+                        </Badge>
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleToggleRegistration(tournament.id)}
+                          title={tournament.registrationOpen ? "Закрыть регистрацию" : "Открыть регистрацию"}
+                          disabled={actionLoading}
+                          className={tournament.registrationOpen ? "border-red-500 text-red-500" : "border-green-500 text-green-500"}
+                        >
+                          {tournament.registrationOpen ? "Закрыть" : "Открыть"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleOpenLinkDropMapDialog(tournament)}
+                          title={tournament.dropMapId ? "Сменить карту" : "Привязать карту"}
+                          className={tournament.dropMapId ? "" : "border-blue-500 text-blue-500"}
+                        >
+                          <LinkIcon className="h-4 w-4" />
+                        </Button>
                         <Button
                           size="sm"
                           variant="outline"
@@ -875,6 +1008,68 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
               className="flex-1"
             >
               {actionLoading ? 'Выдача...' : 'Выдать призы'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Link DropMap Dialog */}
+      <Dialog open={showLinkDropMapDialog} onOpenChange={setShowLinkDropMapDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Привязать карту к турниру</DialogTitle>
+            <DialogDescription>
+              {selectedTournament?.name}
+              {selectedTournament?.dropMapId && (
+                <div className="mt-2 text-sm">
+                  <Badge variant="outline">Текущая карта: {selectedTournament.dropMapId}</Badge>
+                </div>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="dropMapId">ID карты (Drop Map)</Label>
+              <Input
+                id="dropMapId"
+                placeholder="Введите UUID карты"
+                value={dropMapIdInput}
+                onChange={(e) => setDropMapIdInput(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Найдите ID карты в разделе "Дропмапы" (Admin panel)
+              </p>
+            </div>
+
+            {selectedTournament?.dropMapId && (
+              <div className="bg-muted/50 p-3 rounded text-sm">
+                <p className="font-medium mb-1">⚠️ Внимание</p>
+                <p className="text-muted-foreground">
+                  Замена карты изменит привязку для всех участников турнира
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowLinkDropMapDialog(false);
+                setDropMapIdInput('');
+                setSelectedTournament(null);
+              }}
+              className="flex-1"
+            >
+              Отмена
+            </Button>
+            <Button
+              onClick={handleLinkDropMap}
+              disabled={actionLoading || !dropMapIdInput.trim()}
+              className="flex-1"
+            >
+              {actionLoading ? 'Привязка...' : 'Привязать'}
             </Button>
           </div>
         </DialogContent>

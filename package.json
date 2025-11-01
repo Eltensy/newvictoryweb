@@ -8,7 +8,9 @@
     "telegram-bot": "node --experimental-modules server/telegram-bot.js",
     "dev:bot": "tsx server/telegram-bot.js",
     "dev:all": "tsx server/index.ts & tsx server/telegram-bot.js",
-    "migrate:userid": "tsx server/migrate-userid-to-text.ts"
+    "migrate:userid": "tsx server/migrate-userid-to-text.ts",
+    "migrate:tournaments": "tsx server/migrate-tournaments-remove-dates.ts",
+    "migrate:teams": "tsx server/migrate-tournament-teams.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

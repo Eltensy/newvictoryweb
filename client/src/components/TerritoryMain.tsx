@@ -39,6 +39,9 @@ interface Territory {
     username?: string;
     displayName?: string;
     claimedAt?: string;
+    teamId?: string;
+    teamName?: string;
+    isTeamLeader?: boolean;
   }>;
   claimCount?: number;
 }
@@ -132,8 +135,64 @@ const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContext
     [territory.claims]
   );
 
+  // Group claims by teams if teamId exists
+  const groupedClaims = useMemo(() => {
+    if (!uniqueClaims.length) return [];
+
+    // Check if this is a team-based map (any claim has teamId)
+    const hasTeams = uniqueClaims.some(c => c.teamId);
+
+    if (!hasTeams) {
+      // No teams - return claims as individual entries
+      return uniqueClaims.map(claim => ({
+        displayText: claim.displayName || territory.name,
+        isTeamLeader: false,
+        teamName: null,
+      }));
+    }
+
+    // Group by teams
+    const teamGroups: Record<string, typeof uniqueClaims> = {};
+    uniqueClaims.forEach(claim => {
+      const teamId = claim.teamId || 'solo';
+      if (!teamGroups[teamId]) {
+        teamGroups[teamId] = [];
+      }
+      teamGroups[teamId].push(claim);
+    });
+
+    // Convert to display format
+    const result: Array<{ displayText: string; isTeamLeader: boolean; teamName: string | null }> = [];
+
+    Object.entries(teamGroups).forEach(([teamId, members]) => {
+      if (teamId === 'solo') {
+        // Solo players - show individually
+        members.forEach(member => {
+          result.push({
+            displayText: member.displayName || territory.name,
+            isTeamLeader: false,
+            teamName: null,
+          });
+        });
+      } else {
+        // Team - show all members together
+        const teamName = members[0].teamName || 'Team';
+        const leader = members.find(m => m.isTeamLeader);
+        const memberNames = members.map(m => m.displayName || 'Unknown').join(', ');
+
+        result.push({
+          displayText: `${teamName}: ${memberNames}`,
+          isTeamLeader: !!leader,
+          teamName: teamName,
+        });
+      }
+    });
+
+    return result;
+  }, [uniqueClaims, territory.name]);
+
   const hasClaims = uniqueClaims.length > 0;
-  const claimCount = uniqueClaims.length;
+  const claimCount = groupedClaims.length;
 
   // Memoize expensive calculations
   const points = useMemo(() =>
@@ -203,34 +262,34 @@ const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContext
         onClick={onClick} 
         onContextMenu={onContextMenu} 
       />
-      {hasClaims && scale > 0.5 && uniqueClaims.length > 0 && (() => {
-        const positions = getTextPositions(uniqueClaims.length);
-        
-        return uniqueClaims.map((claim, index) => {
+      {hasClaims && scale > 0.5 && groupedClaims.length > 0 && (() => {
+        const positions = getTextPositions(groupedClaims.length);
+
+        return groupedClaims.map((group, index) => {
           const pos = positions[index];
           if (!pos) return null;
-          
+
           return (
-            <text 
-              key={`${claim.userId}-${index}`}
-              x={pos.x} 
-              y={pos.y} 
-              textAnchor="middle" 
-              dominantBaseline="middle" 
-              className="pointer-events-none select-none" 
-              style={{ 
-                fontSize: `${14 / scale}px`, 
-                fontWeight: 'bold', 
-                fontFamily: 'Montserrat, Inter, system-ui, sans-serif', 
-                fill: '#ffffff', 
-                paintOrder: 'stroke', 
-                stroke: 'rgba(0, 0, 0, 0.9)', 
-                strokeWidth: `${3 / scale}px`, 
-                strokeLinecap: 'round', 
-                strokeLinejoin: 'round' 
+            <text
+              key={`claim-${index}`}
+              x={pos.x}
+              y={pos.y}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              className="pointer-events-none select-none"
+              style={{
+                fontSize: `${14 / scale}px`,
+                fontWeight: 'bold',
+                fontFamily: 'Montserrat, Inter, system-ui, sans-serif',
+                fill: '#ffffff',
+                paintOrder: 'stroke',
+                stroke: 'rgba(0, 0, 0, 0.9)',
+                strokeWidth: `${3 / scale}px`,
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round'
               }}
             >
-              {claim.displayName || territory.name}
+              {group.displayText}
             </text>
           );
         });
@@ -334,6 +393,9 @@ export default function TerritoryMain() {
   const [showCreateMapDialog, setShowCreateMapDialog] = useState(false);
   const [showEditTerritoryDialog, setShowEditTerritoryDialog] = useState(false);
   const [showPlayersDialog, setShowPlayersDialog] = useState(false);
+
+  // Dynamic background color based on map edges
+  const [dynamicBgColor, setDynamicBgColor] = useState<string>('rgb(9, 9, 11)');
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
@@ -1134,11 +1196,88 @@ const resetZoom = useCallback(() => {
   const viewBox = useMemo(() => { const centerX = SVG_SIZE / 2 - panOffset.x; const centerY = SVG_SIZE / 2 - panOffset.y; const width = SVG_SIZE / scale; const height = SVG_SIZE / scale; const x = centerX - width / 2; const y = centerY - height / 2; return `${x} ${y} ${width} ${height}`; }, [scale, panOffset]);
   const filteredUsers = useMemo(() => { if (!playerSearchQuery.trim()) return allUsers; const query = playerSearchQuery.toLowerCase(); return allUsers.filter(u => u.displayName?.toLowerCase().includes(query) || u.username?.toLowerCase().includes(query)); }, [allUsers, playerSearchQuery]);
   useEffect(() => { const handleClick = () => setContextMenu(null); if (contextMenu) { document.addEventListener('click', handleClick); return () => document.removeEventListener('click', handleClick); } }, [contextMenu]);
+
+  // Extract edge colors from map image for dynamic background
+  useEffect(() => {
+    if (!activeMap?.mapImageUrl) {
+      setDynamicBgColor('rgb(9, 9, 11)');
+      return;
+    }
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+
+        // Sample pixels from all four edges
+        const sampleSize = 20; // Sample 20 pixels from each edge
+        const colors: number[][] = [];
+
+        // Top edge
+        for (let i = 0; i < sampleSize; i++) {
+          const x = Math.floor((i / sampleSize) * img.width);
+          const data = ctx.getImageData(x, 0, 1, 1).data;
+          colors.push([data[0], data[1], data[2]]);
+        }
+
+        // Bottom edge
+        for (let i = 0; i < sampleSize; i++) {
+          const x = Math.floor((i / sampleSize) * img.width);
+          const data = ctx.getImageData(x, img.height - 1, 1, 1).data;
+          colors.push([data[0], data[1], data[2]]);
+        }
+
+        // Left edge
+        for (let i = 0; i < sampleSize; i++) {
+          const y = Math.floor((i / sampleSize) * img.height);
+          const data = ctx.getImageData(0, y, 1, 1).data;
+          colors.push([data[0], data[1], data[2]]);
+        }
+
+        // Right edge
+        for (let i = 0; i < sampleSize; i++) {
+          const y = Math.floor((i / sampleSize) * img.height);
+          const data = ctx.getImageData(img.width - 1, y, 1, 1).data;
+          colors.push([data[0], data[1], data[2]]);
+        }
+
+        // Calculate average color
+        const avgColor = colors.reduce(
+          (acc, color) => [acc[0] + color[0], acc[1] + color[1], acc[2] + color[2]],
+          [0, 0, 0]
+        ).map(c => Math.floor(c / colors.length));
+
+        // Use the color as-is for perfect match with map edges
+        setDynamicBgColor(`rgb(${avgColor[0]}, ${avgColor[1]}, ${avgColor[2]})`);
+      } catch (err) {
+        console.error('Failed to extract edge color:', err);
+        setDynamicBgColor('rgb(9, 9, 11)');
+      }
+    };
+
+    img.onerror = () => {
+      setDynamicBgColor('rgb(9, 9, 11)');
+    };
+
+    img.src = activeMap.mapImageUrl;
+  }, [activeMap?.mapImageUrl]);
+
   if (authLoading || isLoading) { return <LoadingScreen message="Загрузка локаций..." />; }
   if (error) { return (<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center space-y-4"><AlertCircle className="h-12 w-12 text-red-500 mx-auto" /><div className="text-red-500 font-semibold">{error}</div><Button onClick={() => window.location.reload()}>Перезагрузить</Button></div></div>); }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div
+      className="min-h-screen transition-colors duration-1000"
+      style={{ backgroundColor: dynamicBgColor }}
+    >
       {contextMenu && (
         <TerritoryContextMenu
           territory={contextMenu.territory}
@@ -1149,7 +1288,12 @@ const resetZoom = useCallback(() => {
         />
       )}
 
-      <header className="border-b bg-background/80 backdrop-blur-xl sticky top-0 z-40">
+      <header
+        className="backdrop-blur-xl sticky top-0 z-40 transition-colors duration-1000 bg-card/95 border-b"
+        style={{
+          background: `linear-gradient(${dynamicBgColor.replace('rgb(', 'rgba(').replace(')', ', 0.1)')}, ${dynamicBgColor.replace('rgb(', 'rgba(').replace(')', ', 0.1)')}), hsl(var(--card) / 0.95)`
+        }}
+      >
         <div className="container mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
@@ -1218,8 +1362,13 @@ const resetZoom = useCallback(() => {
       </header>
 
       <div className="flex h-[calc(100vh-56px)]">
-        <aside className="w-64 border-r bg-card/30 backdrop-blur-sm overflow-y-auto">
-          <div className="p-4 border-b">
+        <aside
+          className="w-64 backdrop-blur-sm overflow-y-auto transition-colors duration-1000 bg-card/95 border-r"
+          style={{
+            background: `linear-gradient(${dynamicBgColor.replace('rgb(', 'rgba(').replace(')', ', 0.1)')}, ${dynamicBgColor.replace('rgb(', 'rgba(').replace(')', ', 0.1)')}), hsl(var(--card) / 0.95)`
+          }}
+        >
+          <div className="p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold">Карты ({allMaps.length})</h3>
               {user?.isAdmin && isAdminMode && (
@@ -1261,7 +1410,12 @@ const resetZoom = useCallback(() => {
           </div>
         </aside>
 
-        <main className="flex-1 relative bg-background overflow-hidden flex items-center justify-center">
+        <main
+          className="flex-1 relative overflow-hidden flex items-center justify-center transition-colors duration-1000"
+          style={{
+            backgroundColor: dynamicBgColor
+          }}
+        >
           {isMapLoading ? (
             <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
               <div className="text-center">
@@ -1301,9 +1455,14 @@ const resetZoom = useCallback(() => {
           {activeMap?.isLocked && !user?.isAdmin && (<div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500/10 border border-red-500/20 rounded-lg p-3 pointer-events-none"><div className="flex items-center gap-2 text-red-600"><Lock className="h-4 w-4" /><span className="text-sm font-medium">Карта заблокирована администратором</span></div></div>)}
         </main>
 
-        <aside className="w-80 border-l bg-card/30 backdrop-blur-sm overflow-y-auto">
+        <aside
+          className="w-80 backdrop-blur-sm overflow-y-auto transition-colors duration-1000 bg-card/95"
+          style={{
+            background: `linear-gradient(${dynamicBgColor.replace('rgb(', 'rgba(').replace(')', ', 0.1)')}, ${dynamicBgColor.replace('rgb(', 'rgba(').replace(')', ', 0.1)')}), hsl(var(--card) / 0.95)`
+          }}
+        >
           {isAdminMode && user?.isAdmin && (
-            <div className="p-4 border-b bg-primary/5">
+            <div className="p-4 bg-primary/5">
               <h3 className="font-semibold mb-3 flex items-center gap-2"><Settings className="h-4 w-4" />Админ-панель</h3>
               <div className="space-y-2">
                 <Button size="sm" variant="outline" className="w-full justify-start" onClick={() => { setIsDrawingMode(true); setCurrentPoints([]); }} disabled={isDrawingMode}><Plus className="h-4 w-4 mr-2" />Создать локацию</Button>

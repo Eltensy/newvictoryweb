@@ -436,6 +436,22 @@ export function registerTerritoryRoutes(app: Express) {
         return res.status(403).json({ error: "Вы не в списке допущенных игроков для этой карты" });
       }
 
+      // Проверка для командных режимов: только капитан может клеймить
+      const [mapSettings] = await db
+        .select()
+        .from(dropMapSettings)
+        .where(eq(dropMapSettings.id, territory.mapId))
+        .limit(1);
+
+      if (mapSettings?.tournamentId && mapSettings.teamMode !== 'solo' && !authResult.user.isAdmin) {
+        const isTeamLeader = await territoryStorage.isUserTeamLeader(mapSettings.tournamentId, authResult.userId);
+        if (!isTeamLeader) {
+          return res.status(403).json({
+            error: "В командном режиме только капитан команды может клеймить локации"
+          });
+        }
+      }
+
       const result = await territoryStorage.claimTerritory(territoryId, authResult.userId);
 
       if (io) {

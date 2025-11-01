@@ -7,6 +7,8 @@ import {
   dropMapEligiblePlayers,
   dropMapInviteCodes,
   tournamentRegistrations,
+  tournamentTeams,
+  tournamentTeamMembers,
   users,
   type Territory,
   type TerritoryClaim,
@@ -27,42 +29,55 @@ export class DatabaseTerritoryStorage {
   // ========== MAP METHODS ==========
   // =============================================
 
-  async createEmptyMap(name: string, description?: string, mapImageUrl?: string, createdBy?: string): Promise<DropMapSettings> {
-    const [newMap] = await db.insert(dropMapSettings).values({ 
-      name, 
-      description, 
-      mapImageUrl, 
-      createdBy, 
-      mode: 'tournament' 
+  async createEmptyMap(
+    name: string,
+    description?: string,
+    mapImageUrl?: string,
+    createdBy?: string,
+    tournamentId?: string,
+    teamMode?: 'solo' | 'duo' | 'trio' | 'squad'
+  ): Promise<DropMapSettings> {
+    const [newMap] = await db.insert(dropMapSettings).values({
+      name,
+      description,
+      mapImageUrl,
+      createdBy,
+      mode: 'tournament',
+      tournamentId,
+      teamMode
     }).returning();
     if (!newMap) throw new Error('Failed to create map');
     return newMap;
   }
 
   async createMapFromSourceMap(
-    sourceMapId: string, 
-    name: string, 
-    description?: string, 
-    mapImageUrl?: string, 
-    createdBy?: string
+    sourceMapId: string,
+    name: string,
+    description?: string,
+    mapImageUrl?: string,
+    createdBy?: string,
+    tournamentId?: string,
+    teamMode?: 'solo' | 'duo' | 'trio' | 'squad'
   ): Promise<DropMapSettings> {
     return db.transaction(async (tx) => {
       const [sourceMap] = await tx
         .select()
         .from(dropMapSettings)
         .where(eq(dropMapSettings.id, sourceMapId));
-      
+
       if (!sourceMap) {
         throw new Error('Source map not found');
       }
 
-      const [newMap] = await tx.insert(dropMapSettings).values({ 
-        name, 
-        description, 
-        mapImageUrl: mapImageUrl || sourceMap.mapImageUrl, 
-        createdFrom: sourceMapId, 
-        createdBy, 
-        mode: 'tournament' 
+      const [newMap] = await tx.insert(dropMapSettings).values({
+        name,
+        description,
+        mapImageUrl: mapImageUrl || sourceMap.mapImageUrl,
+        createdFrom: sourceMapId,
+        createdBy,
+        mode: 'tournament',
+        tournamentId,
+        teamMode
       }).returning();
       
       if (!newMap) throw new Error('Failed to create new map');
@@ -135,16 +150,23 @@ export class DatabaseTerritoryStorage {
   // =============================================
 
   async getMapTerritories(mapId: string): Promise<any[]> {
+    // Get map settings to check if it's a tournament map
+    const [mapSettings] = await db
+      .select()
+      .from(dropMapSettings)
+      .where(eq(dropMapSettings.id, mapId))
+      .limit(1);
+
     const territoriesData = await db
-      .select({ 
-        territory: territories, 
-        ownerUsername: users.username, 
-        ownerDisplayName: users.displayName 
+      .select({
+        territory: territories,
+        ownerUsername: users.username,
+        ownerDisplayName: users.displayName
       })
       .from(territories)
       .leftJoin(users, sql`(${territories.ownerId})::text = (${users.id})::text`)
       .where(eq(territories.mapId, mapId));
-    
+
     if (territoriesData.length === 0) return [];
 
     const territoryIds = territoriesData.map(t => t.territory.id);
@@ -152,7 +174,7 @@ export class DatabaseTerritoryStorage {
     const allClaims = await db
       .select({
         claim: territoryClaims,
-        user: { username: users.username, displayName: users.displayName },
+        user: { username: users.username, displayName: users.displayName, id: users.id },
         invite: dropMapInviteCodes,
         eligiblePlayer: dropMapEligiblePlayers,
       })
@@ -178,14 +200,57 @@ export class DatabaseTerritoryStorage {
         )
       );
 
+    // If it's a tournament map with team mode, get team information for all users
+    let userTeams: Map<string, { teamId: string; teamName: string; isLeader: boolean }> = new Map();
+    if (mapSettings?.tournamentId && mapSettings.teamMode !== 'solo') {
+      // Get all teams and their members for this tournament
+      const teams = await db
+        .select({
+          teamId: tournamentTeams.id,
+          teamName: tournamentTeams.name,
+          leaderId: tournamentTeams.leaderId,
+        })
+        .from(tournamentTeams)
+        .where(eq(tournamentTeams.tournamentId, mapSettings.tournamentId));
+
+      const teamMembers = await db
+        .select({
+          teamId: tournamentTeamMembers.teamId,
+          userId: tournamentTeamMembers.userId,
+        })
+        .from(tournamentTeamMembers)
+        .where(eq(tournamentTeamMembers.status, 'accepted'));
+
+      // Map team leaders
+      for (const team of teams) {
+        userTeams.set(team.leaderId, {
+          teamId: team.teamId,
+          teamName: team.teamName,
+          isLeader: true,
+        });
+      }
+
+      // Map team members
+      for (const member of teamMembers) {
+        const team = teams.find(t => t.teamId === member.teamId);
+        if (team && !userTeams.has(member.userId)) {
+          userTeams.set(member.userId, {
+            teamId: team.teamId,
+            teamName: team.teamName,
+            isLeader: false,
+          });
+        }
+      }
+    }
+
     const claimsByTerritory: Record<string, any[]> = {};
-    
+
     for (const row of allClaims) {
       const territoryId = row.claim.territoryId;
       if (!claimsByTerritory[territoryId]) {
         claimsByTerritory[territoryId] = [];
       }
-      
+
       let displayName: string;
       let username: string;
       let userId: string;
@@ -214,29 +279,33 @@ export class DatabaseTerritoryStorage {
         displayName = 'Неизвестный игрок';
         username = 'unknown';
       }
-      
+
       const exists = claimsByTerritory[territoryId].find(c => c.userId === userId);
       if (!exists) {
-        claimsByTerritory[territoryId].push({ 
+        const teamInfo = userTeams.get(userId);
+        claimsByTerritory[territoryId].push({
           userId,
           username,
           displayName,
-          claimedAt: row.claim.claimedAt 
+          claimedAt: row.claim.claimedAt,
+          teamId: teamInfo?.teamId,
+          teamName: teamInfo?.teamName,
+          isTeamLeader: teamInfo?.isLeader || false,
         });
       }
     }
 
     return territoriesData.map(row => {
       const claims = claimsByTerritory[row.territory.id] || [];
-      return { 
-        ...row.territory, 
-        owner: row.territory.ownerId ? { 
-          id: row.territory.ownerId, 
-          username: row.ownerUsername || '', 
-          displayName: row.ownerDisplayName || '' 
-        } : undefined, 
-        claims, 
-        claimCount: claims.length 
+      return {
+        ...row.territory,
+        owner: row.territory.ownerId ? {
+          id: row.territory.ownerId,
+          username: row.ownerUsername || '',
+          displayName: row.ownerDisplayName || ''
+        } : undefined,
+        claims,
+        claimCount: claims.length
       };
     });
   }
@@ -478,6 +547,7 @@ export class DatabaseTerritoryStorage {
   }
 
   async isUserEligibleForMap(mapId: string, userId: string): Promise<boolean> {
+    // Check if user is in eligible players list
     const [player] = await db
       .select()
       .from(dropMapEligiblePlayers)
@@ -488,10 +558,82 @@ export class DatabaseTerritoryStorage {
         )
       )
       .limit(1);
-    
-    return !!player;
+
+    if (player) return true;
+
+    // Check if map is linked to tournament and user is registered
+    const [mapSettings] = await db
+      .select()
+      .from(dropMapSettings)
+      .where(eq(dropMapSettings.id, mapId))
+      .limit(1);
+
+    if (mapSettings?.tournamentId) {
+      const [registration] = await db
+        .select()
+        .from(tournamentRegistrations)
+        .where(
+          and(
+            eq(tournamentRegistrations.tournamentId, mapSettings.tournamentId),
+            eq(tournamentRegistrations.userId, userId),
+            sql`${tournamentRegistrations.status} IN ('registered', 'paid')`
+          )
+        )
+        .limit(1);
+
+      if (registration) return true;
+    }
+
+    return false;
   }
-  
+
+  async isUserTeamLeader(tournamentId: string, userId: string): Promise<boolean> {
+    const [team] = await db
+      .select()
+      .from(tournamentTeams)
+      .where(
+        and(
+          eq(tournamentTeams.tournamentId, tournamentId),
+          eq(tournamentTeams.leaderId, userId)
+        )
+      )
+      .limit(1);
+
+    return !!team;
+  }
+
+  async getUserTeamId(tournamentId: string, userId: string): Promise<string | null> {
+    // Check if user is a team leader
+    const [teamAsLeader] = await db
+      .select()
+      .from(tournamentTeams)
+      .where(
+        and(
+          eq(tournamentTeams.tournamentId, tournamentId),
+          eq(tournamentTeams.leaderId, userId)
+        )
+      )
+      .limit(1);
+
+    if (teamAsLeader) return teamAsLeader.id;
+
+    // Check if user is a team member
+    const [memberRecord] = await db
+      .select({ teamId: tournamentTeamMembers.teamId })
+      .from(tournamentTeamMembers)
+      .innerJoin(tournamentTeams, eq(tournamentTeamMembers.teamId, tournamentTeams.id))
+      .where(
+        and(
+          eq(tournamentTeams.tournamentId, tournamentId),
+          eq(tournamentTeamMembers.userId, userId),
+          eq(tournamentTeamMembers.status, 'accepted')
+        )
+      )
+      .limit(1);
+
+    return memberRecord?.teamId || null;
+  }
+
   async importPlayersFromTournament(
     mapId: string, 
     tournamentId: string, 

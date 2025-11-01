@@ -3,9 +3,10 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Trophy, Calendar, Users, Coins, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Trophy, Calendar, Users, Coins, ChevronRight, ArrowLeft, Mail } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import EnhancedHeader from '@/components/Header';
+import { TeamInvitesPopup } from './TeamInvitesPopup';
 
 interface Tournament {
   id: string;
@@ -13,10 +14,7 @@ interface Tournament {
   description: string | null;
   prize: number;
   entryFee: number;
-  registrationStartDate: string;
-  registrationEndDate: string;
-  startDate: string;
-  endDate: string | null;
+  registrationOpen: boolean;
   maxParticipants: number | null;
   currentParticipants: number;
   status: string;
@@ -37,10 +35,15 @@ export default function TournamentsPage() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isBalanceModalOpen, setIsBalanceModalOpen] = useState(false);
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
+  const [showInvitesPopup, setShowInvitesPopup] = useState(false);
+  const [pendingInvitesCount, setPendingInvitesCount] = useState(0);
 
   useEffect(() => {
     fetchTournaments();
-  }, []);
+    if (isLoggedIn) {
+      loadPendingInvites();
+    }
+  }, [isLoggedIn]);
 
   const fetchTournaments = async () => {
     setLoading(true);
@@ -65,11 +68,34 @@ export default function TournamentsPage() {
     }
   };
 
+  const loadPendingInvites = async () => {
+    try {
+      const token = getAuthToken();
+      if (!token) return;
+
+      const response = await fetch('/api/tournament/team/invites', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const invites = await response.json();
+        setPendingInvitesCount(invites.filter((inv: any) => inv.status === 'pending').length);
+      }
+    } catch (error) {
+      console.error('Error loading invites:', error);
+    }
+  };
+
   const handleRefreshUser = async () => {
     setIsRefreshing(true);
     try {
       // Refresh user logic here if needed
       await fetchTournaments();
+      if (isLoggedIn) {
+        await loadPendingInvites();
+      }
     } catch (error) {
       console.error('Refresh error:', error);
     } finally {
@@ -171,8 +197,30 @@ export default function TournamentsPage() {
         isRefreshing={isRefreshing}
         authToken={getAuthToken() || undefined}
       />
-      
+
       <div className="container mx-auto px-4 py-8">
+        {/* Team Invites Button */}
+        {isLoggedIn && (
+          <div className="mb-6 flex justify-end">
+            <Button
+              onClick={() => setShowInvitesPopup(true)}
+              variant="outline"
+              className="relative"
+            >
+              <Mail className="w-4 h-4 mr-2" />
+              Приглашения в команды
+              {pendingInvitesCount > 0 && (
+                <Badge
+                  variant="destructive"
+                  className="ml-2 px-2 py-0.5 text-xs"
+                >
+                  {pendingInvitesCount}
+                </Badge>
+              )}
+            </Button>
+          </div>
+        )}
+
         {/* Tournaments Grid */}
         {tournaments.length === 0 ? (
           <Card>
@@ -276,10 +324,13 @@ export default function TournamentsPage() {
                     </span>
                   </div>
 
-                  {/* Start Date */}
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground pt-2 border-t">
-                    <Calendar className="h-4 w-4" />
-                    <span>{formatDate(tournament.startDate)}</span>
+                  {/* Registration Status */}
+                  <div className="flex items-center gap-2 text-sm pt-2 border-t">
+                    {tournament.registrationOpen ? (
+                      <Badge className="bg-green-600 text-white">Регистрация открыта</Badge>
+                    ) : (
+                      <Badge variant="secondary">Регистрация закрыта</Badge>
+                    )}
                   </div>
 
                   {/* View Details Button */}
@@ -296,6 +347,16 @@ export default function TournamentsPage() {
           </div>
         )}
       </div>
+
+      {/* Team Invites Popup */}
+      <TeamInvitesPopup
+        open={showInvitesPopup}
+        onOpenChange={setShowInvitesPopup}
+        onInviteResponded={() => {
+          loadPendingInvites();
+          fetchTournaments();
+        }}
+      />
     </div>
   );
 }

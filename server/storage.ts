@@ -1,17 +1,19 @@
-import { 
-  users, 
-  submissions, 
+import {
+  users,
+  submissions,
   adminActions,
   balanceTransactions,
   withdrawalRequests,
   tournaments,
   tournamentRegistrations,
+  tournamentTeams,
+  tournamentTeamMembers,
   premiumHistory,
   telegramVerifications,
   killHistory, // 🆕 ДОБАВИТЬ ЭТУ СТРОКУ
-  type User, 
-  type InsertUser, 
-  type Submission, 
+  type User,
+  type InsertUser,
+  type Submission,
   type InsertSubmission,
   type AdminAction,
   type InsertAdminAction,
@@ -1088,7 +1090,7 @@ async getAdminActionsWithUsers(): Promise<AdminAction[]> {
       .select()
       .from(tournaments)
       .where(sql`${tournaments.status} != 'cancelled' AND ${tournaments.status} != 'completed'`)
-      .orderBy(tournaments.startDate) as Tournament[];
+      .orderBy(desc(tournaments.createdAt)) as Tournament[];
   }
 
   async updateTournament(id: string, updates: Partial<Tournament>): Promise<Tournament> {
@@ -1165,6 +1167,7 @@ async getAdminActionsWithUsers(): Promise<AdminAction[]> {
   }
 
   async getTournamentRegistration(tournamentId: string, userId: string): Promise<TournamentRegistration | undefined> {
+    // First check direct registration
     const result = await db
       .select()
       .from(tournamentRegistrations)
@@ -1174,7 +1177,36 @@ async getAdminActionsWithUsers(): Promise<AdminAction[]> {
           eq(tournamentRegistrations.userId, userId)
         )
       ) as TournamentRegistration[];
-    return result[0] || undefined;
+
+    if (result[0]) {
+      return result[0];
+    }
+
+    // If no direct registration, check if user is part of a team in this tournament
+    const teamMembership = await db
+      .select({
+        id: tournamentTeamMembers.id,
+        userId: tournamentTeamMembers.userId,
+        tournamentId: tournamentTeams.tournamentId,
+        registeredAt: tournamentTeamMembers.joinedAt,
+        status: sql<string>`'registered'`,
+      })
+      .from(tournamentTeamMembers)
+      .innerJoin(tournamentTeams, eq(tournamentTeamMembers.teamId, tournamentTeams.id))
+      .where(
+        and(
+          eq(tournamentTeams.tournamentId, tournamentId),
+          eq(tournamentTeamMembers.userId, userId),
+          eq(tournamentTeamMembers.status, 'accepted')
+        )
+      );
+
+    if (teamMembership[0]) {
+      // Return a registration-like object for team members
+      return teamMembership[0] as any as TournamentRegistration;
+    }
+
+    return undefined;
   }
 
   async getTournamentRegistrations(tournamentId: string): Promise<TournamentRegistration[]> {
