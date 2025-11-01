@@ -127,11 +127,13 @@ function NotificationModal({ isOpen, type, title, message, onClose }: any) {
 }
 
 const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContextMenu, scale }: { territory: Territory; isSelected: boolean; onClick: (e: React.MouseEvent) => void; onContextMenu: (e: React.MouseEvent) => void; scale: number; }) => {
-  // Убираем дубликаты по userId - memoized
+  // Убираем дубликаты по userId и пустые claims - memoized
   const uniqueClaims = useMemo(() =>
-    territory.claims ? territory.claims.filter((claim, index, self) =>
-      index === self.findIndex(c => c.userId === claim.userId)
-    ) : [],
+    territory.claims ? territory.claims
+      .filter(claim => claim && claim.userId) // Remove null/undefined claims
+      .filter((claim, index, self) =>
+        index === self.findIndex(c => c.userId === claim.userId)
+      ) : [],
     [territory.claims]
   );
 
@@ -168,15 +170,19 @@ const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContext
     const teamEntries = entries.filter(([teamId]) => teamId !== 'solo');
     const soloEntries = entries.filter(([teamId]) => teamId === 'solo');
 
-    // Process teams
+    // Process teams - only show if there are actual members
     teamEntries.forEach(([teamId, members]) => {
+      if (members.length === 0) return; // Skip empty teams
+
       const leader = members.find(m => m.isTeamLeader);
       const teamMaxPlayers = territory.maxPlayers || 1;
       const emptySlots = Math.max(0, teamMaxPlayers - members.length);
 
       // Build team display string: "Player1 + Player2 + ? + ?"
       const memberNames = members.map(m => m.displayName || 'Unknown');
-      const emptySlotMarkers = Array(emptySlots).fill('?');
+
+      // Only add "?" if there are actual members
+      const emptySlotMarkers = members.length > 0 ? Array(emptySlots).fill('?') : [];
       const allSlots = [...memberNames, ...emptySlotMarkers];
       const displayText = allSlots.join(' + ');
 
