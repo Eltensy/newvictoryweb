@@ -164,43 +164,48 @@ const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContext
     // Convert to display format
     const result: Array<{ displayText: string; isTeamLeader: boolean; teamName: string | null }> = [];
 
-    Object.entries(teamGroups).forEach(([teamId, members]) => {
-      if (teamId === 'solo') {
-        // Solo players - show individually
+    // Only show team slots for the first team that claimed (if it's a team-based territory)
+    const entries = Object.entries(teamGroups);
+    const firstTeamEntry = entries.find(([teamId]) => teamId !== 'solo');
+
+    if (firstTeamEntry && entries.length === 1 && firstTeamEntry[0] !== 'solo') {
+      // Single team claim - show members + empty slots
+      const [teamId, members] = firstTeamEntry;
+      const leader = members.find(m => m.isTeamLeader);
+
+      // Add each member as separate entry
+      members.forEach(member => {
+        result.push({
+          displayText: member.displayName || 'Unknown',
+          isTeamLeader: member.userId === leader?.userId,
+          teamName: member.teamName || null,
+        });
+      });
+
+      // Calculate how many slots are empty based on maxPlayers
+      const teamMaxPlayers = territory.maxPlayers || 1;
+      const emptySlots = Math.max(0, teamMaxPlayers - members.length);
+
+      // Add "?" for empty slots
+      for (let i = 0; i < emptySlots; i++) {
+        result.push({
+          displayText: '?',
+          isTeamLeader: false,
+          teamName: members[0]?.teamName || null,
+        });
+      }
+    } else {
+      // Multiple teams or solo players - just show names without slots
+      Object.entries(teamGroups).forEach(([teamId, members]) => {
         members.forEach(member => {
           result.push({
             displayText: member.displayName || territory.name,
-            isTeamLeader: false,
-            teamName: null,
-          });
-        });
-      } else {
-        // Team - show each member on separate line
-        const leader = members.find(m => m.isTeamLeader);
-
-        // Add each member as separate entry
-        members.forEach(member => {
-          result.push({
-            displayText: member.displayName || 'Unknown',
-            isTeamLeader: member.userId === leader?.userId,
+            isTeamLeader: member.isTeamLeader || false,
             teamName: member.teamName || null,
           });
         });
-
-        // Calculate how many slots are empty based on maxPlayers
-        const teamMaxPlayers = territory.maxPlayers || 1;
-        const emptySlots = Math.max(0, teamMaxPlayers - members.length);
-
-        // Add "?" for empty slots
-        for (let i = 0; i < emptySlots; i++) {
-          result.push({
-            displayText: '?',
-            isTeamLeader: false,
-            teamName: members[0]?.teamName || null,
-          });
-        }
-      }
-    });
+      });
+    }
 
     return result;
   }, [uniqueClaims, territory.name, territory.maxPlayers]);
