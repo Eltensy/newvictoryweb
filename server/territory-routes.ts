@@ -75,10 +75,23 @@ export function registerTerritoryRoutes(app: Express) {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      const maps = await db
-        .select()
+      const mapsWithTournaments = await db
+        .select({
+          map: dropMapSettings,
+          tournament: tournaments
+        })
         .from(dropMapSettings)
+        .leftJoin(tournaments, eq(dropMapSettings.tournamentId, tournaments.id))
         .orderBy(desc(dropMapSettings.createdAt));
+
+      // Format response to include tournament info
+      const maps = mapsWithTournaments.map(row => ({
+        ...row.map,
+        tournament: row.tournament ? {
+          id: row.tournament.id,
+          name: row.tournament.name,
+        } : null
+      }));
 
       res.json(maps);
     } catch (error) {
