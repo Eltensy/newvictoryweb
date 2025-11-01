@@ -3223,14 +3223,33 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
     let dropMap = null;
     try {
       console.log(`🗺️  Creating dropmap for tournament: ${tournament.name}`);
-      dropMap = await territoryStorage.createEmptyMap(
-        `${tournament.name} - Карта`,
-        `Карта для турнира: ${tournament.name}`,
-        tournament.imageUrl || undefined,
-        authResult.adminId,
-        tournament.id,
-        tournament.teamMode
-      );
+
+      // Check if templateMapId is provided
+      const templateMapId = req.body.templateMapId;
+
+      if (templateMapId) {
+        // Copy from template map
+        console.log(`📋 Copying from template map: ${templateMapId}`);
+        dropMap = await territoryStorage.createMapFromSourceMap(
+          templateMapId,
+          `${tournament.name} - Карта`,
+          `Карта для турнира: ${tournament.name}`,
+          tournament.imageUrl || undefined,
+          authResult.adminId,
+          tournament.id,
+          tournament.teamMode
+        );
+      } else {
+        // Create empty map
+        dropMap = await territoryStorage.createEmptyMap(
+          `${tournament.name} - Карта`,
+          `Карта для турнира: ${tournament.name}`,
+          tournament.imageUrl || undefined,
+          authResult.adminId,
+          tournament.id,
+          tournament.teamMode
+        );
+      }
 
       // Link dropmap to tournament
       await storage.updateTournament(tournament.id, {

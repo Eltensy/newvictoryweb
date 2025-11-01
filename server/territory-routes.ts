@@ -4,24 +4,26 @@ import { z } from "zod";
 import { territoryStorage } from "./territory-storage";
 import { cloudStorage } from './fileStorage';
 import { storage } from "./storage";
+import { discordTournamentService } from "./discordTournamentService";
 import { db } from "./db";
-import { eq, desc, sql, and, isNull } from "drizzle-orm";
+import { eq, desc, sql, and, isNull, inArray } from "drizzle-orm";
 import { io } from './index';
 import { broadcastTerritoryClaim } from './websocket-server';
-import { 
-  dropMapSettings, 
-  dropMapEligiblePlayers, 
+import {
+  dropMapSettings,
+  dropMapEligiblePlayers,
   dropMapInviteCodes,
   territories,
   territoryClaims,
   users,
   tournaments,
+  tournamentRegistrations,
 } from "../shared/schema";
 import sharp from 'sharp';
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB для больших PNG карт
   fileFilter: (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -90,6 +92,7 @@ export function registerTerritoryRoutes(app: Express) {
         tournament: row.tournament ? {
           id: row.tournament.id,
           name: row.tournament.name,
+          teamMode: row.tournament.teamMode,
         } : null
       }));
 
@@ -613,13 +616,14 @@ export function registerTerritoryRoutes(app: Express) {
         return res.status(authResult.status).json({ error: authResult.error });
       }
 
-      const { displayName, expiresInDays } = req.body;
+      const { displayName, expiresInDays, teamMemberNames } = req.body;
 
       const invite = await territoryStorage.createDropMapInvite(
         req.params.mapId,
         displayName,
         expiresInDays || 30,
-        authResult.adminId
+        authResult.adminId,
+        teamMemberNames
       );
 
       res.json(invite);
@@ -1453,8 +1457,106 @@ app.get("/api/maps/:mapId/full-data", async (req, res) => {
       tournament: mapWithTournament.tournament ? {
         id: mapWithTournament.tournament.id,
         name: mapWithTournament.tournament.name,
+        teamMode: mapWithTournament.tournament.teamMode,
       } : null
     };
+
+    // Get team information for eligible players if this is a team tournament
+    let playerTeamInfo: Map<string, { teamId: string; teamName: string | null; isLeader: boolean; members: any[] }> = new Map();
+    if (mapData.tournamentId && mapData.tournament?.teamMode !== 'solo') {
+      const { tournamentTeams, tournamentTeamMembers } = await import('../shared/schema');
+
+      // Get all teams for this tournament
+      const teams = await db
+        .select({
+          id: tournamentTeams.id,
+          name: tournamentTeams.name,
+          leaderId: tournamentTeams.leaderId,
+        })
+        .from(tournamentTeams)
+        .where(eq(tournamentTeams.tournamentId, mapData.tournamentId));
+
+      // Get all accepted team members
+      const teamMembers = await db
+        .select({
+          teamId: tournamentTeamMembers.teamId,
+          userId: tournamentTeamMembers.userId,
+          status: tournamentTeamMembers.status,
+        })
+        .from(tournamentTeamMembers)
+        .where(eq(tournamentTeamMembers.status, 'accepted'));
+
+      // Get user info for all team members
+      const allMemberIds = [...teams.map(t => t.leaderId), ...teamMembers.map(m => m.userId)];
+      const memberUsers = await db
+        .select({
+          id: users.id,
+          username: users.username,
+          displayName: users.displayName,
+        })
+        .from(users)
+        .where(inArray(users.id, allMemberIds));
+
+      // Build team info map
+      for (const team of teams) {
+        const teamMemberIds = teamMembers
+          .filter(m => m.teamId === team.id)
+          .map(m => m.userId);
+
+        const allTeamMemberIds = [team.leaderId, ...teamMemberIds];
+        const members = memberUsers
+          .filter(u => allTeamMemberIds.includes(u.id))
+          .map(u => ({
+            userId: u.id,
+            username: u.username,
+            displayName: u.displayName,
+            isLeader: u.id === team.leaderId,
+          }));
+
+        // Add info for ALL team members (including leader)
+        for (const memberId of allTeamMemberIds) {
+          playerTeamInfo.set(memberId, {
+            teamId: team.id,
+            teamName: team.name,
+            isLeader: memberId === team.leaderId,
+            members,
+          });
+        }
+      }
+    }
+
+    // ✅ ДОБАВЛЕНО: Загружаем виртуальные команды (invite-based) из dropMapEligiblePlayers
+    // Группируем игроков по teamId
+    const virtualTeams: Map<string, any[]> = new Map();
+    for (const p of eligiblePlayers) {
+      const player = p.dropmap_eligible_players || p.dropMapEligiblePlayers;
+      const teamId = player?.teamId || player?.team_id;
+      const userId = player?.userId || player?.user_id;
+
+      if (teamId && userId) {
+        if (!virtualTeams.has(teamId)) {
+          virtualTeams.set(teamId, []);
+        }
+        virtualTeams.get(teamId)!.push({
+          userId,
+          displayName: player?.displayName || player?.display_name,
+          isLeader: player?.isTeamLeader || player?.is_team_leader || false,
+          username: 'invite',
+        });
+      }
+    }
+
+    // Добавляем виртуальные команды в playerTeamInfo
+    for (const [teamId, members] of virtualTeams.entries()) {
+      for (const member of members) {
+        playerTeamInfo.set(member.userId, {
+          teamId,
+          teamName: null, // Virtual teams don't have names
+          isLeader: member.isLeader,
+          members,
+        });
+      }
+    }
 
     res.json({
       map: mapData,
@@ -1463,10 +1565,12 @@ app.get("/api/maps/:mapId/full-data", async (req, res) => {
         // Явно извлекаем поля из joined таблиц
         const player = p.dropmap_eligible_players || p.dropMapEligiblePlayers;
         const userInfo = p.users;
+        const playerId = player?.userId || player?.user_id;
+        const teamInfo = playerTeamInfo.get(playerId);
 
         return {
           id: player?.id,
-          userId: player?.userId || player?.user_id,
+          userId: playerId,
           displayName: player?.displayName || player?.display_name,
           sourceType: player?.sourceType || player?.source_type,
           addedAt: player?.addedAt || player?.added_at,
@@ -1474,7 +1578,13 @@ app.get("/api/maps/:mapId/full-data", async (req, res) => {
             id: userInfo.id,
             username: userInfo.username,
             displayName: userInfo.displayName || userInfo.display_name
-          } : null
+          } : null,
+          teamInfo: teamInfo ? {
+            teamId: teamInfo.teamId,
+            teamName: teamInfo.teamName,
+            isLeader: teamInfo.isLeader,
+            members: teamInfo.members,
+          } : null,
         };
       }),
       isUserEligible: isEligible,
@@ -1674,6 +1784,82 @@ app.post("/api/claim-with-invite", async (req, res) => {
     } catch (error) {
       console.error('Error removing player from territory:', error);
       res.status(500).json({ error: "Не удалось убрать игрока" });
+    }
+  });
+
+  // Отправить изображение карты в Discord канал турнира
+  app.post("/api/maps/:mapId/send-to-discord", upload.single('image'), async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const { mapId } = req.params;
+
+      if (!req.file) {
+        return res.status(400).json({ error: "Изображение карты не предоставлено" });
+      }
+
+      // Get map info
+      const map = await territoryStorage.getMap(mapId);
+      if (!map) {
+        return res.status(404).json({ error: "Карта не найдена" });
+      }
+
+      if (!map.tournamentId) {
+        return res.status(400).json({ error: "Карта не привязана к турниру" });
+      }
+
+      // Get tournament info with Discord channel IDs
+      const [tournament] = await db
+        .select()
+        .from(tournaments)
+        .where(eq(tournaments.id, map.tournamentId));
+
+      if (!tournament) {
+        return res.status(404).json({ error: "Турнир не найден" });
+      }
+
+      if (!tournament.discordMapChannelId) {
+        return res.status(400).json({ error: "У турнира нет Discord канала для карты" });
+      }
+
+      // Get registered participants count
+      const registrations = await db
+        .select()
+        .from(tournamentRegistrations)
+        .where(eq(tournamentRegistrations.tournamentId, tournament.id));
+
+      // Send image to Discord with tournament info
+      const messageId = await discordTournamentService.postMapImage(
+        tournament.discordMapChannelId,
+        req.file.buffer,
+        map.name,
+        {
+          name: tournament.name,
+          status: tournament.status,
+          teamMode: tournament.teamMode || 'solo',
+          maxParticipants: tournament.maxParticipants || 0,
+          registeredCount: registrations.length,
+          startDate: tournament.startDate
+        },
+        tournament.discordMapMessageId || undefined
+      );
+
+      // Update tournament with message ID for future updates
+      // Always update if messageId changed (in case old message was deleted)
+      if (!tournament.discordMapMessageId || tournament.discordMapMessageId !== messageId) {
+        await db
+          .update(tournaments)
+          .set({ discordMapMessageId: messageId })
+          .where(eq(tournaments.id, tournament.id));
+      }
+
+      res.json({ message: "Карта отправлена в Discord", messageId });
+    } catch (error) {
+      console.error('Error sending map to Discord:', error);
+      res.status(500).json({ error: "Не удалось отправить карту в Discord" });
     }
   });
 }

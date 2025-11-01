@@ -258,11 +258,13 @@ export class DatabaseTerritoryStorage {
     }
 
     const claimsByTerritory: Record<string, any[]> = {};
+    const processedTeamsPerTerritory: Record<string, Set<string>> = {}; // Track which teams we've already added to each territory
 
     for (const row of allClaims) {
       const territoryId = row.claim.territoryId;
       if (!claimsByTerritory[territoryId]) {
         claimsByTerritory[territoryId] = [];
+        processedTeamsPerTerritory[territoryId] = new Set();
       }
 
       let displayName: string;
@@ -294,18 +296,94 @@ export class DatabaseTerritoryStorage {
         username = 'unknown';
       }
 
-      const exists = claimsByTerritory[territoryId].find(c => c.userId === userId);
-      if (!exists) {
-        const teamInfo = userTeams.get(userId);
-        claimsByTerritory[territoryId].push({
-          userId,
-          username,
-          displayName,
-          claimedAt: row.claim.claimedAt,
-          teamId: teamInfo?.teamId,
-          teamName: teamInfo?.teamName,
-          isTeamLeader: teamInfo?.isLeader || false,
-        });
+      // Проверяем teamInfo из реальных команд турнира или из eligiblePlayer (для инвайтов)
+      let teamInfo = userTeams.get(userId);
+      let virtualTeamId: string | null = null;
+
+      // Если нет команды из турнира, но есть teamId в eligiblePlayer - используем его
+      if (!teamInfo && row.eligiblePlayer?.teamId) {
+        virtualTeamId = row.eligiblePlayer.teamId;
+      }
+
+      // If this user is part of a team and we haven't processed this team for this territory yet
+      if (teamInfo && !processedTeamsPerTerritory[territoryId].has(teamInfo.teamId)) {
+        // Get all members of this team
+        const teamMemberIds = Array.from(userTeams.entries())
+          .filter(([_, info]) => info.teamId === teamInfo.teamId)
+          .map(([userId]) => userId);
+
+        // Get user info for all team members
+        const teamMemberUsers = await db
+          .select({
+            id: users.id,
+            username: users.username,
+            displayName: users.displayName,
+          })
+          .from(users)
+          .where(inArray(users.id, teamMemberIds));
+
+        // Add all team members to claims
+        for (const memberId of teamMemberIds) {
+          const memberInfo = userTeams.get(memberId);
+          const memberUser = teamMemberUsers.find(u => u.id === memberId);
+
+          if (memberInfo && !claimsByTerritory[territoryId].find(c => c.userId === memberId)) {
+            claimsByTerritory[territoryId].push({
+              userId: memberId,
+              username: memberUser?.username || 'unknown',
+              displayName: memberUser?.displayName || 'Unknown',
+              claimedAt: row.claim.claimedAt,
+              teamId: memberInfo.teamId,
+              teamName: memberInfo.teamName,
+              isTeamLeader: memberInfo.isLeader,
+            });
+          }
+        }
+
+        processedTeamsPerTerritory[territoryId].add(teamInfo.teamId);
+      } else if (virtualTeamId && !processedTeamsPerTerritory[territoryId].has(virtualTeamId)) {
+        // Virtual team (invite-based team)
+        // Получаем всех членов виртуальной команды из eligiblePlayers
+        const virtualTeamMembers = await db
+          .select()
+          .from(dropMapEligiblePlayers)
+          .where(
+            and(
+              eq(dropMapEligiblePlayers.settingsId, mapId),
+              eq(dropMapEligiblePlayers.teamId, virtualTeamId)
+            )
+          );
+
+        // Добавляем всех членов команды
+        for (const member of virtualTeamMembers) {
+          if (!claimsByTerritory[territoryId].find(c => c.userId === member.userId)) {
+            claimsByTerritory[territoryId].push({
+              userId: member.userId,
+              username: 'invite',
+              displayName: member.displayName,
+              claimedAt: row.claim.claimedAt,
+              teamId: virtualTeamId,
+              teamName: undefined, // Virtual teams don't have names
+              isTeamLeader: member.isTeamLeader || false,
+            });
+          }
+        }
+
+        processedTeamsPerTerritory[territoryId].add(virtualTeamId);
+      } else if (!teamInfo && !virtualTeamId) {
+        // Solo player (no team)
+        const exists = claimsByTerritory[territoryId].find(c => c.userId === userId);
+        if (!exists) {
+          claimsByTerritory[territoryId].push({
+            userId,
+            username,
+            displayName,
+            claimedAt: row.claim.claimedAt,
+            teamId: undefined,
+            teamName: undefined,
+            isTeamLeader: false,
+          });
+        }
       }
     }
 
@@ -412,11 +490,14 @@ export class DatabaseTerritoryStorage {
       // Проверяем дубликаты по userId
       const exists = claimsByTerritory[territoryId].find(c => c.userId === userId);
       if (!exists) {
-        claimsByTerritory[territoryId].push({ 
+        claimsByTerritory[territoryId].push({
           userId,
           username,
           displayName,
-          claimedAt: row.claim.claimedAt 
+          claimedAt: row.claim.claimedAt,
+          // Добавляем teamId и isTeamLeader из eligiblePlayer или claim
+          teamId: row.eligiblePlayer?.teamId || row.claim.teamId || null,
+          isTeamLeader: row.eligiblePlayer?.isTeamLeader || row.claim.isTeamLeader || false
         });
       }
     }
@@ -1025,26 +1106,28 @@ export class DatabaseTerritoryStorage {
   // =============================================
 
   async createInvite(
-    mapId: string, 
-    displayName: string, 
-    expiresInDays: number, 
-    createdBy?: string
+    mapId: string,
+    displayName: string,
+    expiresInDays: number,
+    createdBy?: string,
+    teamMemberNames?: string | null
   ): Promise<DropMapInviteCode> {
     const code = `invite-${Math.random().toString(36).substring(2, 10)}`;
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + expiresInDays);
-    
+
     const [invite] = await db
       .insert(dropMapInviteCodes)
-      .values({ 
-        settingsId: mapId, 
-        code, 
-        displayName, 
-        expiresAt, 
-        createdBy 
+      .values({
+        settingsId: mapId,
+        code,
+        displayName,
+        teamMemberNames,
+        expiresAt,
+        createdBy
       })
       .returning();
-    
+
     return invite;
   }
 
@@ -1082,7 +1165,7 @@ export class DatabaseTerritoryStorage {
   }
 
   async claimTerritoryWithInvite(
-    code: string, 
+    code: string,
     territoryId: string
   ): Promise<{ claim: TerritoryClaim; invite: DropMapInviteCode }> {
     return db.transaction(async (tx) => {
@@ -1093,7 +1176,7 @@ export class DatabaseTerritoryStorage {
         .select()
         .from(dropMapSettings)
         .where(eq(dropMapSettings.id, invite.settingsId));
-      
+
       if (!map) throw new Error('Карта для этого инвайта не найдена');
       if (map.isLocked) throw new Error('Карта заблокирована');
 
@@ -1101,7 +1184,7 @@ export class DatabaseTerritoryStorage {
         .select()
         .from(territories)
         .where(eq(territories.id, territoryId));
-      
+
       if (!territory) throw new Error('Territory not found');
       if (territory.mapId !== invite.settingsId) {
         throw new Error('Territory does not belong to this map');
@@ -1112,27 +1195,40 @@ export class DatabaseTerritoryStorage {
         .from(territoryClaims)
         .where(
           and(
-            eq(territoryClaims.territoryId, territoryId), 
-            eq(territoryClaims.claimType, 'claim'), 
+            eq(territoryClaims.territoryId, territoryId),
+            eq(territoryClaims.claimType, 'claim'),
             isNull(territoryClaims.revokedAt)
           )
         );
-        
+
       if (currentClaims.length >= (territory.maxPlayers || 999)) {
         throw new Error(`Максимум ${territory.maxPlayers} игрок(ов) на локации`);
       }
 
+      // Парсим список членов команды из JSON
+      let teamMembers: string[] = [];
+      if (invite.teamMemberNames) {
+        try {
+          teamMembers = JSON.parse(invite.teamMemberNames);
+        } catch (e) {
+          console.warn('Failed to parse teamMemberNames:', e);
+        }
+      }
+
+      // Создаём виртуальные ID для команды
       let virtualPlayerId = invite.virtualPlayerId;
+      const timestamp = Date.now();
+      const teamId = `team-${invite.code}-${timestamp}`;
 
       if (!virtualPlayerId) {
-        virtualPlayerId = `virtual-${invite.code}-${Date.now()}`;
+        virtualPlayerId = `virtual-invite-${invite.code}-${timestamp}`;
 
         await tx
           .update(dropMapInviteCodes)
           .set({ virtualPlayerId })
           .where(eq(dropMapInviteCodes.code, code));
 
-        // Добавляем инвайтнутого игрока в список допущенных игроков
+        // Добавляем капитана (лидера команды) в список допущенных игроков
         await tx
           .insert(dropMapEligiblePlayers)
           .values({
@@ -1141,8 +1237,34 @@ export class DatabaseTerritoryStorage {
             displayName: invite.displayName,
             sourceType: 'invite',
             addedBy: null,
+            teamId: teamMembers.length > 0 ? teamId : null,
+            isTeamLeader: teamMembers.length > 0,
           })
           .onConflictDoNothing();
+
+        // Добавляем членов команды в список допущенных игроков
+        for (let i = 0; i < teamMembers.length; i++) {
+          const memberName = teamMembers[i].trim();
+          if (memberName) {
+            const memberUserId = `${virtualPlayerId}-member-${i + 1}`;
+            await tx
+              .insert(dropMapEligiblePlayers)
+              .values({
+                settingsId: invite.settingsId,
+                userId: memberUserId,
+                displayName: memberName,
+                sourceType: 'invite',
+                addedBy: null,
+                teamId,
+                isTeamLeader: false,
+              })
+              .onConflictDoNothing();
+          }
+        }
+
+        // ✅ Invite-based players не добавляются в tournamentRegistrations
+        // Они существуют только в dropMapEligiblePlayers, потому что не являются реальными пользователями
+        // tournamentRegistrations.userId имеет foreign key на users.id, который требует UUID реального пользователя
       }
 
       const newClaimCount = currentClaims.length + 1;
@@ -1151,7 +1273,7 @@ export class DatabaseTerritoryStorage {
       if (currentClaims.length === 0) {
         await tx
           .update(territories)
-          .set({ 
+          .set({
             color: newColor,
             claimedAt: new Date()
           })
@@ -1169,19 +1291,21 @@ export class DatabaseTerritoryStorage {
           territoryId,
           userId: virtualPlayerId,
           claimType: 'claim',
-          reason: `Invite: ${invite.displayName} (${invite.code})`
+          reason: `Invite: ${invite.displayName} (${invite.code})`,
+          teamId: teamMembers.length > 0 ? teamId : null,
+          isTeamLeader: teamMembers.length > 0,
         })
         .returning();
-      
+
       await tx
         .update(dropMapInviteCodes)
-        .set({ 
-          isUsed: true, 
-          usedAt: new Date(), 
-          territoryId 
+        .set({
+          isUsed: true,
+          usedAt: new Date(),
+          territoryId
         })
         .where(eq(dropMapInviteCodes.code, code));
-      
+
       return { claim: newClaim, invite };
     });
   }
@@ -1212,12 +1336,13 @@ export class DatabaseTerritoryStorage {
   }
   
   async createDropMapInvite(
-    mapId: string, 
-    displayName: string, 
-    expiresInDays: number, 
-    createdBy?: string
-  ): Promise<DropMapInviteCode> { 
-    return this.createInvite(mapId, displayName, expiresInDays, createdBy); 
+    mapId: string,
+    displayName: string,
+    expiresInDays: number,
+    createdBy?: string,
+    teamMemberNames?: string | null
+  ): Promise<DropMapInviteCode> {
+    return this.createInvite(mapId, displayName, expiresInDays, createdBy, teamMemberNames);
   }
   
   async getDropMapInvites(mapId: string): Promise<DropMapInviteCode[]> { 

@@ -417,6 +417,8 @@ export const territoryClaims = pgTable("territory_claims", {
   revokedAt: timestamp("revoked_at"),
   assignedBy: uuid("assigned_by").references(() => users.id),
   reason: text("reason"),
+  teamId: text("team_id"), // ID команды для группировки игроков
+  isTeamLeader: boolean("is_team_leader").default(false), // Капитан команды
 });
 
 // Territory Queue
@@ -468,6 +470,8 @@ export const dropMapEligiblePlayers = pgTable("dropmap_eligible_players", {
   sourceDetails: jsonb("source_details"),
   addedBy: uuid("added_by").references(() => users.id),
   addedAt: timestamp("added_at").defaultNow().notNull(),
+  teamId: text("team_id"), // ID команды для группировки игроков
+  isTeamLeader: boolean("is_team_leader").default(false), // Капитан команды
 });
 
 // DropMap Invite Codes
@@ -476,6 +480,7 @@ export const dropMapInviteCodes = pgTable("dropmap_invite_codes", {
   settingsId: uuid("settings_id").references(() => dropMapSettings.id, { onDelete: 'cascade' }).notNull(),
   code: varchar("code", { length: 50 }).notNull().unique(),
   displayName: text("display_name").notNull(),
+  teamMemberNames: text("team_member_names"), // JSON массив с именами членов команды
   isUsed: boolean("is_used").default(false).notNull(),
   usedAt: timestamp("used_at"),
   territoryId: uuid("territory_id").references(() => territories.id),

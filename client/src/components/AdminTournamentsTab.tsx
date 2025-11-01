@@ -1,5 +1,5 @@
 // client/src/components/AdminTournamentsTab.tsx - ПОЛНАЯ ВЕРСИЯ С ПРИЗОВЫМ ФОНДОМ
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,6 +58,7 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
   const [actionLoading, setActionLoading] = useState(false);
   const [loadingParticipants, setLoadingParticipants] = useState(false);
   const [dropMapIdInput, setDropMapIdInput] = useState('');
+  const [availableMaps, setAvailableMaps] = useState<Array<{ id: string; name: string }>>([]);
 
   // Prize distribution state
   const [prizeDistribution, setPrizeDistribution] = useState<Record<string, number>>({});
@@ -71,13 +72,13 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    mapUrl: '',
     rules: '',
     entryFee: 0,
     maxParticipants: '',
     teamMode: 'solo' as 'solo' | 'duo' | 'trio' | 'squad',
     autoCreateDiscordChannels: false,
     discordRoleId: '',
+    templateMapId: '', // ID шаблона карты для копирования
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
 
@@ -85,13 +86,13 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
     setFormData({
       name: '',
       description: '',
-      mapUrl: '',
       rules: '',
       entryFee: 0,
       maxParticipants: '',
       teamMode: 'solo',
       autoCreateDiscordChannels: false,
       discordRoleId: '',
+      templateMapId: '',
     });
     setPrizeInputs([{ place: 1, amount: 0 }]);
     setImageFile(null);
@@ -124,6 +125,27 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       case 2: return '🥈';
       case 3: return '🥉';
       default: return `${place}.`;
+    }
+  };
+
+  const fetchAvailableMaps = async () => {
+    try {
+      console.log('🗺️ Fetching available maps...');
+      const response = await fetch('/api/maps', {
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
+      });
+
+      if (!response.ok) throw new Error('Failed to fetch maps');
+
+      const data = await response.json();
+      console.log('📋 Available maps received:', data);
+      // API returns array directly, not { maps: [...] }
+      setAvailableMaps(Array.isArray(data) ? data : []);
+      console.log('✅ Maps state updated, count:', (Array.isArray(data) ? data : []).length);
+    } catch (error) {
+      console.error('❌ Fetch maps error:', error);
     }
   };
 
@@ -250,8 +272,8 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       const formDataToSend = new FormData();
       formDataToSend.append('name', formData.name);
       if (formData.description) formDataToSend.append('description', formData.description);
-      if (formData.mapUrl) formDataToSend.append('mapUrl', formData.mapUrl);
       if (formData.rules) formDataToSend.append('rules', formData.rules);
+      if (formData.templateMapId) formDataToSend.append('templateMapId', formData.templateMapId);
 
       // Build prize distribution object
       const prizeDistributionObj: Record<string, number> = {};
@@ -488,6 +510,13 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       .sort((a, b) => a.place - b.place);
   };
 
+  // Load available maps when component mounts
+  useEffect(() => {
+    if (authToken) {
+      fetchAvailableMaps();
+    }
+  }, [authToken]);
+
   if (loading) {
     return (
       <Card>
@@ -616,7 +645,14 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="maxParticipants">Макс. участников</Label>
+                      <Label htmlFor="maxParticipants">
+                        Макс. команд
+                        {formData.teamMode !== 'solo' && (
+                          <span className="text-xs text-muted-foreground ml-2">
+                            (для {formData.teamMode === 'duo' ? '2' : formData.teamMode === 'trio' ? '3' : '4'} игроков в команде)
+                          </span>
+                        )}
+                      </Label>
                       <Input
                         id="maxParticipants"
                         type="number"
@@ -625,6 +661,16 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                         value={formData.maxParticipants}
                         onChange={(e) => setFormData({ ...formData, maxParticipants: e.target.value })}
                       />
+                      <p className="text-xs text-muted-foreground">
+                        {formData.teamMode === 'solo'
+                          ? 'Укажите максимальное количество игроков (например, 100)'
+                          : `Укажите максимальное количество команд (например, для 100 игроков: ${
+                              formData.teamMode === 'duo' ? '50 команд' :
+                              formData.teamMode === 'trio' ? '33 команды' :
+                              '25 команд'
+                            })`
+                        }
+                      </p>
                     </div>
                   </div>
 
@@ -649,14 +695,33 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="mapUrl">Ссылка на карту турнира</Label>
-                    <Input
-                      id="mapUrl"
-                      type="url"
-                      placeholder="https://..."
-                      value={formData.mapUrl}
-                      onChange={(e) => setFormData({ ...formData, mapUrl: e.target.value })}
-                    />
+                    <Label htmlFor="templateMap">Шаблон карты (опционально)</Label>
+                    <Select
+                      value={formData.templateMapId || 'empty'}
+                      onValueChange={(value) => {
+                        console.log('📝 Template map selected:', value);
+                        setFormData({ ...formData, templateMapId: value === 'empty' ? '' : value });
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Создать пустую карту" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="empty">Создать пустую карту</SelectItem>
+                        {availableMaps.map((map) => {
+                          console.log('🗺️ Rendering map option:', map);
+                          return (
+                            <SelectItem key={map.id} value={map.id}>
+                              {map.name}
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Выберите существующую карту для копирования локаций или создайте пустую
+                      {availableMaps.length > 0 && ` (Доступно карт: ${availableMaps.length})`}
+                    </p>
                   </div>
 
                   <div className="space-y-2">

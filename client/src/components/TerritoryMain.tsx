@@ -17,7 +17,7 @@ import {
   AlertCircle, Users, CheckCircle, XCircle, AlertTriangle, Info, ZoomIn,
   ZoomOut, RotateCcw, Lock, Unlock, Copy, Plus, Trash2,
   Edit, Save, X, Undo, UserPlus, Upload, Link as LinkIcon, Image as ImageIcon, ChevronDown,
-  Wifi, WifiOff
+  Wifi, WifiOff, Download
 } from 'lucide-react';
 import { cn } from "@/lib/utils";
 
@@ -53,7 +53,7 @@ interface DropMap {
   mode: 'tournament' | 'practice';
   isLocked: boolean;
   tournamentId?: string;
-  tournament?: { name: string; };
+  tournament?: { name: string; teamMode?: 'solo' | 'duo' | 'trio' | 'squad'; };
 }
 interface ExpandedTerritories {
   [territoryId: string]: boolean;
@@ -65,6 +65,17 @@ interface EligiblePlayer {
   sourceType?: string;
   addedAt: string;
   user?: { username: string; displayName: string; };
+  teamInfo?: {
+    teamId: string;
+    teamName: string;
+    isLeader: boolean;
+    members: Array<{
+      userId: string;
+      username: string;
+      displayName: string;
+      isLeader: boolean;
+    }>;
+  };
 }
 interface InviteCode {
   id: string;
@@ -126,7 +137,7 @@ function NotificationModal({ isOpen, type, title, message, onClose }: any) {
   );
 }
 
-const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContextMenu, scale }: { territory: Territory; isSelected: boolean; onClick: (e: React.MouseEvent) => void; onContextMenu: (e: React.MouseEvent) => void; scale: number; }) => {
+const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContextMenu, scale, tournamentTeamMode }: { territory: Territory; isSelected: boolean; onClick: (e: React.MouseEvent) => void; onContextMenu: (e: React.MouseEvent) => void; scale: number; tournamentTeamMode?: 'solo' | 'duo' | 'trio' | 'squad'; }) => {
   // Убираем дубликаты по userId и пустые claims - memoized
   const uniqueClaims = useMemo(() =>
     territory.claims ? territory.claims
@@ -175,7 +186,14 @@ const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContext
       if (members.length === 0) return; // Skip empty teams
 
       const leader = members.find(m => m.isTeamLeader);
-      const teamMaxPlayers = territory.maxPlayers || 1;
+
+      // Get team size from tournament teamMode, or fallback to territory.maxPlayers
+      let teamMaxPlayers = territory.maxPlayers || 1;
+      if (tournamentTeamMode) {
+        const teamSizeMap = { solo: 1, duo: 2, trio: 3, squad: 4 };
+        teamMaxPlayers = teamSizeMap[tournamentTeamMode] || teamMaxPlayers;
+      }
+
       const emptySlots = Math.max(0, teamMaxPlayers - members.length);
 
       // Build team display string: "Player1 + Player2 + ? + ?"
@@ -205,7 +223,7 @@ const TerritoryPolygon = React.memo(({ territory, isSelected, onClick, onContext
     });
 
     return result;
-  }, [uniqueClaims, territory.name, territory.maxPlayers]);
+  }, [uniqueClaims, territory.name, territory.maxPlayers, tournamentTeamMode]);
 
   const hasClaims = uniqueClaims.length > 0;
   const claimCount = groupedClaims.length;
@@ -386,6 +404,7 @@ export default function TerritoryMain() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   
   const [expandedTerritories, setExpandedTerritories] = useState<ExpandedTerritories>({});
+  const [expandedTeams, setExpandedTeams] = useState<Record<string, boolean>>({});
 
   const [shouldConnectSocket, setShouldConnectSocket] = useState(false);
 
@@ -433,7 +452,7 @@ export default function TerritoryMain() {
 const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [playerSearchQuery, setPlayerSearchQuery] = useState('');
-  const [inviteForm, setInviteForm] = useState({ displayName: '', expiresInDays: 30 });
+  const [inviteForm, setInviteForm] = useState({ displayName: '', expiresInDays: 30, teamMemberNames: '' });
   const [importForm, setImportForm] = useState({ tournamentId: '', topN: '', positions: '' });
   const [settingsForm, setSettingsForm] = useState({ isLocked: false, mapImageFile: null as File | null });
   const [assignPlayerForm, setAssignPlayerForm] = useState({ territoryId: '', playerId: '' });
@@ -823,6 +842,224 @@ const { isConnected } = useTerritorySocket(
     }
   };
 
+  const generateMapPNG = async (): Promise<Blob | null> => {
+    if (!activeMap) return null;
+
+    return new Promise((resolve, reject) => {
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          reject(new Error('Failed to create canvas'));
+          return;
+        }
+
+        // Use full map size for export
+        const SVG_SIZE = 1000;
+        const exportScale = 2; // 2x resolution (2000x2000) - баланс качества и размера файла
+
+        canvas.width = SVG_SIZE * exportScale;
+        canvas.height = SVG_SIZE * exportScale;
+
+        // Enable image smoothing for better quality
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        // Function to draw territories directly on canvas
+        const drawTerritories = () => {
+          territories.forEach(territory => {
+            // Get unique claims
+            const uniqueClaims = territory.claims ? territory.claims
+              .filter(claim => claim && claim.userId)
+              .filter((claim, index, self) =>
+                index === self.findIndex(c => c.userId === claim.userId)
+              ) : [];
+
+            const hasClaims = uniqueClaims.length > 0;
+            const claimCount = uniqueClaims.length;
+            const displayColor = claimCount >= 2 ? '#EF4444' : territory.color;
+
+            // Draw polygon
+            ctx.beginPath();
+            territory.points.forEach((point, i) => {
+              const x = point.x * exportScale;
+              const y = point.y * exportScale;
+              if (i === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            });
+            ctx.closePath();
+
+            // Fill polygon
+            ctx.fillStyle = displayColor;
+            ctx.globalAlpha = hasClaims ? 0.5 : 0.25;
+            ctx.fill();
+
+            // Stroke polygon
+            ctx.globalAlpha = 1.0;
+            ctx.strokeStyle = displayColor;
+            ctx.lineWidth = 2 * exportScale;
+            ctx.stroke();
+
+            // Draw text labels if there are claims
+            if (hasClaims) {
+              const centerX = territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length;
+              const centerY = territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length;
+
+              // Group claims by teams
+              const hasTeams = uniqueClaims.some(c => c.teamId);
+              let displayTexts: string[] = [];
+
+              if (!hasTeams) {
+                displayTexts = uniqueClaims.map(c => c.displayName || territory.name);
+              } else {
+                const teamGroups: Record<string, typeof uniqueClaims> = {};
+                uniqueClaims.forEach(claim => {
+                  const teamId = claim.teamId || 'solo';
+                  if (!teamGroups[teamId]) teamGroups[teamId] = [];
+                  teamGroups[teamId].push(claim);
+                });
+
+                Object.entries(teamGroups).forEach(([teamId, members]) => {
+                  if (teamId !== 'solo' && members.length > 0) {
+                    const memberNames = members.map(m => m.displayName).join(' + ');
+                    displayTexts.push(memberNames);
+                  } else {
+                    members.forEach(m => displayTexts.push(m.displayName || territory.name));
+                  }
+                });
+              }
+
+              // Calculate text positions
+              const offset = 20;
+              displayTexts.forEach((text, index) => {
+                let yPos = centerY;
+                if (displayTexts.length > 1) {
+                  const totalHeight = offset * 2 * (displayTexts.length - 1);
+                  const startY = centerY - totalHeight / 2;
+                  yPos = startY + (totalHeight / (displayTexts.length - 1)) * index;
+                }
+
+                const x = centerX * exportScale;
+                const y = yPos * exportScale;
+
+                // Set font
+                ctx.font = `bold ${14 * exportScale}px Montserrat, Inter, system-ui, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                // Draw text stroke (outline)
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+                ctx.lineWidth = 3 * exportScale;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.strokeText(text, x, y);
+
+                // Draw text fill
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(text, x, y);
+              });
+            }
+          });
+
+          // Export canvas to PNG
+          canvas.toBlob((blob) => {
+            resolve(blob);
+          }, 'image/png', 0.92); // Качество 0.92 для баланса размера и качества
+        };
+
+        // Load and draw background image first
+        if (activeMap.mapImageUrl) {
+          const bgImage = new Image();
+          bgImage.crossOrigin = 'anonymous';
+
+          bgImage.onload = () => {
+            // Draw background
+            ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+            // Then draw territories on top
+            drawTerritories();
+          };
+
+          bgImage.onerror = () => {
+            console.warn('Failed to load background image, using dark background');
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawTerritories();
+          };
+
+          bgImage.src = activeMap.mapImageUrl;
+        } else {
+          // No background image, just draw dark background and territories
+          ctx.fillStyle = '#1a1a1a';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          drawTerritories();
+        }
+
+      } catch (error) {
+        reject(error);
+      }
+    });
+  };
+
+  const handleExportMapAsPNG = async () => {
+    if (!activeMap) return;
+
+    try {
+      const blob = await generateMapPNG();
+      if (blob) {
+        const link = document.createElement('a');
+        link.download = `${activeMap.name}.png`;
+        link.href = URL.createObjectURL(blob);
+        link.click();
+        URL.revokeObjectURL(link.href);
+        showNotification('success', 'Успешно', 'Карта экспортирована');
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      showNotification('error', 'Ошибка', 'Не удалось экспортировать карту');
+    }
+  };
+
+  const handleSendMapToDiscord = async () => {
+    if (!activeMap) return;
+
+    try {
+      setIsLoading(true);
+      const blob = await generateMapPNG();
+
+      if (!blob) {
+        showNotification('error', 'Ошибка', 'Не удалось создать изображение');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('image', blob, `${activeMap.name}.png`);
+
+      const token = getAuthToken();
+      if (!token) return;
+
+      const response = await fetch(`/api/maps/${activeMap.id}/send-to-discord`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to send map to Discord');
+      }
+
+      showNotification('success', 'Успешно', 'Карта отправлена в Discord');
+    } catch (error: any) {
+      console.error('Send to Discord error:', error);
+      showNotification('error', 'Ошибка', error.message || 'Не удалось отправить карту');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSaveSettings = async () => {
     if (!activeMap) return;
     try {
@@ -903,10 +1140,23 @@ const { isConnected } = useTerritorySocket(
     try {
       const token = getAuthToken();
       if (!token) return;
+
+      // Парсим имена членов команды (по одному на строку)
+      const teamMembers = inviteForm.teamMemberNames
+        .split('\n')
+        .map(name => name.trim())
+        .filter(name => name.length > 0);
+
+      const payload = {
+        displayName: inviteForm.displayName,
+        expiresInDays: inviteForm.expiresInDays,
+        teamMemberNames: teamMembers.length > 0 ? JSON.stringify(teamMembers) : null,
+      };
+
       const response = await fetch(`/api/maps/${activeMap.id}/invites`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(inviteForm),
+        body: JSON.stringify(payload),
       });
       if (response.ok) {
         const data = await response.json();
@@ -914,6 +1164,7 @@ const { isConnected } = useTerritorySocket(
         navigator.clipboard.writeText(inviteUrl);
         showNotification('success', 'Успешно', `Код создан и скопирован: ${data.code}`);
         setShowInviteDialog(false);
+        setInviteForm({ displayName: '', expiresInDays: 30, teamMemberNames: '' }); // Сброс формы
         await loadMapData(activeMap.id);
       } else {
         const error = await response.json();
@@ -1340,6 +1591,30 @@ const resetZoom = useCallback(() => {
                 >
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
+                {user?.isAdmin && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={handleExportMapAsPNG}
+                      className="h-7 px-2"
+                      title="Экспортировать карту в PNG"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </Button>
+                    {activeMap.tournamentId && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleSendMapToDiscord}
+                        className="h-7 px-2"
+                        title="Отправить карту в Discord турнира"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </>
+                )}
               </div>
             )}
 
@@ -1466,7 +1741,7 @@ const resetZoom = useCallback(() => {
           ) : (
             <svg ref={svgRef} viewBox={viewBox} width="100%" height="100%" onClick={handleSVGClick} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel} onContextMenu={(e) => e.preventDefault()} className="max-w-full max-h-full" style={{ cursor: isDragging ? 'grabbing' : isDrawingMode ? 'crosshair' : 'pointer', aspectRatio: '1 / 1' }}>
               {activeMap?.mapImageUrl && (<image href={activeMap.mapImageUrl} x="0" y="0" width={SVG_SIZE} height={SVG_SIZE} preserveAspectRatio="xMidYMid slice" />)}
-              {territories.map(territory => (<TerritoryPolygon key={territory.id} territory={territory} isSelected={selectedTerritory?.id === territory.id} onClick={(e) => handleTerritoryClick(territory, e)} onContextMenu={(e) => handleTerritoryContextMenu(territory, e)} scale={scale} />))}
+              {territories.map(territory => (<TerritoryPolygon key={territory.id} territory={territory} isSelected={selectedTerritory?.id === territory.id} onClick={(e) => handleTerritoryClick(territory, e)} onContextMenu={(e) => handleTerritoryContextMenu(territory, e)} scale={scale} tournamentTeamMode={activeMap?.tournament?.teamMode} />))}
               {isDrawingMode && currentPoints.length > 0 && (<DrawingPoints points={currentPoints} color={"#000000"} scale={scale} />)}
             </svg>
           )}
@@ -1516,11 +1791,20 @@ const resetZoom = useCallback(() => {
           )}
           
           <div className="p-4 border-b">
-             <h3 className="font-semibold flex items-center gap-2 mb-3">
-               <Users className="h-4 w-4" />
-               Игроки
-               <Badge variant="outline" className="ml-auto">{eligiblePlayers.length}</Badge>
-             </h3>
+             {(() => {
+               const isTeamTournament = activeMap?.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo';
+               const teamLeaders = isTeamTournament ? eligiblePlayers.filter(p => p.teamInfo?.isLeader) : [];
+               const count = isTeamTournament ? teamLeaders.length : eligiblePlayers.length;
+               const label = isTeamTournament ? 'Команды' : 'Игроки';
+
+               return (
+                 <h3 className="font-semibold flex items-center gap-2 mb-3">
+                   <Users className="h-4 w-4" />
+                   {label}
+                   <Badge variant="outline" className="ml-auto">{count}</Badge>
+                 </h3>
+               );
+             })()}
               <div className="space-y-2">
   {(() => {
     if (eligiblePlayers.length === 0) {
@@ -1532,64 +1816,169 @@ const resetZoom = useCallback(() => {
       );
     }
 
-    // Для каждого eligible игрока находим его территорию (если есть)
-    const playersWithTerritories = eligiblePlayers.map(player => {
-      // Находим территорию где этот игрок заклеймил
-      const claimedTerritory = territories.find(t =>
-        t.claims?.some(c => c.userId === player.userId)
-      );
+    // Check if this is a team tournament
+    const isTeamTournament = activeMap?.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo';
 
-      return {
-        player,
-        territory: claimedTerritory,
-        hasClaim: !!claimedTerritory
-      };
-    });
+    if (isTeamTournament) {
+      // For team tournaments, show only team leaders with expandable team members
+      const teamLeaders = eligiblePlayers.filter(p => p.teamInfo?.isLeader);
 
-    return playersWithTerritories.map(({ player, territory, hasClaim }) => (
-      <button
-        key={player.userId}
-        onClick={() => {
-          if (hasClaim && territory) {
-            setSelectedTerritory(territory);
-            // Зумим на территорию
-            const centerX = territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length;
-            const centerY = territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length;
-            setPanOffset({ x: SVG_SIZE / 2 - centerX, y: SVG_SIZE / 2 - centerY });
-            setScale(2);
-          }
-        }}
-        className={cn(
-          "w-full flex items-center justify-between p-2 bg-background rounded border border-border group transition-colors",
-          hasClaim ? "hover:bg-muted/50 cursor-pointer" : "opacity-60 cursor-default"
-        )}
-      >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {hasClaim && territory ? (
-            <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: territory.color }} />
-          ) : (
-            <div className="w-3 h-3 rounded-full flex-shrink-0 border-2 border-muted-foreground/30" />
-          )}
-          <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-          <div className="min-w-0 flex-1 text-left">
-            <div className="text-xs font-medium truncate">{player.displayName || 'Неизвестный'}</div>
-            <div className="text-xs text-muted-foreground truncate">@{player.user?.username || 'unknown'}</div>
+      if (teamLeaders.length === 0) {
+        return (
+          <div className="text-center py-6 text-muted-foreground">
+            <Users className="h-6 w-6 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">Нет команд на карте</p>
           </div>
-        </div>
-        {hasClaim && territory && isAdminMode && user?.isAdmin && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleRemovePlayerFromTerritory(territory.id, player.userId);
-            }}
-            className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2 h-6 w-6 rounded bg-destructive/10 hover:bg-destructive/20 flex items-center justify-center text-destructive"
-            title="Убрать с локации"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </button>
-    ));
+        );
+      }
+
+      return teamLeaders.map(leader => {
+        const teamId = leader.teamInfo!.teamId;
+        const isExpanded = expandedTeams[teamId];
+        const members = leader.teamInfo!.members.filter(m => !m.isLeader);
+
+        // Find territory for the team
+        const claimedTerritory = territories.find(t =>
+          t.claims?.some(c => c.teamId === teamId)
+        );
+        const hasClaim = !!claimedTerritory;
+
+        return (
+          <div key={leader.userId} className="space-y-1">
+            <button
+              onClick={() => {
+                if (hasClaim && claimedTerritory) {
+                  setSelectedTerritory(claimedTerritory);
+                  const centerX = claimedTerritory.points.reduce((sum, p) => sum + p.x, 0) / claimedTerritory.points.length;
+                  const centerY = claimedTerritory.points.reduce((sum, p) => sum + p.y, 0) / claimedTerritory.points.length;
+                  setPanOffset({ x: SVG_SIZE / 2 - centerX, y: SVG_SIZE / 2 - centerY });
+                  setScale(2);
+                }
+              }}
+              className={cn(
+                "w-full flex items-center justify-between p-2 bg-background rounded border border-border group transition-colors",
+                hasClaim ? "hover:bg-muted/50 cursor-pointer" : "opacity-60 cursor-default"
+              )}
+            >
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                {hasClaim && claimedTerritory ? (
+                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: claimedTerritory.color }} />
+                ) : (
+                  <div className="w-3 h-3 rounded-full flex-shrink-0 border-2 border-muted-foreground/30" />
+                )}
+                <Crown className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+                <div className="min-w-0 flex-1 text-left">
+                  <div className="text-xs font-medium truncate">{leader.displayName}</div>
+                  <div className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                    <Users className="h-3 w-3" />
+                    <span>{members.length + 1} / {activeMap.tournament?.teamMode === 'duo' ? 2 : activeMap.tournament?.teamMode === 'trio' ? 3 : 4}</span>
+                  </div>
+                </div>
+                {members.length > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedTeams(prev => ({ ...prev, [teamId]: !prev[teamId] }));
+                    }}
+                    className="flex-shrink-0 p-1 hover:bg-muted rounded"
+                    title={isExpanded ? "Скрыть состав" : "Показать состав"}
+                  >
+                    <ChevronDown className={cn(
+                      "h-4 w-4 transition-transform text-muted-foreground",
+                      isExpanded && "rotate-180"
+                    )} />
+                  </button>
+                )}
+              </div>
+              {hasClaim && claimedTerritory && isAdminMode && user?.isAdmin && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemovePlayerFromTerritory(claimedTerritory.id, leader.userId);
+                  }}
+                  className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2 h-6 w-6 rounded bg-destructive/10 hover:bg-destructive/20 flex items-center justify-center text-destructive"
+                  title="Убрать команду с локации"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </button>
+
+            {/* Team members dropdown */}
+            {isExpanded && members.length > 0 && (
+              <div className="ml-8 space-y-1">
+                {members.map(member => (
+                  <div
+                    key={member.userId}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded bg-muted/30 border border-border/50"
+                  >
+                    <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                    <span className="text-xs truncate">{member.displayName}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      });
+    } else {
+      // For solo tournaments or non-tournament maps, show all players individually
+      const playersWithTerritories = eligiblePlayers.map(player => {
+        const claimedTerritory = territories.find(t =>
+          t.claims?.some(c => c.userId === player.userId)
+        );
+
+        return {
+          player,
+          territory: claimedTerritory,
+          hasClaim: !!claimedTerritory
+        };
+      });
+
+      return playersWithTerritories.map(({ player, territory, hasClaim }) => (
+        <button
+          key={player.userId}
+          onClick={() => {
+            if (hasClaim && territory) {
+              setSelectedTerritory(territory);
+              const centerX = territory.points.reduce((sum, p) => sum + p.x, 0) / territory.points.length;
+              const centerY = territory.points.reduce((sum, p) => sum + p.y, 0) / territory.points.length;
+              setPanOffset({ x: SVG_SIZE / 2 - centerX, y: SVG_SIZE / 2 - centerY });
+              setScale(2);
+            }
+          }}
+          className={cn(
+            "w-full flex items-center justify-between p-2 bg-background rounded border border-border group transition-colors",
+            hasClaim ? "hover:bg-muted/50 cursor-pointer" : "opacity-60 cursor-default"
+          )}
+        >
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            {hasClaim && territory ? (
+              <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: territory.color }} />
+            ) : (
+              <div className="w-3 h-3 rounded-full flex-shrink-0 border-2 border-muted-foreground/30" />
+            )}
+            <User className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+            <div className="min-w-0 flex-1 text-left">
+              <div className="text-xs font-medium truncate">{player.displayName || 'Неизвестный'}</div>
+              <div className="text-xs text-muted-foreground truncate">@{player.user?.username || 'unknown'}</div>
+            </div>
+          </div>
+          {hasClaim && territory && isAdminMode && user?.isAdmin && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRemovePlayerFromTerritory(territory.id, player.userId);
+              }}
+              className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ml-2 h-6 w-6 rounded bg-destructive/10 hover:bg-destructive/20 flex items-center justify-center text-destructive"
+              title="Убрать с локации"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </button>
+      ));
+    }
   })()}
 </div>
               </div>
@@ -1887,7 +2276,22 @@ const resetZoom = useCallback(() => {
         <DialogContent>
           <DialogHeader><DialogTitle>Создать инвайт-код</DialogTitle><DialogDescription>Создайте код для приглашения игроков</DialogDescription></DialogHeader>
           <div className="space-y-4">
-            <div><Label>Отображаемое имя</Label><Input value={inviteForm.displayName} onChange={(e) => setInviteForm({ ...inviteForm, displayName: e.target.value })} placeholder="Например: Malibuca" /></div>
+            <div><Label>Имя капитана</Label><Input value={inviteForm.displayName} onChange={(e) => setInviteForm({ ...inviteForm, displayName: e.target.value })} placeholder="Например: Malibuca" /></div>
+            {activeMap?.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo' && (
+              <div>
+                <Label>Члены команды (опционально)</Label>
+                <textarea
+                  value={inviteForm.teamMemberNames}
+                  onChange={(e) => setInviteForm({ ...inviteForm, teamMemberNames: e.target.value })}
+                  placeholder="Введите имена членов команды (по одному на строку)&#10;Например:&#10;Player1&#10;Player2&#10;Player3"
+                  className="w-full min-h-[100px] px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+                  rows={4}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Для {activeMap.tournament.teamMode === 'duo' ? 'дуо' : activeMap.tournament.teamMode === 'trio' ? 'трио' : 'сквада'} - укажите {activeMap.tournament.teamMode === 'duo' ? '1' : activeMap.tournament.teamMode === 'trio' ? '2' : '3'} {activeMap.tournament.teamMode === 'duo' ? 'напарника' : 'напарников'}
+                </p>
+              </div>
+            )}
             <div><Label>Срок действия (дней)</Label><Input type="number" min="1" max="365" value={inviteForm.expiresInDays} onChange={(e) => setInviteForm({ ...inviteForm, expiresInDays: parseInt(e.target.value) })} /></div>
             <Button onClick={handleCreateInvite} className="w-full">Создать код</Button>
           </div>

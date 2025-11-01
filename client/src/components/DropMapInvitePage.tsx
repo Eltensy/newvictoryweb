@@ -324,23 +324,62 @@ export default function DropMapInvitePage() {
             claimCount > 0 ? "hover:fill-opacity-60" : "hover:fill-opacity-35"
           )}
         />
-        {/* ✅ ИСПРАВЛЕНО: Показываем текст ТОЛЬКО если есть клеймы */}
+        {/* ✅ ИСПРАВЛЕНО: Показываем текст с группировкой по командам */}
         {scale > 0.5 && claimCount > 0 && (() => {
           const centerX = territory.points.reduce((sum: number, p: any) => sum + p.x, 0) / territory.points.length;
           const centerY = territory.points.reduce((sum: number, p: any) => sum + p.y, 0) / territory.points.length;
-          
-          const positions = getTextPositions(centerX, centerY, claimCount);
-          
-          return uniqueClaims.map((claim: any, index: number) => {
+
+          // Группировка по командам (как в TerritoryMain)
+          const hasTeams = uniqueClaims.some((c: any) => c.teamId);
+          let displayTexts: Array<{ text: string; key: string }> = [];
+
+          if (!hasTeams) {
+            // Без команд - показываем каждого игрока отдельно
+            displayTexts = uniqueClaims.map((claim: any, idx: number) => ({
+              text: claim.displayName || territory.name,
+              key: `${claim.userId}-${idx}`
+            }));
+          } else {
+            // С командами - группируем по teamId
+            const teamGroups: Record<string, any[]> = {};
+            uniqueClaims.forEach((claim: any) => {
+              const teamId = claim.teamId || 'solo';
+              if (!teamGroups[teamId]) teamGroups[teamId] = [];
+              teamGroups[teamId].push(claim);
+            });
+
+            const entries = Object.entries(teamGroups);
+            const teamEntries = entries.filter(([teamId]) => teamId !== 'solo');
+            const soloEntries = entries.filter(([teamId]) => teamId === 'solo');
+
+            // Сначала команды
+            teamEntries.forEach(([teamId, members]) => {
+              if (members.length > 0) {
+                const memberNames = members.map((m: any) => m.displayName).join(' + ');
+                displayTexts.push({ text: memberNames, key: teamId });
+              }
+            });
+
+            // Потом соло
+            soloEntries.forEach(([_, members]) => {
+              members.forEach((m: any, idx: number) => {
+                displayTexts.push({ text: m.displayName || territory.name, key: `${m.userId}-${idx}` });
+              });
+            });
+          }
+
+          const positions = getTextPositions(centerX, centerY, displayTexts.length);
+
+          return displayTexts.map((item, index) => {
             const pos = positions[index];
             if (!pos) return null;
-            
+
             return (
-              <text 
-                key={`${claim.userId}-${index}`}
-                x={pos.x} 
-                y={pos.y} 
-                textAnchor="middle" 
+              <text
+                key={item.key}
+                x={pos.x}
+                y={pos.y}
+                textAnchor="middle"
                 dominantBaseline="middle"
                 className="pointer-events-none select-none"
                 style={{
@@ -355,7 +394,7 @@ export default function DropMapInvitePage() {
                   strokeLinejoin: 'round'
                 }}
               >
-                {claim.displayName || territory.name}
+                {item.text}
               </text>
             );
           });

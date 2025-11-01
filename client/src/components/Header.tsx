@@ -218,35 +218,35 @@ export default function EnhancedHeader({
               Мои заявки
             </Button>
             
-            <div className="relative group">
-              <Button
-                disabled
-                variant="ghost"
-                size="sm"
-                className="h-8 px-3 text-sm font-medium text-muted-foreground cursor-not-allowed opacity-60"
-              >
-                <MapPin className="h-3.5 w-3.5 mr-1.5" />
-                Карты
-              </Button>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-1 bg-popover text-popover-foreground text-xs rounded-md shadow-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50">
-                Скоро...
-              </div>
-            </div>
+            <Button
+              onClick={() => window.location.href = '/dropmap'}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-8 px-3 text-sm font-medium transition-colors",
+                currentPath.includes('/dropmap') || currentPath.includes('/territory')
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <MapPin className="h-3.5 w-3.5 mr-1.5" />
+              Карты
+            </Button>
 
-            <div className="relative group">
-              <Button
-                disabled
-                variant="ghost"
-                size="sm"
-                className="h-8 px-3 text-sm font-medium text-muted-foreground cursor-not-allowed opacity-60"
-              >
-                <Trophy className="h-3.5 w-3.5 mr-1.5" />
-                Турниры
-              </Button>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-2 py-1 bg-popover text-popover-foreground text-xs rounded-md shadow-md opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50">
-                Скоро...
-              </div>
-            </div>
+            <Button
+              onClick={() => window.location.href = '/tournaments'}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-8 px-3 text-sm font-medium transition-colors",
+                isInTournamentsSection
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Trophy className="h-3.5 w-3.5 mr-1.5" />
+              Турниры
+            </Button>
           </nav>
         </div>
 
@@ -510,23 +510,21 @@ export default function EnhancedHeader({
                 </Button>
                 
                 <Button
-                  disabled
-                  variant="ghost"
-                  className="w-full justify-start h-10 text-muted-foreground cursor-not-allowed opacity-60"
+                  onClick={() => window.location.href = '/dropmap'}
+                  variant={currentPath.includes('/dropmap') || currentPath.includes('/territory') ? "default" : "ghost"}
+                  className="w-full justify-start h-10"
                 >
                   <MapPin className="h-4 w-4 mr-3" />
                   Карты
-                  <span className="ml-auto text-xs">Скоро</span>
                 </Button>
 
                 <Button
-                  disabled
-                  variant="ghost"
-                  className="w-full justify-start h-10 text-muted-foreground cursor-not-allowed opacity-60"
+                  onClick={() => window.location.href = '/tournaments'}
+                  variant={isInTournamentsSection ? "default" : "ghost"}
+                  className="w-full justify-start h-10"
                 >
                   <Trophy className="h-4 w-4 mr-3" />
                   Турниры
-                  <span className="ml-auto text-xs">Скоро</span>
                 </Button>
               </div>
 

@@ -446,6 +446,160 @@ export class DiscordTournamentService {
       return false;
     }
   }
+
+  /**
+   * Отправляет изображение карты в Discord канал с красивым embed
+   */
+  async postMapImage(
+    channelId: string,
+    imageBuffer: Buffer,
+    mapName: string,
+    tournamentInfo?: {
+      name: string;
+      status: string;
+      teamMode: string;
+      maxParticipants: number;
+      registeredCount: number;
+      startDate?: Date | null;
+    },
+    messageId?: string
+  ): Promise<string> {
+    if (!DISCORD_BOT_TOKEN) {
+      throw new Error('Discord bot token missing');
+    }
+
+    try {
+      const formData = new FormData();
+
+      // Create blob from buffer
+      const blob = new Blob([imageBuffer], { type: 'image/png' });
+      formData.append('files[0]', blob, `${mapName}.png`);
+
+      // Красивый embed с информацией о турнире
+      const embed: any = {
+        title: `🗺️ ${mapName}`,
+        color: 0x5865F2, // Discord Blurple
+        image: {
+          url: `attachment://${mapName}.png`
+        },
+        timestamp: new Date().toISOString(),
+        footer: {
+          text: 'Карта турнира'
+        }
+      };
+
+      // Добавляем информацию о турнире если есть
+      if (tournamentInfo) {
+        const statusEmoji = {
+          'upcoming': '🕒',
+          'registration': '📝',
+          'active': '🔴',
+          'completed': '✅',
+          'cancelled': '❌'
+        }[tournamentInfo.status] || '📋';
+
+        const teamModeText = {
+          'solo': 'Соло',
+          'duo': 'Дуо (2 игрока)',
+          'trio': 'Трио (3 игрока)',
+          'squad': 'Сквад (4 игрока)'
+        }[tournamentInfo.teamMode] || tournamentInfo.teamMode;
+
+        embed.fields = [
+          {
+            name: '📊 Статус',
+            value: `${statusEmoji} ${tournamentInfo.status === 'registration' ? 'Регистрация' :
+                              tournamentInfo.status === 'active' ? 'Активен' :
+                              tournamentInfo.status === 'completed' ? 'Завершён' :
+                              tournamentInfo.status === 'upcoming' ? 'Скоро' :
+                              tournamentInfo.status}`,
+            inline: true
+          },
+          {
+            name: '👥 Режим',
+            value: teamModeText,
+            inline: true
+          },
+          {
+            name: '🎮 Участники',
+            value: `${tournamentInfo.registeredCount}/${tournamentInfo.maxParticipants}`,
+            inline: true
+          }
+        ];
+
+        if (tournamentInfo.startDate) {
+          const timestamp = Math.floor(new Date(tournamentInfo.startDate).getTime() / 1000);
+          embed.fields.push({
+            name: '📅 Старт турнира',
+            value: `<t:${timestamp}:F>`,
+            inline: false
+          });
+        }
+
+        embed.description = `**${tournamentInfo.name}**\n\nПоследнее обновление: <t:${Math.floor(Date.now() / 1000)}:R>`;
+      }
+
+      // Add message with embed
+      const payload = {
+        embeds: [embed]
+      };
+      formData.append('payload_json', JSON.stringify(payload));
+
+      // If messageId is provided, try to edit the existing message
+      let url = `https://discord.com/api/v10/channels/${channelId}/messages`;
+      let method = 'POST';
+
+      if (messageId) {
+        url = `${url}/${messageId}`;
+        method = 'PATCH';
+      }
+
+      let response = await fetch(url, {
+        method,
+        headers: {
+          'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+        },
+        body: formData
+      });
+
+      // If editing failed (message not found), create new message
+      if (!response.ok && messageId) {
+        const errorData = await response.json();
+        if (errorData.code === 10008) { // Unknown Message
+          console.log('⚠️ Old message not found, creating new one');
+
+          // Recreate formData (it was consumed)
+          const newFormData = new FormData();
+          const newBlob = new Blob([imageBuffer], { type: 'image/png' });
+          newFormData.append('files[0]', newBlob, `${mapName}.png`);
+          newFormData.append('payload_json', JSON.stringify(payload));
+
+          // Create new message instead
+          url = `https://discord.com/api/v10/channels/${channelId}/messages`;
+          response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+            },
+            body: newFormData
+          });
+        }
+      }
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Failed to post map image: ${response.status} - ${error}`);
+      }
+
+      const message = await response.json();
+      console.log(`✅ Posted map image to channel ${channelId}`);
+      return message.id;
+
+    } catch (error) {
+      console.error('Failed to post map image:', error);
+      throw error;
+    }
+  }
 }
 
 export const discordTournamentService = new DiscordTournamentService();
