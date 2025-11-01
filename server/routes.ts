@@ -2221,6 +2221,32 @@ app.delete("/api/tournament/:id/register", async (req, res) => {
     await storage.cancelTournamentRegistration(registration.id);
     console.log(`✅ Registration ${registration.id} deleted from database`);
 
+    // Remove user from linked dropmaps
+    try {
+      const linkedDropmaps = await db
+        .select()
+        .from(dropMapSettings)
+        .where(eq(dropMapSettings.tournamentId, tournamentId));
+
+      for (const dropmap of linkedDropmaps) {
+        const [deleted] = await db
+          .delete(dropMapEligiblePlayers)
+          .where(and(
+            eq(dropMapEligiblePlayers.settingsId, dropmap.id),
+            eq(dropMapEligiblePlayers.userId, userId),
+            eq(dropMapEligiblePlayers.sourceType, 'tournament_registration')
+          ))
+          .returning();
+
+        if (deleted) {
+          console.log(`✅ User ${userId} removed from dropmap ${dropmap.id}`);
+        }
+      }
+    } catch (dropmapError) {
+      console.error('❌ Failed to remove user from dropmaps:', dropmapError);
+      // Don't fail cancellation if dropmap removal fails
+    }
+
     // Decrement participant count
     await storage.decrementTournamentParticipants(tournamentId);
 
