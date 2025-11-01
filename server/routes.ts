@@ -18,7 +18,9 @@ import {
   tournamentTeams,
   tournamentTeamMembers,
   tournamentTeamInvites,
-  balanceTransactions
+  balanceTransactions,
+  dropMapSettings,
+  dropMapEligiblePlayers
 } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
 import dotenv from "dotenv";
@@ -2033,6 +2035,42 @@ app.post("/api/tournament/:id/register", async (req, res) => {
         });
 
         console.log(`✅ Team ${team.id} created for user ${userId} in tournament ${tournamentId}`);
+
+        // Auto-import team captain to linked dropmap
+        try {
+          const linkedDropmaps = await db
+            .select()
+            .from(dropMapSettings)
+            .where(eq(dropMapSettings.tournamentId, tournamentId));
+
+          for (const dropmap of linkedDropmaps) {
+            // Check if captain is already in eligible players
+            const [existing] = await db
+              .select()
+              .from(dropMapEligiblePlayers)
+              .where(and(
+                eq(dropMapEligiblePlayers.settingsId, dropmap.id),
+                eq(dropMapEligiblePlayers.userId, userId)
+              ))
+              .limit(1);
+
+            if (!existing) {
+              await db.insert(dropMapEligiblePlayers).values({
+                settingsId: dropmap.id,
+                userId,
+                displayName: user.displayName,
+                sourceType: 'tournament_registration',
+                addedBy: null,
+              });
+              console.log(`✅ Captain ${userId} auto-added to dropmap ${dropmap.id}`);
+            } else {
+              console.log(`ℹ️ Captain ${userId} already in dropmap ${dropmap.id}`);
+            }
+          }
+        } catch (dropmapError) {
+          console.error('❌ Failed to add captain to dropmap:', dropmapError);
+          // Don't fail registration if dropmap import fails
+        }
       } catch (teamError) {
         console.error('❌ Failed to create team:', teamError);
         // Don't fail registration if team creation fails
