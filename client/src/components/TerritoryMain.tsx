@@ -480,7 +480,7 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
 
  const loadMapData = useCallback(async (mapId: string) => {
   if (!mapId) return;
-  
+
   try {
     const token = getAuthToken();
     if (!token) return;
@@ -495,13 +495,20 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
     }
 
     const data = await response.json();
-    
+
     // ✅ Обновить все данные сразу
     setTerritories(data.territories);
     setEligiblePlayers(data.eligiblePlayers);
     setIsUserEligible(data.isUserEligible);
     if (user?.isAdmin) {
       setInviteCodes(data.inviteCodes);
+    }
+
+    // ✅ Обновить информацию о карте (включая tournament)
+    if (data.map) {
+      setActiveMap(prev => prev?.id === data.map.id ? data.map : prev);
+      // Также обновить в списке всех карт
+      setAllMaps(prev => prev.map(m => m.id === data.map.id ? data.map : m));
     }
   } catch (err) {
     console.error('Ошибка загрузки данных карты:', err);
