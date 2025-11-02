@@ -16,7 +16,8 @@ import {
   ExternalLink,
   X,
   RefreshCw,
-  ArrowLeft
+  ArrowLeft,
+  AlertCircle
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { PremiumStatusCard } from './PremiumBadge';
@@ -24,6 +25,7 @@ import { usePremium } from "@/hooks/usePremium";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import EnhancedHeader from './Header';
+import epiclogo from "@assets/generated_images/epiclogo.png";
 
 export default function ProfilePage() {
   const [, setLocation] = useLocation();
@@ -55,6 +57,7 @@ export default function ProfilePage() {
 
   const [linkedTelegram, setLinkedTelegram] = useState<string | null>(null);
   const [linkedDiscord, setLinkedDiscord] = useState<string | null>(null);
+  const [epicGamesName, setEpicGamesName] = useState<string | null>(null);
 
   const [isLinkingTelegram, setIsLinkingTelegram] = useState(false);
   const [isLinkingDiscord, setIsLinkingDiscord] = useState(false);
@@ -85,6 +88,7 @@ export default function ProfilePage() {
 
     setLinkedTelegram(user.telegramUsername || null);
     setLinkedDiscord(user.discordUsername || null);
+    setEpicGamesName(user.epicGamesName || null);
 
     const fetchData = async () => {
       try {
@@ -407,6 +411,11 @@ export default function ProfilePage() {
     }
     logout();
     window.location.href = "/";
+  };
+
+  const handleRefreshEpicGames = () => {
+    // Redirect to Epic Games OAuth to refresh the nickname
+    window.location.href = '/api/auth/epic/login';
   };
 
   const handleRefreshUser = async () => {
@@ -766,6 +775,42 @@ export default function ProfilePage() {
                     </Button>
                   )}
                 </div>
+
+                {/* Epic Games */}
+                {user.epicGamesId && (
+                  <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-gray-500/30 transition-colors">
+                    <div className="flex items-center gap-2">
+                      {/* Epic Games Logo */}
+                      <div className="w-4 h-4 flex items-center justify-center">
+                        <img src={epiclogo} alt="Epic Games" className="w-full h-full object-contain" />
+                      </div>
+                      <span className="text-sm font-medium">Epic Games</span>
+                    </div>
+
+                    <div className={`flex items-center justify-between p-3 rounded-xl ${epicGamesName ? 'bg-green-500/10 border border-green-500/20' : 'bg-yellow-500/10 border border-yellow-500/20'}`}>
+                      <div className="flex items-center gap-2">
+                        {epicGamesName ? (
+                          <>
+                            <CheckCircle2 className="h-4 w-4 text-green-600" />
+                            <span className="text-sm font-medium">{epicGamesName}</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="h-4 w-4 text-yellow-600" />
+                            <span className="text-sm font-medium text-muted-foreground">Никнейм не загружен</span>
+                          </>
+                        )}
+                      </div>
+                      <button
+                        onClick={handleRefreshEpicGames}
+                        className="h-7 w-7 rounded-lg hover:bg-gray-500/10 text-gray-400 transition-colors flex items-center justify-center"
+                        title="Обновить никнейм (переход на Epic Games)"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Premium Check Button */}
                 {linkedDiscord && (

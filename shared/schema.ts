@@ -83,6 +83,7 @@ export const dropMapModeEnum = pgEnum('dropmap_mode', ['tournament', 'practice']
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   epicGamesId: text("epic_games_id").unique(),
+  epicGamesName: text("epic_games_name"), // Актуальный никнейм Epic Games
   username: text("username").unique(),
   displayName: text("display_name"),
   email: text("email"),

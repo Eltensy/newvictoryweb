@@ -121,11 +121,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         state: state,
         nonce: crypto.randomBytes(32).toString('hex')
       });
-      
-      res.json({ 
-        authUrl: `https://www.epicgames.com/id/authorize?${params}`, 
-        state 
-      });
+
+      // Redirect directly to Epic Games OAuth
+      res.redirect(`https://www.epicgames.com/id/authorize?${params}`);
     } catch (error) {
       console.error('Epic login error:', error);
       res.status(500).json({ error: "Failed to initialize Epic Games login" });
@@ -190,12 +188,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const newUser: InsertUser = {
           username: profile.preferred_username || `epic_${profile.sub.slice(0, 8)}`,
           epicGamesId: profile.sub,
+          epicGamesName: profile.preferred_username || profile.name || null,
           displayName: profile.name || profile.preferred_username || 'Epic User',
           email: profile.email || null,
           balance: 0,
           isAdmin: false
         };
         user = await storage.createUser(newUser);
+      } else {
+        // Update epicGamesName if changed
+        await db
+          .update(users)
+          .set({ epicGamesName: profile.preferred_username || profile.name || null })
+          .where(eq(users.id, user.id));
+
+        // Reload user to get updated epicGamesName
+        user = await storage.getUser(user.id);
+        if (!user) {
+          return res.status(500).send('Failed to reload user data');
+        }
       }
       
       const userToken = generateSessionToken(user);
@@ -555,6 +566,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         displayName: user.displayName,
         balance: user.balance,
         isAdmin: user.isAdmin,
+        epicGamesId: user.epicGamesId,
+        epicGamesName: user.epicGamesName,
         subscriptionScreenshotStatus: user.subscriptionScreenshotStatus,
         subscriptionScreenshotUrl: user.subscriptionScreenshotUrl,
         subscriptionScreenshotUploadedAt: user.subscriptionScreenshotUploadedAt,

@@ -7,6 +7,10 @@ interface User {
   displayName: string;
   balance: number;
   isAdmin: boolean;
+  epicGamesId?: string;
+  epicGamesName?: string;
+  telegramUsername?: string;
+  discordUsername?: string;
   subscriptionScreenshotStatus?: string;
   subscriptionScreenshotUrl?: string;
   subscriptionScreenshotUploadedAt?: Date;

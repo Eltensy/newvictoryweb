@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { 
-  User, 
-  LogOut, 
-  Trophy, 
-  Target, 
-  Clock, 
+import {
+  User,
+  LogOut,
+  Trophy,
+  Target,
+  Clock,
   Wallet,
   MessageSquare,
   CheckCircle2,
@@ -17,12 +17,14 @@ import {
   X,
   RefreshCw,
   Maximize2,
-  Minimize2
+  Minimize2,
+  AlertCircle
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { PremiumStatusCard } from './PremiumBadge';
 import { usePremium } from "@/hooks/usePremium";
 import { useToast } from "@/hooks/use-toast";
+import epiclogo from "@assets/generated_images/epiclogo.png";
 
 interface UserProfileProps {
   isOpen: boolean;
@@ -58,6 +60,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
   });
   const [loadingKills, setLoadingKills] = useState(false);
   
+  const [epicGamesName, setEpicGamesName] = useState<string | null>(null);
   const [linkedTelegram, setLinkedTelegram] = useState<string | null>(null);
   const [linkedDiscord, setLinkedDiscord] = useState<string | null>(null);
   
@@ -86,7 +89,8 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
 
   useEffect(() => {
     if (!user) return;
-    
+
+    setEpicGamesName(user.epicGamesName || null);
     setLinkedTelegram(user.telegramUsername || null);
     setLinkedDiscord(user.discordUsername || null);
     
@@ -118,7 +122,7 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
       }
     };
     fetchData();
-  }, [user?.id, user?.telegramUsername, user?.discordUsername, getAuthToken]);
+  }, [user?.id, user?.epicGamesName, user?.telegramUsername, user?.discordUsername, getAuthToken]);
 
   const handleCheckDiscordPremium = async () => {
     if (!user?.id) return;
@@ -402,6 +406,11 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
     }
   };
 
+  const handleRefreshEpicGames = () => {
+    // Redirect to Epic Games OAuth to refresh the nickname
+    window.location.href = '/api/auth/epic/login';
+  };
+
   const handleLogout = async () => {
     try {
       const t = getAuthToken();
@@ -614,6 +623,42 @@ export default function UserProfile({ isOpen, onClose }: UserProfileProps) {
             <div className="space-y-6">
               {/* Social Integrations */}
               <div className="space-y-3">
+                {/* Epic Games */}
+                {user.epicGamesId && (
+                  <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-gray-500/30 transition-colors">
+                    <div className="flex items-center gap-2">
+                      {/* Epic Games Logo */}
+                      <div className="w-4 h-4 flex items-center justify-center">
+                        <img src={epiclogo} alt="Epic Games" className="w-full h-full object-contain" />
+                      </div>
+                      <span className="text-sm font-medium">Epic Games</span>
+                    </div>
+
+                    <div className={`flex items-center justify-between p-3 rounded-xl ${epicGamesName ? 'bg-green-500/10 border border-green-500/20' : 'bg-yellow-500/10 border border-yellow-500/20'}`}>
+                      <div className="flex items-center gap-2">
+                        {epicGamesName ? (
+                          <>
+                            <CheckCircle2 className="h-4 w-4 text-green-600" />
+                            <span className="text-sm font-medium">{epicGamesName}</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="h-4 w-4 text-yellow-600" />
+                            <span className="text-sm font-medium text-muted-foreground">Никнейм не загружен</span>
+                          </>
+                        )}
+                      </div>
+                      <button
+                        onClick={handleRefreshEpicGames}
+                        className="h-7 w-7 rounded-lg hover:bg-gray-500/10 text-gray-400 transition-colors flex items-center justify-center"
+                        title="Обновить никнейм (переход на Epic Games)"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Telegram Bot Link */}
                 <div className="rounded-2xl border border-border/50 p-4 space-y-3 hover:border-blue-500/30 transition-colors">
                   <div className="flex items-center gap-2">

@@ -2,24 +2,26 @@ import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { 
-  Trophy, 
-  Crown, 
-  Wallet, 
-  RefreshCw, 
-  Menu, 
-  User, 
-  Bell, 
-  X, 
+import {
+  Trophy,
+  Crown,
+  Wallet,
+  RefreshCw,
+  Menu,
+  User,
+  Bell,
+  X,
   MapPin,
   Clock,
   Shield,
   Home,
   CheckCircle2,
-  FileText
+  FileText,
+  AlertCircle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PremiumBadge from './PremiumBadge';
+import epiclogo from "@assets/generated_images/epiclogo.png";
 
 interface User {
   id: string;
@@ -27,6 +29,10 @@ interface User {
   displayName: string;
   balance: number;
   isAdmin: boolean;
+  epicGamesId?: string;
+  epicGamesName?: string;
+  telegramUsername?: string;
+  discordUsername?: string;
   premiumTier?: 'none' | 'basic' | 'gold' | 'platinum' | 'vip';
   premiumEndDate?: Date | string;
 }
@@ -588,6 +594,78 @@ export default function EnhancedHeader({
                   )}
                 </div>
               )}
+
+              {/* Integrations Section */}
+              <div className="p-4 border-t">
+                <div className="text-xs font-medium text-muted-foreground mb-3">Интеграции</div>
+                <div className="space-y-2">
+                  {/* Epic Games */}
+                  {user.epicGamesId && (
+                    <div className="rounded-xl border border-border/50 p-3 hover:border-gray-500/30 transition-colors">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-3.5 h-3.5 flex items-center justify-center">
+                          <img src={epiclogo} alt="Epic Games" className="w-full h-full object-contain" />
+                        </div>
+                        <span className="text-xs font-medium">Epic Games</span>
+                      </div>
+                      <div className={`flex items-center justify-between p-2 rounded-lg ${user.epicGamesName ? 'bg-green-500/10 border border-green-500/20' : 'bg-yellow-500/10 border border-yellow-500/20'}`}>
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          {user.epicGamesName ? (
+                            <>
+                              <CheckCircle2 className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                              <span className="text-xs font-medium truncate">{user.epicGamesName}</span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle className="h-3.5 w-3.5 text-yellow-600 flex-shrink-0" />
+                              <span className="text-xs font-medium text-muted-foreground">Никнейм не загружен</span>
+                            </>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => window.location.href = '/api/auth/epic/login'}
+                          className="h-6 w-6 rounded-lg hover:bg-gray-500/10 text-gray-400 transition-colors flex items-center justify-center flex-shrink-0"
+                          title="Обновить никнейм"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Telegram */}
+                  {user.telegramUsername && (
+                    <div className="rounded-xl border border-border/50 p-3 bg-blue-500/5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg className="h-3.5 w-3.5 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.67-.52.36-.99.53-1.42.52-.47-.01-1.37-.26-2.03-.48-.82-.27-1.47-.42-1.42-.88.03-.24.37-.48 1.03-.74 4.04-1.76 6.73-2.92 8.08-3.49 3.85-1.61 4.65-1.89 5.17-1.9.11 0 .37.03.54.17.14.11.18.26.2.37-.01.06.01.24 0 .38z"/>
+                        </svg>
+                        <span className="text-xs font-medium">Telegram</span>
+                      </div>
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-green-500/10 border border-green-500/20">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                        <span className="text-xs font-medium truncate">{user.telegramUsername}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Discord */}
+                  {user.discordUsername && (
+                    <div className="rounded-xl border border-border/50 p-3 bg-indigo-500/5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg className="h-3.5 w-3.5 text-indigo-500" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028a14.09 14.09 0 0 0 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.892a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+                        </svg>
+                        <span className="text-xs font-medium">Discord</span>
+                      </div>
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-green-500/10 border border-green-500/20">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                        <span className="text-xs font-medium truncate">{user.discordUsername}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
 
               <div className="p-4 border-t space-y-2">
                 <Button
