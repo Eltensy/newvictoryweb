@@ -221,6 +221,7 @@ export const tournamentRegistrations = pgTable("tournament_registrations", {
 
   paidAmount: integer("paid_amount"),
   paidAt: timestamp("paid_at"),
+  giftedBy: text("gifted_by").references(() => users.id), // ID пользователя, который подарил регистрацию
 
   registeredAt: timestamp("registered_at").notNull().defaultNow(),
   cancelledAt: timestamp("cancelled_at"),
@@ -261,6 +262,7 @@ export const tournamentTeamInvites = pgTable("tournament_team_invites", {
   toUserId: text("to_user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
 
   status: teamInviteStatusEnum("status").notNull().default('pending'),
+  paidByLeader: boolean("paid_by_leader").default(false), // Капитан оплатил вступление союзника
 
   createdAt: timestamp("created_at").notNull().defaultNow(),
   respondedAt: timestamp("responded_at"),

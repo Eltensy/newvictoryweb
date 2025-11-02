@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Trophy, Users, Coins, MapPin, ArrowLeft, CheckCircle2, AlertCircle, Loader2, UserCheck, Shield, Target, ChevronDown, ChevronUp, Crown } from 'lucide-react';
+import { Trophy, Users, Coins, MapPin, ArrowLeft, CheckCircle2, AlertCircle, Loader2, UserCheck, Shield, Target, ChevronDown, ChevronUp, Crown, Gift } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { useParams } from 'wouter';
@@ -51,7 +51,12 @@ function TournamentDetailPage() {
   const [registering, setRegistering] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [showRegistrationDialog, setShowRegistrationDialog] = useState(false);
+  const [showGiftDialog, setShowGiftDialog] = useState(false);
   const [showTeamInvitesPopup, setShowTeamInvitesPopup] = useState(false);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [selectedGiftRecipient, setSelectedGiftRecipient] = useState('');
+  const [giftSearch, setGiftSearch] = useState('');
 
   useEffect(() => {
     if (id) {
@@ -226,6 +231,74 @@ function TournamentDetailPage() {
       });
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const fetchAllUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const response = await fetch('/api/users/search?query=', {
+        headers: { 'Authorization': `Bearer ${getAuthToken()}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAllUsers(data);
+      } else {
+        console.error('Failed to fetch users:', response.status);
+        setAllUsers([]);
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      setAllUsers([]);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleGiftRegistration = async () => {
+    if (!selectedGiftRecipient || !tournament) return;
+
+    setRegistering(true);
+    try {
+      const response = await fetch(`/api/tournament/${tournament.id}/gift-register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getAuthToken()}`,
+        },
+        body: JSON.stringify({ recipientId: selectedGiftRecipient }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to gift registration');
+      }
+
+      const data = await response.json();
+
+      toast({
+        title: 'Успешно!',
+        description: data.message,
+      });
+
+      setShowGiftDialog(false);
+      setSelectedGiftRecipient('');
+      setGiftSearch('');
+
+      // Обновляем данные
+      await Promise.all([
+        fetchTournament(),
+        fetchTeams(),
+        refreshProfile()
+      ]);
+    } catch (error: any) {
+      toast({
+        title: 'Ошибка',
+        description: error.message || 'Не удалось подарить регистрацию',
+        variant: 'destructive',
+      });
+    } finally {
+      setRegistering(false);
     }
   };
 
@@ -663,14 +736,133 @@ function TournamentDetailPage() {
                       <span className="font-medium">Вы зарегистрированы</span>
                     </div>
                     {canCancelRegistration() && (
-                      <Button
-                        variant="outline"
-                        className="w-full border-destructive text-destructive hover:bg-destructive hover:text-white"
-                        onClick={handleCancelRegistration}
-                        disabled={cancelling}
-                      >
-                        {cancelling ? 'Отмена...' : 'Отменить регистрацию'}
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          className="flex-1 border-destructive text-destructive hover:bg-destructive hover:text-white"
+                          onClick={handleCancelRegistration}
+                          disabled={cancelling}
+                        >
+                          {cancelling ? 'Отмена...' : 'Отменить регистрацию'}
+                        </Button>
+                        <Dialog open={showGiftDialog} onOpenChange={(open) => { setShowGiftDialog(open); if (open) fetchAllUsers(); }}>
+                          <DialogTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className="px-4"
+                              title="Подарить регистрацию другому игроку"
+                            >
+                              <Gift className="h-4 w-4" />
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="sm:max-w-md backdrop-blur-md bg-background/95">
+                            <DialogHeader>
+                              <DialogTitle className="text-center text-xl flex items-center justify-center gap-2">
+                                <Gift className="h-5 w-5 text-primary" />
+                                Подарить регистрацию
+                              </DialogTitle>
+                              <DialogDescription className="text-center">
+                                Оплатите участие в турнире для другого игрока
+                              </DialogDescription>
+                            </DialogHeader>
+
+                            <div className="space-y-4 py-4">
+                              {tournament.entryFee > 0 && user && (
+                                <div className="bg-muted/30 rounded-lg p-4 space-y-2">
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">Стоимость:</span>
+                                    <span className="font-bold text-lg text-primary">{tournament.entryFee.toLocaleString()} ₽</span>
+                                  </div>
+                                  <div className="pt-3 border-t border-border/50">
+                                    <div className="flex items-center justify-between text-sm">
+                                      <span className="text-muted-foreground">Ваш баланс:</span>
+                                      <span className={`font-semibold ${user.balance >= tournament.entryFee ? 'text-green-500' : 'text-destructive'}`}>
+                                        {user.balance.toLocaleString()} ₽
+                                      </span>
+                                    </div>
+                                    {user.balance < tournament.entryFee && (
+                                      <div className="mt-2 bg-destructive/10 border border-destructive/20 rounded p-2 text-xs text-destructive">
+                                        Недостаточно средств
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              <div>
+                                <input
+                                  type="text"
+                                  placeholder="Поиск игрока..."
+                                  value={giftSearch}
+                                  onChange={(e) => setGiftSearch(e.target.value)}
+                                  className="w-full px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                                />
+                              </div>
+
+                              <div className="max-h-64 overflow-y-auto space-y-2 border rounded-md p-2 bg-muted/20">
+                                {loadingUsers ? (
+                                  <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                                    <Loader2 className="h-6 w-6 animate-spin mb-2" />
+                                    <span className="text-sm">Загрузка игроков...</span>
+                                  </div>
+                                ) : allUsers.filter(u => u.id !== user?.id).length === 0 ? (
+                                  <div className="text-center text-sm text-muted-foreground py-8">
+                                    {giftSearch ? 'Игроки не найдены' : 'Нет доступных игроков'}
+                                  </div>
+                                ) : (
+                                  allUsers
+                                    .filter(u => u.id !== user?.id &&
+                                      (u.displayName?.toLowerCase().includes(giftSearch.toLowerCase()) ||
+                                       u.username?.toLowerCase().includes(giftSearch.toLowerCase())))
+                                    .map(u => (
+                                      <button
+                                        key={u.id}
+                                        onClick={() => setSelectedGiftRecipient(u.id)}
+                                        className={`w-full p-3 text-left border rounded-md hover:bg-accent transition-colors ${
+                                          selectedGiftRecipient === u.id ? 'bg-accent border-primary' : 'bg-background'
+                                        }`}
+                                      >
+                                        <div className="font-medium">{u.displayName}</div>
+                                        <div className="text-xs text-muted-foreground">@{u.username}</div>
+                                      </button>
+                                    ))
+                                )}
+                              </div>
+
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  className="flex-1"
+                                  onClick={() => {
+                                    setShowGiftDialog(false);
+                                    setSelectedGiftRecipient('');
+                                    setGiftSearch('');
+                                  }}
+                                >
+                                  Отмена
+                                </Button>
+                                <Button
+                                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+                                  onClick={handleGiftRegistration}
+                                  disabled={!selectedGiftRecipient || registering || (tournament.entryFee > 0 && user && user.balance < tournament.entryFee)}
+                                >
+                                  {registering ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                      Обработка...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Gift className="h-4 w-4 mr-2" />
+                                      Подарить
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                      </div>
                     )}
                     {/* Map button for registered users */}
                     {tournament.dropMapId && (
@@ -684,15 +876,16 @@ function TournamentDetailPage() {
                     )}
                   </div>
                 ) : (
-                  <Dialog open={showRegistrationDialog} onOpenChange={setShowRegistrationDialog}>
-                    <DialogTrigger asChild>
-                      <Button
-                        className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white border-0"
-                        disabled={!canRegister()}
-                      >
-                        {!isLoggedIn ? 'Войдите для регистрации' : 'Зарегистрироваться'}
-                      </Button>
-                    </DialogTrigger>
+                  <div className="flex gap-2">
+                    <Dialog open={showRegistrationDialog} onOpenChange={setShowRegistrationDialog}>
+                      <DialogTrigger asChild>
+                        <Button
+                          className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white border-0"
+                          disabled={!canRegister()}
+                        >
+                          {!isLoggedIn ? 'Войдите для регистрации' : 'Зарегистрироваться'}
+                        </Button>
+                      </DialogTrigger>
                     <DialogContent className="sm:max-w-md backdrop-blur-md bg-background/95">
                       <DialogHeader>
                         <DialogTitle className="text-center text-xl">
@@ -771,6 +964,125 @@ function TournamentDetailPage() {
                       </div>
                     </DialogContent>
                   </Dialog>
+
+                  {/* Gift Registration Dialog */}
+                  <Dialog open={showGiftDialog} onOpenChange={(open) => { setShowGiftDialog(open); if (open) fetchAllUsers(); }}>
+                    <DialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className="px-4"
+                        disabled={!isLoggedIn || !canRegister()}
+                        title="Подарить регистрацию другому игроку"
+                      >
+                        <Gift className="h-4 w-4" />
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-md backdrop-blur-md bg-background/95">
+                      <DialogHeader>
+                        <DialogTitle className="text-center text-xl">
+                          Подарить регистрацию
+                        </DialogTitle>
+                        <DialogDescription className="text-center">
+                          Выберите игрока, которому хотите подарить участие в турнире
+                        </DialogDescription>
+                      </DialogHeader>
+
+                      <div className="space-y-4 py-4">
+                        {tournament.entryFee > 0 && user && (
+                          <div className="backdrop-blur-sm bg-muted/30 rounded-lg p-4 space-y-3 border">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-muted-foreground">Стоимость подарка:</span>
+                              <span className="font-bold text-lg flex items-center gap-1">
+                                <Coins className="w-5 h-5 text-yellow-500" />
+                                {tournament.entryFee} ₽
+                              </span>
+                            </div>
+                            <div className="pt-3 border-t border-border/50">
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-muted-foreground">Ваш баланс:</span>
+                                <span className={`font-semibold ${user.balance >= tournament.entryFee ? 'text-green-500' : 'text-destructive'}`}>
+                                  {user.balance.toLocaleString()} ₽
+                                </span>
+                              </div>
+                              {user.balance < tournament.entryFee && (
+                                <div className="mt-2 bg-destructive/10 border border-destructive/20 rounded p-2 text-xs text-destructive">
+                                  Недостаточно средств
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div>
+                          <input
+                            type="text"
+                            placeholder="Поиск игрока..."
+                            value={giftSearch}
+                            onChange={(e) => setGiftSearch(e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                          />
+                        </div>
+
+                        <div className="max-h-64 overflow-y-auto space-y-2 border rounded-md p-2 bg-muted/20">
+                          {loadingUsers ? (
+                            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                              <Loader2 className="h-6 w-6 animate-spin mb-2" />
+                              <span className="text-sm">Загрузка игроков...</span>
+                            </div>
+                          ) : allUsers.filter(u => u.id !== user?.id).length === 0 ? (
+                            <div className="text-center text-sm text-muted-foreground py-8">
+                              {giftSearch ? 'Игроки не найдены' : 'Нет доступных игроков'}
+                            </div>
+                          ) : (
+                            allUsers
+                              .filter(u => u.id !== user?.id &&
+                                (u.displayName?.toLowerCase().includes(giftSearch.toLowerCase()) ||
+                                 u.username?.toLowerCase().includes(giftSearch.toLowerCase())))
+                              .map(u => (
+                                <button
+                                  key={u.id}
+                                  onClick={() => setSelectedGiftRecipient(u.id)}
+                                  className={`w-full p-3 text-left border rounded-md hover:bg-accent transition-colors ${
+                                    selectedGiftRecipient === u.id ? 'bg-accent border-primary' : 'bg-background'
+                                  }`}
+                                >
+                                  <div className="font-medium">{u.displayName}</div>
+                                  <div className="text-xs text-muted-foreground">@{u.username}</div>
+                                </button>
+                              ))
+                          )}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => setShowGiftDialog(false)}
+                            className="flex-1"
+                          >
+                            Отмена
+                          </Button>
+                          <Button
+                            onClick={handleGiftRegistration}
+                            disabled={!selectedGiftRecipient || registering || (tournament.entryFee > 0 && user ? user.balance < tournament.entryFee : false)}
+                            className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                          >
+                            {registering ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Подарок...
+                              </>
+                            ) : (
+                              <>
+                                <Gift className="h-4 w-4 mr-2" />
+                                Подарить
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                  </div>
                 )}
               </CardContent>
             </Card>

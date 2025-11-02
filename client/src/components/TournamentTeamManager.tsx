@@ -52,6 +52,7 @@ export function TournamentTeamManager({ tournament, onTeamCreated }: TournamentT
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchingUsers, setSearchingUsers] = useState(false);
+  const [payForInvitee, setPayForInvitee] = useState(false);
   const { toast } = useToast();
 
   const teamSizeMap = {
@@ -174,7 +175,10 @@ export function TournamentTeamManager({ tournament, onTeamCreated }: TournamentT
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ userId: userToInvite.id }),
+        body: JSON.stringify({
+          userId: userToInvite.id,
+          payForInvitee: payForInvitee,
+        }),
       });
 
       if (!response.ok) {
@@ -189,6 +193,7 @@ export function TournamentTeamManager({ tournament, onTeamCreated }: TournamentT
 
       setSelectedUserId(null);
       setSearchQuery('');
+      setPayForInvitee(false);
       setShowInviteDialog(false);
 
       // Reload team to show pending member
@@ -597,10 +602,34 @@ export function TournamentTeamManager({ tournament, onTeamCreated }: TournamentT
             </div>
           </div>
 
+          {/* Pay for invitee checkbox - only show if tournament has entry fee */}
+          {tournament.entryFee > 0 && (
+            <div className="flex items-start gap-3 p-3 bg-muted/30 rounded-lg">
+              <input
+                type="checkbox"
+                id="payForInvitee"
+                checked={payForInvitee}
+                onChange={(e) => setPayForInvitee(e.target.checked)}
+                className="mt-1 w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
+              />
+              <label htmlFor="payForInvitee" className="flex-1 cursor-pointer">
+                <div className="text-sm font-medium">
+                  Оплатить регистрацию союзника
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Вступительный взнос {tournament.entryFee.toLocaleString()} ₽ будет списан с вашего баланса
+                </div>
+              </label>
+            </div>
+          )}
+
           <div className="flex gap-3 pt-4">
             <Button
               variant="outline"
-              onClick={() => setShowInviteDialog(false)}
+              onClick={() => {
+                setShowInviteDialog(false);
+                setPayForInvitee(false);
+              }}
               className="flex-1"
             >
               Отмена

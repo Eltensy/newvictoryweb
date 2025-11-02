@@ -607,7 +607,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const searchTerm = query.toLowerCase();
 
-      // If query is empty, return all users (limited to 100)
+      // If query is empty, return all users
       let matchingUsers;
       if (searchTerm.trim() === '') {
         matchingUsers = await db
@@ -617,7 +617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             displayName: users.displayName,
           })
           .from(users)
-          .limit(100);
+          .orderBy(users.displayName);
       } else {
         // Search by username or displayName
         matchingUsers = await db
@@ -630,7 +630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .where(
             sql`LOWER(${users.username}) LIKE ${`%${searchTerm}%`} OR LOWER(${users.displayName}) LIKE ${`%${searchTerm}%`}`
           )
-          .limit(100);
+          .orderBy(users.displayName);
       }
 
       res.json(matchingUsers);
@@ -1823,6 +1823,17 @@ app.get("/api/tournament/:id/teams", async (req, res) => {
   try {
     const tournamentId = req.params.id;
 
+    // Get tournament to check if it has a dropmap
+    const [tournament] = await db
+      .select()
+      .from(tournaments)
+      .where(eq(tournaments.id, tournamentId))
+      .limit(1);
+
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
     // Get all teams for this tournament with their members
     const teams = await db
       .select({
@@ -1869,14 +1880,97 @@ app.get("/api/tournament/:id/teams", async (req, res) => {
           leaderId: team.leaderId,
           leader,
           members,
+          isVirtual: false,
         };
       })
     );
 
-    // Filter out teams with no members (edge case after deletion)
-    const activeTeams = teamsWithMembers.filter(team => team.members.length > 0);
+    // ✅ ДОБАВЛЕНО: Загружаем виртуальные команды из dropMapEligiblePlayers (инвайты)
+    let virtualTeams: any[] = [];
 
-    console.log(`📊 Tournament ${tournamentId}: Total teams: ${teamsWithMembers.length}, Active teams (with members): ${activeTeams.length}`);
+    // Найти дропмап для этого турнира
+    const [dropmap] = await db
+      .select()
+      .from(dropMapSettings)
+      .where(eq(dropMapSettings.tournamentId, tournamentId))
+      .limit(1);
+
+    if (dropmap) {
+      // Получить всех виртуальных игроков с командами
+      const virtualPlayers = await db
+        .select()
+        .from(dropMapEligiblePlayers)
+        .where(
+          and(
+            eq(dropMapEligiblePlayers.settingsId, dropmap.id),
+            sql`${dropMapEligiblePlayers.teamId} IS NOT NULL`
+          )
+        );
+
+      // Получить список всех реальных команд для исключения
+      const realTeamIds = new Set(teams.map(t => t.id));
+
+      // Группируем по teamId, исключая реальные команды
+      const teamGroups: Map<string, any[]> = new Map();
+      for (const player of virtualPlayers) {
+        if (player.teamId && !realTeamIds.has(player.teamId)) {
+          // ✅ Только если teamId НЕ существует в реальных командах
+          if (!teamGroups.has(player.teamId)) {
+            teamGroups.set(player.teamId, []);
+          }
+          teamGroups.get(player.teamId)!.push({
+            id: player.id,
+            userId: player.userId,
+            status: 'accepted', // Virtual team members are always accepted
+            user: {
+              id: player.userId,
+              username: 'invite',
+              displayName: player.displayName,
+            },
+          });
+        }
+      }
+
+      // Создаем виртуальные команды только для тех teamId, которых нет в реальных командах
+      for (const [teamId, members] of teamGroups.entries()) {
+        // Найти лидера по флагу isTeamLeader в базе данных
+        const leaderPlayer = virtualPlayers.find(p => p.teamId === teamId && p.isTeamLeader);
+        const leaderMember = members.find(m => m.userId === leaderPlayer?.userId) || members[0];
+
+        virtualTeams.push({
+          id: teamId,
+          name: `Команда ${leaderMember.user.displayName}`,
+          leaderId: leaderMember.userId,
+          leader: {
+            id: leaderMember.userId,
+            username: 'invite',
+            displayName: leaderMember.user.displayName,
+          },
+          members: members.filter(m => m.userId !== leaderMember.userId),
+          isVirtual: true, // Флаг что это виртуальная команда
+        });
+      }
+    }
+
+    // Объединяем реальные и виртуальные команды
+    const allTeams = [...teamsWithMembers, ...virtualTeams];
+
+    // Filter out teams with no accepted participants
+    const activeTeams = allTeams.filter(team => {
+      // Team must have a leader
+      if (!team.leader) return false;
+
+      // For virtual teams, all members are considered accepted
+      if (team.isVirtual) {
+        return team.members.length > 0;
+      }
+
+      // For real teams, must have at least 1 accepted member (leader should be in this list)
+      const acceptedMembers = team.members.filter((m: any) => m.status === 'accepted');
+      return acceptedMembers.length > 0;
+    });
+
+    console.log(`📊 Tournament ${tournamentId}: Real teams: ${teamsWithMembers.length}, Virtual teams: ${virtualTeams.length}, Total active teams: ${activeTeams.length}`);
 
     res.json(activeTeams);
   } catch (error) {
@@ -2119,6 +2213,185 @@ app.post("/api/tournament/:id/register", async (req, res) => {
   }
 });
 
+// Gift tournament registration to another player
+app.post("/api/tournament/:id/gift-register", async (req, res) => {
+  try {
+    const authResult = await authenticateUser(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const { userId: gifterId, user: gifter } = authResult;
+    const tournamentId = req.params.id;
+    const { recipientId } = req.body;
+
+    if (!recipientId) {
+      return res.status(400).json({ error: "Recipient user ID is required" });
+    }
+
+    // Check if gifting to self
+    if (gifterId === recipientId) {
+      return res.status(400).json({ error: "You cannot gift registration to yourself" });
+    }
+
+    // Get recipient user
+    const recipient = await storage.getUser(recipientId);
+    if (!recipient) {
+      return res.status(404).json({ error: "Recipient user not found" });
+    }
+
+    // Check if tournament exists
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    // Check if registration is open
+    if (!tournament.registrationOpen) {
+      return res.status(400).json({ error: "Registration is closed" });
+    }
+    if (tournament.status !== 'registration_open' && tournament.status !== 'upcoming') {
+      return res.status(400).json({ error: "Registration is not available" });
+    }
+
+    // Check if recipient is already registered
+    const existingRegistration = await storage.getTournamentRegistration(tournamentId, recipientId);
+    if (existingRegistration) {
+      return res.status(400).json({ error: "This user is already registered for this tournament" });
+    }
+
+    // Check if tournament is full
+    if (tournament.maxParticipants && tournament.currentParticipants >= tournament.maxParticipants) {
+      return res.status(400).json({ error: "Tournament is full" });
+    }
+
+    // Check balance for paid tournaments - gifter pays
+    if (tournament.entryFee > 0) {
+      if (gifter.balance < tournament.entryFee) {
+        return res.status(400).json({
+          error: `Insufficient balance. Required: ${tournament.entryFee} ₽, Available: ${gifter.balance} ₽`
+        });
+      }
+
+      // Deduct entry fee from gifter
+      await storage.updateUserBalance(
+        gifterId,
+        -tournament.entryFee,
+        `Gift entry fee for ${recipient.displayName} in tournament: ${tournament.name}`,
+        'withdrawal_request',
+        'tournament',
+        tournamentId
+      );
+    }
+
+    // Create registration for recipient with giftedBy field
+    const registration = await storage.registerForTournament({
+      tournamentId,
+      userId: recipientId,
+      status: tournament.entryFee > 0 ? 'paid' : 'registered',
+      paidAmount: tournament.entryFee,
+      paidAt: tournament.entryFee > 0 ? new Date() : null,
+      teamName: null,
+      additionalInfo: `Gifted by ${gifter.displayName}`,
+      giftedBy: gifterId, // ✅ Track who gifted this registration
+    });
+
+    // For team-based tournaments, create a team for the recipient
+    if (tournament.teamMode !== 'solo') {
+      try {
+        const generatedTeamName = `Team ${crypto.randomBytes(4).toString('hex')}`;
+
+        const [team] = await db.insert(tournamentTeams).values({
+          tournamentId,
+          name: generatedTeamName,
+          leaderId: recipientId,
+          status: 'registered',
+        }).returning();
+
+        await db.insert(tournamentTeamMembers).values({
+          teamId: team.id,
+          userId: recipientId,
+          status: 'accepted',
+          joinedAt: new Date(),
+        });
+
+        console.log(`✅ Team ${team.id} created for gifted user ${recipientId} in tournament ${tournamentId}`);
+
+        // Auto-import to linked dropmap
+        try {
+          const linkedDropmaps = await db
+            .select()
+            .from(dropMapSettings)
+            .where(eq(dropMapSettings.tournamentId, tournamentId));
+
+          for (const dropmap of linkedDropmaps) {
+            const [existing] = await db
+              .select()
+              .from(dropMapEligiblePlayers)
+              .where(and(
+                eq(dropMapEligiblePlayers.settingsId, dropmap.id),
+                eq(dropMapEligiblePlayers.userId, recipientId)
+              ))
+              .limit(1);
+
+            if (!existing) {
+              await db.insert(dropMapEligiblePlayers).values({
+                settingsId: dropmap.id,
+                userId: recipientId,
+                displayName: recipient.displayName,
+                sourceType: 'tournament_registration',
+                addedBy: null,
+              });
+              console.log(`✅ Gifted user ${recipientId} auto-added to dropmap ${dropmap.id}`);
+            }
+          }
+        } catch (dropmapError) {
+          console.error('❌ Failed to add gifted user to dropmap:', dropmapError);
+        }
+      } catch (teamError) {
+        console.error('❌ Failed to create team for gifted user:', teamError);
+      }
+    }
+
+    // Increment participant count
+    await storage.incrementTournamentParticipants(tournamentId);
+
+    // Auto-close registration if max participants reached
+    const updatedTournament = await storage.getTournament(tournamentId);
+    if (updatedTournament &&
+        updatedTournament.maxParticipants &&
+        updatedTournament.currentParticipants >= updatedTournament.maxParticipants) {
+      await storage.updateTournament(tournamentId, { registrationOpen: false });
+      console.log(`🔒 Registration auto-closed for tournament ${tournamentId} (max participants reached)`);
+    }
+
+    // Discord Integration for recipient
+    if (recipient.discordId && tournament.discordRoleId) {
+      try {
+        await discordTournamentService.assignTournamentRole(
+          recipient.discordId,
+          tournament.discordRoleId
+        );
+        console.log(`✅ Discord role ${tournament.discordRoleId} assigned to gifted user ${recipientId}`);
+      } catch (discordError) {
+        console.error('Failed to assign Discord role to gifted user:', discordError);
+      }
+    }
+
+    console.log(`✅ User ${gifterId} gifted tournament registration to ${recipientId} for tournament ${tournamentId}`);
+
+    res.json({
+      message: `Successfully gifted registration to ${recipient.displayName}`,
+      registration,
+      tournament: await storage.getTournament(tournamentId),
+    });
+
+  } catch (error) {
+    console.error('Gift tournament registration error:', error);
+    res.status(500).json({ error: "Failed to gift tournament registration" });
+  }
+});
+
 // Cancel tournament registration
 app.delete("/api/tournament/:id/register", async (req, res) => {
   try {
@@ -2206,14 +2479,24 @@ app.delete("/api/tournament/:id/register", async (req, res) => {
 
     // Refund entry fee if paid
     if (registration.paidAmount && registration.paidAmount > 0) {
+      // ✅ If registration was gifted, refund goes to the gifter, not the recipient
+      const refundRecipient = registration.giftedBy || userId;
+      const refundReason = registration.giftedBy
+        ? `Refund for gifted tournament registration (cancelled by recipient): ${tournament.name}`
+        : `Refund for cancelled tournament registration: ${tournament.name}`;
+
       await storage.updateUserBalance(
-        userId,
+        refundRecipient,
         registration.paidAmount,
-        `Refund for cancelled tournament registration: ${tournament.name}`,
+        refundReason,
         'bonus',
         'tournament',
         tournamentId
       );
+
+      if (registration.giftedBy) {
+        console.log(`💰 Refunded ${registration.paidAmount} ₽ to gifter ${registration.giftedBy} (recipient ${userId} cancelled)`);
+      }
     }
 
     // Delete registration
@@ -2516,7 +2799,7 @@ app.post("/api/tournament/team/:teamId/invite", async (req, res) => {
     }
 
     const { teamId } = req.params;
-    const { userId } = req.body;
+    const { userId, payForInvitee } = req.body;
 
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
@@ -2598,6 +2881,28 @@ app.post("/api/tournament/team/:teamId/invite", async (req, res) => {
         )
       );
 
+    // If leader wants to pay for invitee, charge entry fee now
+    if (payForInvitee && tournament.entryFee > 0) {
+      const leader = authResult.user;
+      if (leader.balance < tournament.entryFee) {
+        return res.status(400).json({
+          error: `Недостаточно средств для оплаты союзника. Необходимо: ${tournament.entryFee} ₽, доступно: ${leader.balance} ₽`
+        });
+      }
+
+      // Deduct entry fee from leader's balance
+      await storage.updateUserBalance(
+        authResult.userId,
+        -tournament.entryFee,
+        `Оплата регистрации союзника в турнире: ${tournament.name}`,
+        'withdrawal_request',
+        'tournament',
+        tournament.id
+      );
+
+      console.log(`💰 Leader ${authResult.userId} paid ${tournament.entryFee} ₽ for invitee ${userId}`);
+    }
+
     // Create invite
     const [invite] = await db
       .insert(tournamentTeamInvites)
@@ -2607,6 +2912,7 @@ app.post("/api/tournament/team/:teamId/invite", async (req, res) => {
         fromUserId: authResult.userId,
         toUserId: userId,
         status: 'pending',
+        paidByLeader: payForInvitee || false,
       })
       .returning();
 
@@ -2770,8 +3076,8 @@ app.post("/api/tournament/team/invite/:inviteId/respond", async (req, res) => {
 
       console.log(`✅ User ${authResult.userId} accepted invite and joined team ${invite.teamId}`);
 
-      // Charge entry fee if applicable
-      if (tournament.entryFee > 0) {
+      // Charge entry fee if applicable (unless already paid by leader)
+      if (tournament.entryFee > 0 && !invite.paidByLeader) {
         const user = authResult.user;
         if (user.balance < tournament.entryFee) {
           // Rollback - remove from team
@@ -2802,6 +3108,8 @@ app.post("/api/tournament/team/invite/:inviteId/respond", async (req, res) => {
           sourceType: 'tournament_team',
           sourceId: invite.teamId,
         });
+      } else if (invite.paidByLeader) {
+        console.log(`💰 Entry fee already paid by team leader for user ${authResult.userId}`);
       }
 
       // Update invite status
@@ -2850,8 +3158,10 @@ app.post("/api/tournament/team/invite/:inviteId/respond", async (req, res) => {
               displayName: user.displayName,
               sourceType: 'tournament_registration',
               addedBy: null,
+              teamId: invite.teamId,
+              isTeamLeader: false,
             });
-            console.log(`✅ Team member ${authResult.userId} auto-added to dropmap ${dropmap.id}`);
+            console.log(`✅ Team member ${authResult.userId} auto-added to dropmap ${dropmap.id} with teamId ${invite.teamId}`);
           }
 
           // Broadcast territory updates for this map via WebSocket
