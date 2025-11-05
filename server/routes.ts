@@ -123,7 +123,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Redirect directly to Epic Games OAuth
-      res.redirect(`https://www.epicgames.com/id/authorize?${params}`);
+      res.json({ 
+        authUrl: `https://www.epicgames.com/id/authorize?${params}`, 
+        state 
+      });
+      
     } catch (error) {
       console.error('Epic login error:', error);
       res.status(500).json({ error: "Failed to initialize Epic Games login" });
