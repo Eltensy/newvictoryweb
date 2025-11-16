@@ -18,6 +18,8 @@ import {
   users,
   tournaments,
   tournamentRegistrations,
+  tournamentTeams,
+  tournamentTeamMembers,
 } from "../shared/schema";
 import sharp from 'sharp';
 
@@ -515,9 +517,22 @@ export function registerTerritoryRoutes(app: Express) {
         return res.status(404).json({ error: "Карта не найдена" });
       }
 
+      // Get tournament info if map is linked to a tournament
+      let tournament = null;
+      if (map.tournamentId) {
+        const [tournamentData] = await db
+          .select()
+          .from(tournaments)
+          .where(eq(tournaments.id, map.tournamentId));
+        tournament = tournamentData;
+      }
+
+      const isTeamMode = tournament && tournament.teamMode && tournament.teamMode !== 'solo';
+
       const results = {
         added: 0,
         skipped: 0,
+        teamsCreated: 0,
         errors: [] as string[]
       };
 
@@ -542,6 +557,69 @@ export function registerTerritoryRoutes(app: Express) {
             continue;
           }
 
+          let teamId = null;
+
+          // If this is a team tournament, create a team with the player as captain
+          if (isTeamMode && tournament) {
+            // Check if player already has a team for this tournament
+            const [existingReg] = await db
+              .select()
+              .from(tournamentRegistrations)
+              .where(and(
+                eq(tournamentRegistrations.tournamentId, tournament.id),
+                eq(tournamentRegistrations.userId, userId)
+              ));
+
+            if (existingReg && existingReg.teamId) {
+              // Player already has a team
+              teamId = existingReg.teamId;
+            } else {
+              // Create a new team with this player as captain
+              const teamName = `Team ${user.displayName}`;
+              const [newTeam] = await db
+                .insert(tournamentTeams)
+                .values({
+                  tournamentId: tournament.id,
+                  name: teamName,
+                  leaderId: userId,
+                  status: 'registered',
+                  paidAmount: 0, // Admin добавляет бесплатно
+                })
+                .returning();
+
+              teamId = newTeam.id;
+              results.teamsCreated++;
+
+              // Add team member entry for the captain
+              await db
+                .insert(tournamentTeamMembers)
+                .values({
+                  teamId: teamId,
+                  userId: userId,
+                  status: 'accepted',
+                });
+
+              // Create or update tournament registration
+              if (existingReg) {
+                await db
+                  .update(tournamentRegistrations)
+                  .set({ teamId: teamId })
+                  .where(eq(tournamentRegistrations.id, existingReg.id));
+              } else {
+                await db
+                  .insert(tournamentRegistrations)
+                  .values({
+                    tournamentId: tournament.id,
+                    userId: userId,
+                    teamId: teamId,
+                    status: 'registered',
+                    paidAmount: 0, // Admin добавляет бесплатно
+                  });
+              }
+            }
+          }
+
+          // Add player to dropmap
           await db
             .insert(dropMapEligiblePlayers)
             .values({
@@ -550,6 +628,8 @@ export function registerTerritoryRoutes(app: Express) {
               displayName: user.displayName,
               sourceType: 'manual',
               addedBy: authResult.adminId,
+              teamId: teamId, // Link to team if created
+              isTeamLeader: isTeamMode ? true : null,
             });
 
           results.added++;
@@ -560,9 +640,12 @@ export function registerTerritoryRoutes(app: Express) {
       }
 
       res.json({
-        message: `Added ${results.added} players`,
+        message: isTeamMode
+          ? `Added ${results.added} players as team captains (${results.teamsCreated} teams created)`
+          : `Added ${results.added} players`,
         added: results.added,
         skipped: results.skipped,
+        teamsCreated: results.teamsCreated,
         errors: results.errors,
       });
     } catch (error) {

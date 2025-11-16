@@ -122,12 +122,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         nonce: crypto.randomBytes(32).toString('hex')
       });
 
-      // Redirect directly to Epic Games OAuth
-      res.json({ 
-        authUrl: `https://www.epicgames.com/id/authorize?${params}`, 
-        state 
+      res.json({
+        authUrl: `https://www.epicgames.com/id/authorize?${params}`,
+        state
       });
-      
     } catch (error) {
       console.error('Epic login error:', error);
       res.status(500).json({ error: "Failed to initialize Epic Games login" });
@@ -2227,6 +2225,179 @@ app.post("/api/tournament/:id/register", async (req, res) => {
   } catch (error) {
     console.error('Tournament registration error:', error);
     res.status(500).json({ error: "Failed to register for tournament" });
+  }
+});
+
+// Admin: Add players to tournament (free of charge)
+app.post("/api/admin/tournament/:id/add-players", async (req, res) => {
+  try {
+    const authResult = await authenticateAdmin(req);
+    if ('error' in authResult) {
+      return res.status(authResult.status).json({ error: authResult.error });
+    }
+
+    const tournamentId = req.params.id;
+    const { userIds } = req.body;
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ error: "userIds array is required" });
+    }
+
+    // Check if tournament exists
+    const tournament = await storage.getTournament(tournamentId);
+    if (!tournament) {
+      return res.status(404).json({ error: "Tournament not found" });
+    }
+
+    const results = {
+      added: 0,
+      skipped: 0,
+      teamsCreated: 0,
+      errors: [] as string[]
+    };
+
+    for (const userId of userIds) {
+      try {
+        const user = await storage.getUser(userId);
+        if (!user) {
+          results.errors.push(`User ${userId} not found`);
+          continue;
+        }
+
+        // Check if already registered
+        const existingRegistration = await storage.getTournamentRegistration(tournamentId, userId);
+        if (existingRegistration) {
+          results.skipped++;
+          continue;
+        }
+
+        // Create registration (free of charge)
+        const registration = await storage.registerForTournament({
+          tournamentId,
+          userId,
+          status: 'registered',
+          paidAmount: 0, // Admin adds for free
+          paidAt: null,
+          teamName: null,
+          additionalInfo: 'Added by admin',
+        });
+
+        // For team-based tournaments, automatically create a team with the user as captain
+        if (tournament.teamMode !== 'solo') {
+          try {
+            const generatedTeamName = `Team ${user.displayName}`;
+
+            // Create the team
+            const [team] = await db.insert(tournamentTeams).values({
+              tournamentId,
+              name: generatedTeamName,
+              leaderId: userId,
+              status: 'registered',
+              paidAmount: 0, // Admin adds for free
+            }).returning();
+
+            results.teamsCreated++;
+
+            // Add the captain as the first member
+            await db.insert(tournamentTeamMembers).values({
+              teamId: team.id,
+              userId,
+              status: 'accepted',
+              joinedAt: new Date(),
+            });
+
+            // Update registration with team ID
+            await db
+              .update(tournamentRegistrations)
+              .set({ teamId: team.id })
+              .where(eq(tournamentRegistrations.id, registration.id));
+
+            // Auto-import team captain to linked dropmap
+            const linkedDropmaps = await db
+              .select()
+              .from(dropMapSettings)
+              .where(eq(dropMapSettings.tournamentId, tournamentId));
+
+            for (const dropmap of linkedDropmaps) {
+              // Check if captain is already in eligible players
+              const [existing] = await db
+                .select()
+                .from(dropMapEligiblePlayers)
+                .where(and(
+                  eq(dropMapEligiblePlayers.settingsId, dropmap.id),
+                  eq(dropMapEligiblePlayers.userId, userId)
+                ));
+
+              if (!existing) {
+                await db
+                  .insert(dropMapEligiblePlayers)
+                  .values({
+                    settingsId: dropmap.id,
+                    userId: userId,
+                    displayName: user.displayName,
+                    sourceType: 'tournament_import',
+                    teamId: team.id,
+                    isTeamLeader: true,
+                    addedBy: authResult.adminId,
+                  });
+              }
+            }
+
+          } catch (teamError) {
+            console.error(`Failed to create team for user ${userId}:`, teamError);
+            results.errors.push(`Failed to create team for ${userId}`);
+          }
+        } else {
+          // Solo tournament - add to dropmap if linked
+          const linkedDropmaps = await db
+            .select()
+            .from(dropMapSettings)
+            .where(eq(dropMapSettings.tournamentId, tournamentId));
+
+          for (const dropmap of linkedDropmaps) {
+            const [existing] = await db
+              .select()
+              .from(dropMapEligiblePlayers)
+              .where(and(
+                eq(dropMapEligiblePlayers.settingsId, dropmap.id),
+                eq(dropMapEligiblePlayers.userId, userId)
+              ));
+
+            if (!existing) {
+              await db
+                .insert(dropMapEligiblePlayers)
+                .values({
+                  settingsId: dropmap.id,
+                  userId: userId,
+                  displayName: user.displayName,
+                  sourceType: 'tournament_import',
+                  addedBy: authResult.adminId,
+                });
+            }
+          }
+        }
+
+        results.added++;
+
+      } catch (error) {
+        console.error(`Failed to add player ${userId}:`, error);
+        results.errors.push(`Failed to add ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+
+    res.json({
+      message: tournament.teamMode !== 'solo'
+        ? `Added ${results.added} players (${results.teamsCreated} teams created)`
+        : `Added ${results.added} players`,
+      added: results.added,
+      skipped: results.skipped,
+      teamsCreated: results.teamsCreated,
+      errors: results.errors,
+    });
+
+  } catch (error) {
+    console.error('Admin add players error:', error);
+    res.status(500).json({ error: "Failed to add players to tournament" });
   }
 });
 

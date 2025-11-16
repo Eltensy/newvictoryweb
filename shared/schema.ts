@@ -180,6 +180,9 @@ export const tournaments = pgTable("tournaments", {
   // Регистрация открывается автоматически при создании
   registrationOpen: boolean("registration_open").notNull().default(true),
 
+  // Турнир только по приглашению (только админы могут добавлять игроков)
+  isInviteOnly: boolean("is_invite_only").notNull().default(false),
+
   // Режим команды: solo (1), duo (2), trio (3), squad (4)
   teamMode: tournamentTeamModeEnum("team_mode").notNull().default('solo'),
 
