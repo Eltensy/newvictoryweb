@@ -53,12 +53,19 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showPrizeDialog, setShowPrizeDialog] = useState(false);
   const [showLinkDropMapDialog, setShowLinkDropMapDialog] = useState(false);
+  const [showAddPlayersDialog, setShowAddPlayersDialog] = useState(false);
   const [selectedTournament, setSelectedTournament] = useState<Tournament | null>(null);
   const [tournamentParticipants, setTournamentParticipants] = useState<TournamentRegistration[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
   const [loadingParticipants, setLoadingParticipants] = useState(false);
   const [dropMapIdInput, setDropMapIdInput] = useState('');
   const [availableMaps, setAvailableMaps] = useState<Array<{ id: string; name: string }>>([]);
+
+  // Add players state
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [playerSearchQuery, setPlayerSearchQuery] = useState('');
+  const [loadingUsers, setLoadingUsers] = useState(false);
 
   // Prize distribution state
   const [prizeDistribution, setPrizeDistribution] = useState<Record<string, number>>({});
@@ -76,6 +83,7 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
     entryFee: 0,
     maxParticipants: '',
     teamMode: 'solo' as 'solo' | 'duo' | 'trio' | 'squad',
+    isInviteOnly: false,
     autoCreateDiscordChannels: false,
     discordRoleId: '',
     templateMapId: '', // ID шаблона карты для копирования
@@ -288,6 +296,7 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
       formDataToSend.append('entryFee', formData.entryFee.toString());
       if (formData.maxParticipants) formDataToSend.append('maxParticipants', formData.maxParticipants);
       formDataToSend.append('teamMode', formData.teamMode);
+      formDataToSend.append('isInviteOnly', formData.isInviteOnly.toString());
       if (imageFile) formDataToSend.append('image', imageFile);
 
       // Discord Integration
@@ -517,6 +526,81 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
     }
   }, [authToken]);
 
+  // Load all users for adding to tournament
+  const loadAllUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const response = await fetch('/api/admin/users', {
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAllUsers(data.users || []);
+      }
+    } catch (error) {
+      console.error('Failed to load users:', error);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleOpenAddPlayersDialog = async (tournament: Tournament) => {
+    setSelectedTournament(tournament);
+    setSelectedUserIds([]);
+    setPlayerSearchQuery('');
+    setShowAddPlayersDialog(true);
+    await loadAllUsers();
+  };
+
+  const handleAddPlayers = async () => {
+    if (!selectedTournament || selectedUserIds.length === 0) return;
+
+    setActionLoading(true);
+    try {
+      const response = await fetch(`/api/admin/tournament/${selectedTournament.id}/add-players`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ userIds: selectedUserIds }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to add players');
+      }
+
+      const result = await response.json();
+
+      toast({
+        title: 'Успешно',
+        description: result.message,
+      });
+
+      setShowAddPlayersDialog(false);
+      setSelectedUserIds([]);
+      setPlayerSearchQuery('');
+      onRefresh();
+    } catch (error: any) {
+      toast({
+        title: 'Ошибка',
+        description: error.message || 'Не удалось добавить игроков',
+        variant: 'destructive',
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const filteredUsersForAdd = allUsers.filter(u =>
+    u.displayName.toLowerCase().includes(playerSearchQuery.toLowerCase()) ||
+    u.username.toLowerCase().includes(playerSearchQuery.toLowerCase())
+  );
+
   if (loading) {
     return (
       <Card>
@@ -691,6 +775,25 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                       {formData.teamMode === 'solo'
                         ? 'Игроки участвуют индивидуально'
                         : `Игроки формируют команды по ${formData.teamMode === 'duo' ? '2' : formData.teamMode === 'trio' ? '3' : '4'} человека`}
+                    </p>
+                  </div>
+
+                  {/* Invite Only Mode */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={formData.isInviteOnly}
+                        onCheckedChange={(checked) =>
+                          setFormData({...formData, isInviteOnly: checked as boolean})
+                        }
+                        id="isInviteOnly"
+                      />
+                      <Label htmlFor="isInviteOnly" className="cursor-pointer">
+                        Только по приглашению
+                      </Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Если включено, игроки смогут присоединиться к турниру только через приглашение от администратора
                     </p>
                   </div>
 
@@ -939,6 +1042,15 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
                         <Button
                           size="sm"
                           variant="outline"
+                          onClick={() => handleOpenAddPlayersDialog(tournament)}
+                          title="Добавить игроков"
+                          className="border-green-500 text-green-500"
+                        >
+                          <Users className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
                           onClick={() => handleOpenLinkDropMapDialog(tournament)}
                           title={tournament.dropMapId ? "Сменить карту" : "Привязать карту"}
                           className={tournament.dropMapId ? "" : "border-blue-500 text-blue-500"}
@@ -1136,6 +1248,122 @@ export function AdminTournamentsTab({ tournaments, loading, onRefresh, authToken
             >
               {actionLoading ? 'Привязка...' : 'Привязать'}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Players Dialog */}
+      <Dialog open={showAddPlayersDialog} onOpenChange={setShowAddPlayersDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Добавить игроков на турнир</DialogTitle>
+            <DialogDescription>
+              {selectedTournament?.name}
+              {selectedTournament?.teamMode !== 'solo' && (
+                <span className="block mt-1 text-xs">
+                  Режим: {selectedTournament?.teamMode === 'duo' ? 'Дуо (2 игрока)' : selectedTournament?.teamMode === 'trio' ? 'Трио (3 игрока)' : 'Сквад (4 игрока)'}
+                  {' '}- игроки будут добавлены как капитаны команд и смогут приглашать тиммейтов
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <Label>Поиск игроков</Label>
+              <Input
+                value={playerSearchQuery}
+                onChange={(e) => setPlayerSearchQuery(e.target.value)}
+                placeholder="Введите имя или username..."
+                className="w-full"
+              />
+            </div>
+
+            {selectedUserIds.length > 0 && (
+              <div className="flex items-center justify-between bg-primary/10 p-2 rounded">
+                <span className="text-sm font-medium">Выбрано: {selectedUserIds.length}</span>
+                <Button size="sm" variant="ghost" onClick={() => setSelectedUserIds([])}>
+                  Очистить
+                </Button>
+              </div>
+            )}
+
+            <div className="max-h-96 overflow-y-auto border rounded p-2">
+              {loadingUsers ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
+                  <p className="text-sm">Загрузка пользователей...</p>
+                </div>
+              ) : filteredUsersForAdd.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Ничего не найдено</p>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {filteredUsersForAdd.map(u => {
+                    const isSelected = selectedUserIds.includes(u.id);
+                    const isAlreadyInTournament = tournamentParticipants.some(p => p.userId === u.id);
+
+                    return (
+                      <label
+                        key={u.id}
+                        className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-colors ${
+                          isAlreadyInTournament
+                            ? 'opacity-50 cursor-not-allowed'
+                            : 'hover:bg-muted'
+                        } ${isSelected && !isAlreadyInTournament ? 'bg-primary/10' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={isAlreadyInTournament}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedUserIds([...selectedUserIds, u.id]);
+                            } else {
+                              setSelectedUserIds(selectedUserIds.filter(id => id !== u.id));
+                            }
+                          }}
+                          className="cursor-pointer"
+                        />
+                        <div className="flex-1">
+                          <div className="text-sm font-medium">{u.displayName}</div>
+                          <div className="text-xs text-muted-foreground">@{u.username}</div>
+                        </div>
+                        {isAlreadyInTournament && (
+                          <Badge variant="secondary" className="text-xs">
+                            Уже в турнире
+                          </Badge>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                onClick={handleAddPlayers}
+                disabled={selectedUserIds.length === 0 || actionLoading}
+                className="flex-1"
+              >
+                <Users className="h-4 w-4 mr-2" />
+                {actionLoading ? 'Добавление...' : `Добавить (${selectedUserIds.length})`}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowAddPlayersDialog(false);
+                  setPlayerSearchQuery('');
+                  setSelectedUserIds([]);
+                }}
+                className="flex-1"
+              >
+                Отмена
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

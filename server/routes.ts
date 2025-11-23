@@ -3693,6 +3693,7 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
 
     const autoCreateDiscordChannels = req.body.autoCreateDiscordChannels === 'true' || req.body.autoCreateDiscordChannels === true;
     const discordRoleId = req.body.discordRoleId || null;
+    const isInviteOnly = req.body.isInviteOnly === 'true' || req.body.isInviteOnly === true;
 
     const tournamentData = {
       ...req.body,
@@ -3705,6 +3706,7 @@ app.post("/api/admin/tournament", upload.single('image'), async (req, res) => {
       createdBy: authResult.adminId,
       autoCreateDiscordChannels,
       discordRoleId,
+      isInviteOnly,
     };
 
     const validation = insertTournamentSchema.safeParse(tournamentData);
