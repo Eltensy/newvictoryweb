@@ -13,6 +13,7 @@ import TerritoryMainPage from './components/TerritoryMain';
 import TournamentsPage from './components/TournamentsPage';
 import TournamentDetailPage from './components/TournamentDetailPage';
 import DropMapInvitePage from './components/DropMapInvitePage';
+import DropMapPublicView from './components/DropMapPublicView';
 import MySubmissionsPage from './components/MySubmissions';
 import { DevLogin } from './components/DevLogin';
 import ProfilePage from './components/ProfilePage';
@@ -143,7 +144,16 @@ function Router() {
           <DropMapInvitePage />
         </>
       )} />
-      
+
+      <Route path="/dropmap/view/:mapId" component={() => (
+        <>
+          <div className="fixed top-4 right-4 z-50">
+            <ThemeToggle />
+          </div>
+          <DropMapPublicView />
+        </>
+      )} />
+
       <Route component={NotFound} />
     </Switch>
   );

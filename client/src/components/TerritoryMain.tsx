@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTerritorySocket } from '@/hooks/useTerritorySocket';
 import { useAuth } from '@/hooks/useAuth';
+import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute } from "wouter";
 import LoadingScreen from './LoadingScreen';
 import {
@@ -133,6 +134,149 @@ function NotificationModal({ isOpen, type, title, message, onClose }: any) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Team Slot Editor Component
+function TeamSlotEditor({ slotNumber, slot, allUsers, onChange }: {
+  slotNumber: number;
+  slot: { type: 'real' | 'virtual' | 'empty'; userId?: string; displayName?: string; username?: string };
+  allUsers: any[];
+  onChange: (slot: any) => void;
+}) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const filteredUsers = allUsers.filter(u =>
+    u.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    u.username.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div className="border rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-sm">
+            {slotNumber}
+          </div>
+          <span className="font-medium">Игрок {slotNumber}</span>
+        </div>
+
+        {slot.type !== 'empty' && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onChange({ type: 'empty' })}
+            className="text-red-500 hover:text-red-600"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+
+      {slot.type === 'empty' ? (
+        <div className="grid grid-cols-3 gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setIsExpanded(true)}
+            className="w-full"
+          >
+            <User className="h-4 w-4 mr-2" />
+            Игрок с сайта
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => onChange({ type: 'virtual', displayName: '' })}
+            className="w-full"
+          >
+            <UserPlus className="h-4 w-4 mr-2" />
+            Виртуальный
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => onChange({ type: 'empty' })}
+            className="w-full text-muted-foreground"
+            disabled
+          >
+            <Loader2 className="h-4 w-4 mr-2" />
+            Пустой слот
+          </Button>
+        </div>
+      ) : slot.type === 'real' ? (
+        <div className="bg-green-500/10 border border-green-500/20 rounded p-3">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="h-4 w-4 text-green-600" />
+            <div>
+              <div className="text-sm font-medium">{slot.displayName}</div>
+              <div className="text-xs text-muted-foreground">@{slot.username}</div>
+            </div>
+          </div>
+        </div>
+      ) : slot.type === 'virtual' ? (
+        <div className="space-y-2">
+          <Label>Никнейм виртуального игрока</Label>
+          <Input
+            value={slot.displayName || ''}
+            onChange={(e) => onChange({ ...slot, displayName: e.target.value })}
+            placeholder="Например: Player123"
+            className="w-full"
+          />
+          <p className="text-xs text-muted-foreground">
+            Виртуальный игрок не привязан к аккаунту на сайте
+          </p>
+        </div>
+      ) : null}
+
+      {/* Player selection expanded view */}
+      {isExpanded && slot.type === 'empty' && (
+        <div className="space-y-2 pt-2 border-t">
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Поиск..."
+            className="w-full"
+          />
+          <div className="max-h-48 overflow-y-auto space-y-1">
+            {filteredUsers.length === 0 ? (
+              <div className="text-center py-4 text-muted-foreground text-sm">
+                Нет доступных игроков
+              </div>
+            ) : (
+              filteredUsers.map(u => (
+                <button
+                  key={u.id}
+                  onClick={() => {
+                    onChange({
+                      type: 'real',
+                      userId: u.id,
+                      displayName: u.displayName,
+                      username: u.username
+                    });
+                    setIsExpanded(false);
+                    setSearchQuery('');
+                  }}
+                  className="w-full text-left p-2 rounded hover:bg-muted transition-colors"
+                >
+                  <div className="text-sm font-medium">{u.displayName}</div>
+                  <div className="text-xs text-muted-foreground">@{u.username}</div>
+                </button>
+              ))
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setIsExpanded(false);
+              setSearchQuery('');
+            }}
+            className="w-full"
+          >
+            Отмена
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -379,6 +523,7 @@ function TerritoryContextMenu({ territory, onEdit, onDelete, onClose, position }
 
 export default function TerritoryMain() {
   const { user, isLoggedIn, getAuthToken, isLoading: authLoading } = useAuth();
+  const { toast } = useToast();
   const [location, setLocation] = useLocation();
   const [match, params] = useRoute('/dropmap/:dropmapId');
   const dropmapIdFromUrl = params?.dropmapId;
@@ -435,7 +580,8 @@ export default function TerritoryMain() {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [showAssignPlayerDialog, setShowAssignPlayerDialog] = useState(false);
-  
+  const [showAddPlayerToTeamDialog, setShowAddPlayerToTeamDialog] = useState(false);
+
   // Form states
   const [mapForm, setMapForm] = useState({ sourceMapId: '', name: '', description: '' });
   const [editTerritoryForm, setEditTerritoryForm] = useState<{
@@ -452,16 +598,60 @@ export default function TerritoryMain() {
 const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [playerSearchQuery, setPlayerSearchQuery] = useState('');
+  const [teamSearchQuery, setTeamSearchQuery] = useState('');
+
+  // Team building states
+  const [addPlayerStep, setAddPlayerStep] = useState<'select_captain' | 'build_team' | 'add_members'>('select_captain');
+  const [selectedCaptain, setSelectedCaptain] = useState<string | null>(null);
+  const [teamSlots, setTeamSlots] = useState<Array<{
+    type: 'real' | 'virtual' | 'empty';
+    userId?: string;
+    displayName?: string;
+    username?: string;
+  }>>([]);
+
   const [inviteForm, setInviteForm] = useState({ displayName: '', expiresInDays: 30, teamMemberNames: '' });
   const [importForm, setImportForm] = useState({ tournamentId: '', topN: '', positions: '' });
   const [settingsForm, setSettingsForm] = useState({ isLocked: false, mapImageFile: null as File | null });
   const [assignPlayerForm, setAssignPlayerForm] = useState({ territoryId: '', playerId: '' });
+  const [addPlayerToTeamForm, setAddPlayerToTeamForm] = useState({
+    teamId: '',
+    teamName: '',
+    currentMembers: [] as EligiblePlayer[],
+    playerType: '' as 'real' | 'virtual' | '',
+    selectedUserId: '',
+    virtualPlayerName: '',
+    searchQuery: '',
+  });
   
   const [notification, setNotification] = useState<{ isOpen: boolean; type: 'success' | 'error' | 'warning' | 'info'; title: string; message: string; }>({ isOpen: false, type: 'info', title: '', message: '' });
 
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant?: 'default' | 'destructive';
+  }>({ isOpen: false, title: '', message: '', onConfirm: () => {}, variant: 'default' });
 
   const showNotification = useCallback((type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
     setNotification({ isOpen: true, type, title, message });
+  }, []);
+
+  const showConfirm = useCallback((title: string, message: string, onConfirm: () => void, variant: 'default' | 'destructive' = 'default') => {
+    return new Promise<boolean>((resolve) => {
+      setConfirmDialog({
+        isOpen: true,
+        title,
+        message,
+        onConfirm: () => {
+          onConfirm();
+          resolve(true);
+          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        },
+        variant
+      });
+    });
   }, []);
 
   const closeNotification = () => {
@@ -530,6 +720,12 @@ const [localSelectedPlayer, setLocalSelectedPlayer] = useState('');
     }
 
     const data = await response.json();
+
+    console.log('📦 Loaded map data:', {
+      territories: data.territories?.length,
+      eligiblePlayers: data.eligiblePlayers?.length,
+      playersWithTeams: data.eligiblePlayers?.filter((p: any) => p.teamInfo).length,
+    });
 
     // ✅ Обновить все данные сразу
     setTerritories(data.territories);
@@ -771,35 +967,41 @@ const { isConnected } = useTerritorySocket(
   };
   
   const handleDeleteMap = async (mapId: string, mapName: string) => {
-    if (!confirm(`Удалить карту "${mapName}"? Это действие необратимо.`)) return;
-    try {
-      setIsLoading(true);
-      const token = getAuthToken();
-      if (!token) throw new Error('Требуется авторизация');
-      const response = await fetch(`/api/maps/${mapId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (response.ok) {
-        showNotification('success', 'Успешно', 'Карта удалена');
-        const updatedMaps = await loadAllMaps();
-        if (activeMap?.id === mapId) {
-          const firstMap = updatedMaps?.find((m: DropMap) => !m.isLocked) || updatedMaps?.[0];
-          if (firstMap) {
-            handleSelectMap(firstMap.id);
+    showConfirm(
+      'Удалить карту?',
+      `Удалить карту "${mapName}"?\n\nЭто действие необратимо.`,
+      async () => {
+        try {
+          setIsLoading(true);
+          const token = getAuthToken();
+          if (!token) throw new Error('Требуется авторизация');
+          const response = await fetch(`/api/maps/${mapId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (response.ok) {
+            showNotification('success', 'Успешно', 'Карта удалена');
+            const updatedMaps = await loadAllMaps();
+            if (activeMap?.id === mapId) {
+              const firstMap = updatedMaps?.find((m: DropMap) => !m.isLocked) || updatedMaps?.[0];
+              if (firstMap) {
+                handleSelectMap(firstMap.id);
+              } else {
+                setLocation('/', { replace: true });
+              }
+            }
           } else {
-            setLocation('/', { replace: true });
+            const error = await response.json();
+            showNotification('error', 'Ошибка', error.error || 'Не удалось удалить карту');
           }
+        } catch (error: any) {
+          showNotification('error', 'Ошибка', error.message || 'Не удалось подключиться к серверу');
+        } finally {
+          setIsLoading(false);
         }
-      } else {
-        const error = await response.json();
-        showNotification('error', 'Ошибка', error.error || 'Не удалось удалить карту');
-      }
-    } catch (error: any) {
-      showNotification('error', 'Ошибка', error.message || 'Не удалось подключиться к серверу');
-    } finally {
-      setIsLoading(false);
-    }
+      },
+      'destructive'
+    );
   };
 
   const handleCreateNewMap = async () => {
@@ -1090,8 +1292,77 @@ const { isConnected } = useTerritorySocket(
     }
   };
 
+  // Handle team captain selection
+  const handleSelectCaptain = (userId: string) => {
+    setSelectedCaptain(userId);
+
+    // Initialize team slots based on team mode
+    const teamMode = activeMap?.tournament?.teamMode;
+    const slotCount = teamMode === 'duo' ? 1 : teamMode === 'trio' ? 2 : teamMode === 'squad' ? 3 : 0;
+
+    setTeamSlots(Array(slotCount).fill(null).map(() => ({ type: 'empty' })));
+    setAddPlayerStep('add_members');
+  };
+
+  // Handle team submission
+  const handleSubmitTeam = async () => {
+    if (!activeMap || !selectedCaptain) return;
+
+    try {
+      const token = getAuthToken();
+      if (!token) return;
+
+      // Prepare team data
+      const teamMembers = teamSlots
+        .filter(slot => slot.type !== 'empty')
+        .map(slot => ({
+          type: slot.type,
+          userId: slot.userId,
+          displayName: slot.displayName,
+        }));
+
+      const response = await fetch(`/api/maps/${activeMap.id}/add-team`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          captainId: selectedCaptain,
+          members: teamMembers,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        showNotification('success', 'Успешно', data.message || 'Команда добавлена');
+        handleCloseAddPlayersDialog();
+        await loadMapData(activeMap.id);
+      } else {
+        const error = await response.json();
+        throw new Error(error.error);
+      }
+    } catch (error: any) {
+      showNotification('error', 'Ошибка', error.message || 'Не удалось добавить команду');
+    }
+  };
+
+  // Handle solo player addition (for non-team modes)
   const handleAddPlayers = async () => {
     if (!activeMap || selectedUsers.length === 0) return;
+
+    // For team modes, use team building flow
+    const isTeamMode = activeMap.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo';
+
+    if (isTeamMode) {
+      // If single user selected, treat as captain selection
+      if (selectedUsers.length === 1) {
+        handleSelectCaptain(selectedUsers[0]);
+        return;
+      }
+
+      showNotification('error', 'Ошибка', 'Для командного режима выберите одного капитана');
+      return;
+    }
+
+    // Solo mode - add multiple players
     try {
       const token = getAuthToken();
       if (!token) return;
@@ -1103,8 +1374,7 @@ const { isConnected } = useTerritorySocket(
       if (response.ok) {
         const data = await response.json();
         showNotification('success', 'Успешно', `Добавлено игроков: ${data.added}`);
-        setShowPlayersDialog(false);
-        setSelectedUsers([]);
+        handleCloseAddPlayersDialog();
         await loadMapData(activeMap.id);
       } else {
         const error = await response.json();
@@ -1115,22 +1385,235 @@ const { isConnected } = useTerritorySocket(
     }
   };
 
-  const handleRemovePlayer = async (userId: string) => {
+  const handleCloseAddPlayersDialog = () => {
+    setShowPlayersDialog(false);
+    setSelectedUsers([]);
+    setPlayerSearchQuery('');
+    setTeamSearchQuery('');
+    setAddPlayerStep('select_captain');
+    setSelectedCaptain(null);
+    setTeamSlots([]);
+  };
+
+  const handleRemovePlayer = async (userId: string, displayName: string) => {
     if (!activeMap) return;
+
+    showConfirm(
+      'Удалить игрока?',
+      `Удалить игрока ${displayName} с дропмапы?`,
+      async () => {
+        try {
+          const token = getAuthToken();
+          if (!token) return;
+          const response = await fetch(`/api/maps/${activeMap.id}/players/${userId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (response.ok) {
+            showNotification('success', 'Успешно', 'Игрок удален');
+            await loadMapData(activeMap.id);
+          } else {
+            throw new Error('Не удалось удалить игрока');
+          }
+        } catch (error: any) {
+          showNotification('error', 'Ошибка', error.message);
+        }
+      },
+      'destructive'
+    );
+  };
+
+  const handleRemoveTeam = async (teamId: string, teamName: string) => {
+    if (!activeMap) return;
+
+    showConfirm(
+      'Удалить команду?',
+      `Удалить команду "${teamName}" с дропмапы и турнира?\n\nВсе игроки команды будут удалены с дропмапы, а команда - из турнира.`,
+      async () => {
+        try {
+          const token = getAuthToken();
+          if (!token) return;
+
+          // Find all team members
+          const teamMembers = eligiblePlayers.filter(p => p.teamInfo?.teamId === teamId);
+
+          // Remove all team members from dropmap
+          for (const member of teamMembers) {
+            const response = await fetch(`/api/maps/${activeMap.id}/players/${member.userId}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (!response.ok) {
+              throw new Error(`Не удалось удалить игрока ${member.displayName}`);
+            }
+          }
+
+          // If this is a real tournament team (not virtual invite team), delete from tournament
+          // Virtual teams created via invites have teamId starting with 'team-invite-'
+          // Real teams created via "Create Team" UI have UUID teamId
+          if (activeMap.tournamentId && !teamId.startsWith('team-invite-')) {
+            const deleteTeamResponse = await fetch(`/api/tournaments/${activeMap.tournamentId}/teams/${teamId}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+
+            if (!deleteTeamResponse.ok) {
+              console.warn('Failed to delete tournament team, but dropmap cleanup succeeded');
+            }
+          }
+
+          showNotification('success', 'Успешно', `Команда "${teamName}" удалена`);
+          await loadMapData(activeMap.id);
+        } catch (error: any) {
+          showNotification('error', 'Ошибка', error.message);
+        }
+      },
+      'destructive'
+    );
+  };
+
+  const handleRemovePlayerFromTeam = async (userId: string, displayName: string, teamId: string) => {
+    if (!activeMap) return;
+
+    const teamMembers = eligiblePlayers.filter(p => p.teamInfo?.teamId === teamId);
+    const isLeader = eligiblePlayers.find(p => p.userId === userId)?.teamInfo?.isLeader;
+
+    if (isLeader && teamMembers.length > 1) {
+      showConfirm(
+        'Удалить капитана?',
+        `Удалить капитана ${displayName}?\n\nЭто удалит всю команду, так как ${displayName} является капитаном.`,
+        async () => {
+          await handleRemoveTeam(teamId, `Team ${displayName}`);
+        },
+        'destructive'
+      );
+      return;
+    }
+
+    showConfirm(
+      'Удалить из команды?',
+      `Удалить ${displayName} из команды?`,
+      async () => {
+        try {
+          const token = getAuthToken();
+          if (!token) return;
+
+          const response = await fetch(`/api/maps/${activeMap.id}/players/${userId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+
+          if (response.ok) {
+            showNotification('success', 'Успешно', `${displayName} удален из команды`);
+            await loadMapData(activeMap.id);
+          } else {
+            throw new Error('Не удалось удалить игрока');
+          }
+        } catch (error: any) {
+          showNotification('error', 'Ошибка', error.message);
+        }
+      },
+      'destructive'
+    );
+  };
+
+  const getMaxTeamSize = () => {
+    const teamMode = activeMap?.tournament?.teamMode;
+    if (!teamMode || teamMode === 'solo') return 1;
+    const teamSizeMap = { duo: 2, trio: 3, squad: 4 };
+    return teamSizeMap[teamMode as keyof typeof teamSizeMap] || 4;
+  };
+
+  const handleAddPlayerToTeam = (teamId: string, teamName: string, currentMembers: EligiblePlayer[]) => {
+    setAddPlayerToTeamForm({
+      teamId,
+      teamName,
+      currentMembers,
+      playerType: '',
+      selectedUserId: '',
+      virtualPlayerName: '',
+      searchQuery: '',
+    });
+    setShowAddPlayerToTeamDialog(true);
+  };
+
+  const handleSubmitAddPlayerToTeam = async () => {
+    if (!activeMap) return;
+
     try {
       const token = getAuthToken();
       if (!token) return;
-      const response = await fetch(`/api/maps/${activeMap.id}/players/${userId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (response.ok) {
-        showNotification('success', 'Успешно', 'Игрок удален');
-        await loadMapData(activeMap.id);
+
+      let userId: string;
+      let displayName: string;
+
+      if (addPlayerToTeamForm.playerType === 'real') {
+        // Real user
+        if (!addPlayerToTeamForm.selectedUserId) {
+          showNotification('error', 'Ошибка', 'Выберите игрока');
+          return;
+        }
+        const selectedUser = allUsers.find(u => u.id === addPlayerToTeamForm.selectedUserId);
+        if (!selectedUser) {
+          showNotification('error', 'Ошибка', 'Игрок не найден');
+          return;
+        }
+        userId = selectedUser.id;
+        displayName = selectedUser.displayName;
+      } else if (addPlayerToTeamForm.playerType === 'virtual') {
+        // Virtual player
+        if (!addPlayerToTeamForm.virtualPlayerName.trim()) {
+          showNotification('error', 'Ошибка', 'Введите никнейм виртуального игрока');
+          return;
+        }
+        userId = `virtual-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+        displayName = addPlayerToTeamForm.virtualPlayerName.trim();
       } else {
-        throw new Error('Не удалось удалить игрока');
+        showNotification('error', 'Ошибка', 'Выберите тип игрока');
+        return;
       }
+
+      const response = await fetch(`/api/maps/${activeMap.id}/add-player-to-team`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          userId,
+          displayName,
+          sourceType: 'invite',
+          teamId: addPlayerToTeamForm.teamId,
+          isTeamLeader: false,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Не удалось добавить игрока');
+      }
+
+      showNotification('success', 'Успешно', `${displayName} добавлен в команду "${addPlayerToTeamForm.teamName}"`);
+
+      // Reset form
+      setAddPlayerToTeamForm({
+        teamId: '',
+        teamName: '',
+        currentMembers: [],
+        playerType: '',
+        selectedUserId: '',
+        virtualPlayerName: '',
+        searchQuery: '',
+      });
+
+      setShowAddPlayerToTeamDialog(false);
+
+      // Reload map data
+      await loadMapData(activeMap.id);
+
+      console.log('✅ Player added successfully, data reloaded');
     } catch (error: any) {
+      console.error('❌ Error adding player:', error);
       showNotification('error', 'Ошибка', error.message);
     }
   };
@@ -1222,24 +1705,30 @@ const { isConnected } = useTerritorySocket(
   };
   
   const handleDeleteTerritory = async (territory: Territory) => {
-    if (!confirm(`Удалить локацию "${territory.name}"?`)) return;
-    try {
-      const token = getAuthToken();
-      if (!token) return;
-      const response = await fetch(`/api/territories/${territory.id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (response.ok) {
-        showNotification('success', 'Успешно', 'Локация удалена');
-        if (activeMap) await loadMapData(activeMap.id);
-      } else {
-        const error = await response.json();
-        throw new Error(error.error);
-      }
-    } catch (error: any) {
-      showNotification('error', 'Ошибка', error.message || 'Не удалось удалить локацию');
-    }
+    showConfirm(
+      'Удалить локацию?',
+      `Удалить локацию "${territory.name}"?`,
+      async () => {
+        try {
+          const token = getAuthToken();
+          if (!token) return;
+          const response = await fetch(`/api/territories/${territory.id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (response.ok) {
+            showNotification('success', 'Успешно', 'Локация удалена');
+            if (activeMap) await loadMapData(activeMap.id);
+          } else {
+            const error = await response.json();
+            throw new Error(error.error);
+          }
+        } catch (error: any) {
+          showNotification('error', 'Ошибка', error.message || 'Не удалось удалить локацию');
+        }
+      },
+      'destructive'
+    );
   };
   
   const handleSaveEditTerritory = async () => {
@@ -1352,33 +1841,39 @@ const { isConnected } = useTerritorySocket(
 };
 
   const handleRemovePlayerFromTerritory = async (territoryId: string, userId: string) => {
-    if (!confirm('Убрать игрока с этой локации?')) return;
-    try {
-      const token = getAuthToken();
-      if (!token) return;
-      const response = await fetch(`/api/admin/territories/${territoryId}/remove-player`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
-      });
-      if (response.ok) {
-        showNotification('success', 'Успешно', 'Игрок убран с локации');
-        // WebSocket обновит состояние автоматически, но обновим selectedTerritory локально
-        if (selectedTerritory && selectedTerritory.id === territoryId) {
-          setSelectedTerritory({
-            ...selectedTerritory,
-            claims: (selectedTerritory.claims || []).filter(claim => claim.userId !== userId)
+    showConfirm(
+      'Убрать игрока?',
+      'Убрать игрока с этой локации?',
+      async () => {
+        try {
+          const token = getAuthToken();
+          if (!token) return;
+          const response = await fetch(`/api/admin/territories/${territoryId}/remove-player`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId }),
           });
+          if (response.ok) {
+            showNotification('success', 'Успешно', 'Игрок убран с локации');
+            // WebSocket обновит состояние автоматически, но обновим selectedTerritory локально
+            if (selectedTerritory && selectedTerritory.id === territoryId) {
+              setSelectedTerritory({
+                ...selectedTerritory,
+                claims: (selectedTerritory.claims || []).filter(claim => claim.userId !== userId)
+              });
+            }
+          } else {
+            const error = await response.json();
+            throw new Error(error.error);
+          }
+        } catch (error: any) {
+          showNotification('error', 'Ошибка', error.message || 'Не удалось убрать игрока');
         }
-      } else {
-        const error = await response.json();
-        throw new Error(error.error);
-      }
-    } catch (error: any) {
-      showNotification('error', 'Ошибка', error.message || 'Не удалось убрать игрока');
-    }
+      },
+      'destructive'
+    );
   };
-  
+
   // ===================================================
   // ========== SVG & INTERACTIVITY HANDLERS  ==========
   // ===================================================
@@ -1782,9 +2277,7 @@ const resetZoom = useCallback(() => {
               <div className="space-y-2">
                 <Button size="sm" variant="outline" className="w-full justify-start" onClick={() => { setIsDrawingMode(true); setCurrentPoints([]); }} disabled={isDrawingMode}><Plus className="h-4 w-4 mr-2" />Создать локацию</Button>
                 <Button size="sm" variant="outline" className="w-full justify-start" onClick={() => setShowAssignPlayerDialog(true)}><User className="h-4 w-4 mr-2" />Назначить игрока</Button>
-                <Button size="sm" variant="outline" className="w-full justify-start" onClick={() => setShowPlayersDialog(true)}><UserPlus className="h-4 w-4 mr-2" />Добавить игроков</Button>
-                <Button size="sm" variant="outline" className="w-full justify-start" onClick={() => setShowInviteDialog(true)}><LinkIcon className="h-4 w-4 mr-2" />Создать инвайт</Button>
-                <Button size="sm" variant="outline" className="w-full justify-start" onClick={() => setShowImportDialog(true)}><Upload className="h-4 w-4 mr-2" />Импорт из турнира</Button>
+                <Button size="sm" variant="outline" className="w-full justify-start" onClick={() => setShowPlayersDialog(true)}><Users className="h-4 w-4 mr-2" />Управление игроками</Button>
                 <Button size="sm" variant="outline" className="w-full justify-start" onClick={() => setShowSettingsDialog(true)}><Settings className="h-4 w-4 mr-2" />Настройки карты</Button>
               </div>
             </div>
@@ -2161,7 +2654,7 @@ const resetZoom = useCallback(() => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between"><h4 className="font-semibold text-sm">Игроки на локации</h4><Badge variant="outline">
     {selectedTerritory.claims?.length || 0}
-    {editTerritoryForm.maxPlayers < 999 && ` / ${editTerritoryForm.maxPlayers}`}
+    {Number(editTerritoryForm.maxPlayers) < 999 && ` / ${editTerritoryForm.maxPlayers}`}
   </Badge></div>
                 {(() => {
                   const currentClaims = selectedTerritory.claims || [];
@@ -2178,7 +2671,7 @@ const resetZoom = useCallback(() => {
                 })()}
                 {(() => {
                   const currentPlayerCount = selectedTerritory.claims?.length || 0;
-                  const canAddMore = currentPlayerCount < editTerritoryForm.maxPlayers;
+                  const canAddMore = currentPlayerCount < Number(editTerritoryForm.maxPlayers);
 
                   const availablePlayers = eligiblePlayers.filter(p => !selectedTerritory.claims?.some(claim => claim.userId === p.userId));
 
@@ -2246,30 +2739,505 @@ const resetZoom = useCallback(() => {
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog open={showPlayersDialog} onOpenChange={(open) => {setShowPlayersDialog(open); if (!open) setPlayerSearchQuery('');}}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Добавить игроков</DialogTitle><DialogDescription>Выберите пользователей для доступа к карте</DialogDescription></DialogHeader>
-          <div className="space-y-4">
-            <div><Label>Поиск игроков</Label><Input value={playerSearchQuery} onChange={(e) => setPlayerSearchQuery(e.target.value)} placeholder="Введите имя или username..." className="w-full" /></div>
-            {selectedUsers.length > 0 && (<div className="flex items-center justify-between bg-primary/10 p-2 rounded"><span className="text-sm font-medium">Выбрано: {selectedUsers.length}</span><Button size="sm" variant="ghost" onClick={() => setSelectedUsers([])}>Очистить</Button></div>)}
-            <div className="max-h-96 overflow-y-auto border rounded p-2">
-              {filteredUsers.length === 0 ? (<div className="text-center py-8 text-muted-foreground"><Users className="h-8 w-8 mx-auto mb-2 opacity-50" /><p className="text-sm">Ничего не найдено</p></div>) : (
-                <div className="space-y-1">
-                  {filteredUsers.map(u => { const isSelected = selectedUsers.includes(u.id); const isAlreadyAdded = eligiblePlayers.some(p => p.userId === u.id); return (
-                    <label key={u.id} className={cn("flex items-center gap-3 p-2 rounded cursor-pointer transition-colors", isAlreadyAdded ? "opacity-50 cursor-not-allowed" : "hover:bg-muted", isSelected && !isAlreadyAdded && "bg-primary/10")}>
-                      <input type="checkbox" checked={isSelected} disabled={isAlreadyAdded} onChange={(e) => { if (e.target.checked) { setSelectedUsers([...selectedUsers, u.id]); } else { setSelectedUsers(selectedUsers.filter(id => id !== u.id)); }}} className="cursor-pointer" />
-                      <div className="flex-1"><div className="text-sm font-medium">{u.displayName}</div><div className="text-xs text-muted-foreground">@{u.username}</div></div>
-                      {isAlreadyAdded && (<Badge variant="secondary" className="text-xs">Уже добавлен</Badge>)}
-                    </label>
-                  );})}
+      <Dialog open={showPlayersDialog} onOpenChange={(open) => {if (!open) handleCloseAddPlayersDialog();}}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          {addPlayerStep === 'select_captain' ? (
+            // Main view: List of teams
+            <>
+              <DialogHeader>
+                <div className="flex items-center justify-between">
+                  <DialogTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5 text-primary" />
+                    Управление игроками
+                  </DialogTitle>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setShowPlayersDialog(false);
+                      setShowInviteDialog(true);
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <LinkIcon className="h-4 w-4" />
+                    Создать инвайт
+                  </Button>
+                </div>
+                <DialogDescription>
+                  {activeMap?.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo' ? (
+                    <>
+                      Режим: <span className="font-medium text-foreground">
+                        {activeMap.tournament.teamMode === 'duo' ? 'Дуо (2 игрока)' :
+                         activeMap.tournament.teamMode === 'trio' ? 'Трио (3 игрока)' :
+                         'Сквад (4 игрока)'}
+                      </span>
+                      {' • '}
+                      {eligiblePlayers.length} {eligiblePlayers.length === 1 ? 'игрок' : 'игроков'}
+                    </>
+                  ) : (
+                    `${eligiblePlayers.length} игроков на дропмапе`
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+
+              {eligiblePlayers.length > 0 && (
+                <div className="px-1">
+                  <Input
+                    value={teamSearchQuery}
+                    onChange={(e) => setTeamSearchQuery(e.target.value)}
+                    placeholder={activeMap?.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo'
+                      ? "Поиск по командам и игрокам..."
+                      : "Поиск по игрокам..."}
+                    className="w-full"
+                  />
                 </div>
               )}
-            </div>
-            <div className="flex gap-2">
-              <Button onClick={handleAddPlayers} disabled={selectedUsers.length === 0} className="flex-1"><UserPlus className="h-4 w-4 mr-2" />Добавить ({selectedUsers.length})</Button>
-              <Button variant="outline" onClick={() => { setShowPlayersDialog(false); setPlayerSearchQuery(''); }} className="flex-1">Отмена</Button>
-            </div>
-          </div>
+
+              <div className="flex-1 overflow-y-auto space-y-2">
+                {eligiblePlayers.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Users className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                    <p className="font-medium">Нет игроков</p>
+                    <p className="text-sm mt-1">Добавьте игроков или команды</p>
+                  </div>
+                ) : (
+                  <>
+                    {activeMap?.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo' ? (
+                      // Team mode: Group by teams
+                      (() => {
+                        // Group players by teamId
+                        const teams = new Map();
+                        eligiblePlayers.forEach(player => {
+                          const teamId = player.teamInfo?.teamId || 'solo';
+                          if (!teams.has(teamId)) {
+                            teams.set(teamId, []);
+                          }
+                          teams.get(teamId).push(player);
+                        });
+
+                        // Filter teams based on search query
+                        const filteredTeams = Array.from(teams.entries()).filter(([teamId, members]: [string, EligiblePlayer[]]) => {
+                          if (!teamSearchQuery) return true;
+                          const query = teamSearchQuery.toLowerCase();
+                          const leader = members.find((m: EligiblePlayer) => m.teamInfo?.isLeader);
+                          const teamName = (members[0]?.teamInfo?.teamName || `Team ${leader?.displayName || 'Unknown'}`).toLowerCase();
+
+                          // Search in team name or any member name
+                          return teamName.includes(query) ||
+                                 members.some((m: EligiblePlayer) =>
+                                   m.displayName.toLowerCase().includes(query) ||
+                                   m.user?.username.toLowerCase().includes(query)
+                                 );
+                        });
+
+                        if (filteredTeams.length === 0) {
+                          return (
+                            <div className="text-center py-8 text-muted-foreground">
+                              <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                              <p className="text-sm">Ничего не найдено</p>
+                            </div>
+                          );
+                        }
+
+                        return filteredTeams.map(([teamId, members]: [string, EligiblePlayer[]]) => {
+                          const leader = members.find((m: EligiblePlayer) => m.teamInfo?.isLeader);
+                          const teamName = members[0]?.teamInfo?.teamName || `Team ${leader?.displayName || 'Unknown'}`;
+
+                          return (
+                            <div key={teamId} className="border rounded-lg p-3 bg-card hover:bg-muted/20 transition-colors">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <Crown className="h-4 w-4 text-yellow-500 flex-shrink-0" />
+                                  <span className="font-semibold truncate">{teamName}</span>
+                                  <Badge variant="secondary" className="text-xs flex-shrink-0">
+                                    {members.length}
+                                  </Badge>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  {members.length < getMaxTeamSize() && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleAddPlayerToTeam(teamId, teamName, members)}
+                                      className="h-7 px-2 text-primary hover:text-primary hover:bg-primary/10 flex-shrink-0"
+                                      title="Добавить игрока в команду"
+                                    >
+                                      <UserPlus className="h-3.5 w-3.5" />
+                                    </Button>
+                                  )}
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleRemoveTeam(teamId, teamName)}
+                                    className="h-7 px-2 text-destructive hover:text-destructive hover:bg-destructive/10 flex-shrink-0"
+                                    title="Удалить всю команду"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1 ml-6">
+                                {members.map((member: EligiblePlayer) => (
+                                  <div key={member.userId} className="flex items-center justify-between gap-2 text-sm group">
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      {member.teamInfo?.isLeader && (
+                                        <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
+                                      )}
+                                      <span className="font-medium truncate">{member.displayName}</span>
+                                      {member.user && (
+                                        <span className="text-muted-foreground text-xs truncate">@{member.user.username}</span>
+                                      )}
+                                      {member.userId.startsWith('virtual-') && (
+                                        <Badge variant="outline" className="text-xs flex-shrink-0">Virtual</Badge>
+                                      )}
+                                    </div>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleRemovePlayerFromTeam(member.userId, member.displayName, teamId)}
+                                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive hover:bg-destructive/10 flex-shrink-0"
+                                      title={member.teamInfo?.isLeader ? "Удалить капитана (удалит всю команду)" : "Удалить из команды"}
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()
+                    ) : (
+                      // Solo mode: Simple list with filtering
+                      (() => {
+                        const filteredPlayers = eligiblePlayers.filter(player => {
+                          if (!teamSearchQuery) return true;
+                          const query = teamSearchQuery.toLowerCase();
+                          return player.displayName.toLowerCase().includes(query) ||
+                                 player.user?.username.toLowerCase().includes(query);
+                        });
+
+                        if (filteredPlayers.length === 0) {
+                          return (
+                            <div className="text-center py-8 text-muted-foreground">
+                              <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                              <p className="text-sm">Ничего не найдено</p>
+                            </div>
+                          );
+                        }
+
+                        return filteredPlayers.map(player => (
+                          <div key={player.userId} className="flex items-center justify-between border rounded-lg p-2 hover:bg-muted/20 transition-colors group">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium truncate">{player.displayName}</div>
+                              {player.user && (
+                                <div className="text-sm text-muted-foreground truncate">@{player.user.username}</div>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleRemovePlayer(player.userId, player.displayName)}
+                              className="h-7 px-2 opacity-70 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive hover:bg-destructive/10 flex-shrink-0"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ));
+                      })()
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-4 border-t">
+                <Button
+                  onClick={() => setAddPlayerStep('build_team')}
+                  className="flex-1"
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  {activeMap?.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo'
+                    ? 'Добавить команду'
+                    : 'Добавить игроков'}
+                </Button>
+                <Button variant="outline" onClick={handleCloseAddPlayersDialog} className="flex-1">
+                  Закрыть
+                </Button>
+              </div>
+            </>
+          ) : addPlayerStep === 'build_team' ? (
+            // Step 2: Select Captain / Select Players
+            activeMap?.tournament?.teamMode && activeMap.tournament.teamMode !== 'solo' ? (
+              // Team mode: Select captain first
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Crown className="h-5 w-5 text-yellow-500" />
+                    Выберите капитана команды
+                  </DialogTitle>
+                  <DialogDescription>
+                    Режим: <span className="font-medium text-foreground">
+                      {activeMap.tournament.teamMode === 'duo' ? 'Дуо (2 игрока)' :
+                       activeMap.tournament.teamMode === 'trio' ? 'Трио (3 игрока)' :
+                       'Сквад (4 игрока)'}
+                    </span>
+                    <br />
+                    Выберите одного игрока, который станет капитаном команды
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
+                  <div>
+                    <Label>Поиск игроков</Label>
+                    <Input
+                      value={playerSearchQuery}
+                      onChange={(e) => setPlayerSearchQuery(e.target.value)}
+                      placeholder="Введите имя или username..."
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto border rounded p-2">
+                    {filteredUsers.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">Ничего не найдено</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {filteredUsers.map(u => {
+                          const isSelected = selectedUsers.includes(u.id);
+                          const isAlreadyAdded = eligiblePlayers.some(p => p.userId === u.id);
+
+                          return (
+                            <label
+                              key={u.id}
+                              className={cn(
+                                "flex items-center gap-3 p-3 rounded cursor-pointer transition-colors border",
+                                isAlreadyAdded ? "opacity-50 cursor-not-allowed bg-muted" : "hover:bg-muted hover:border-primary/50",
+                                isSelected && !isAlreadyAdded && "bg-primary/10 border-primary"
+                              )}
+                            >
+                              <input
+                                type="radio"
+                                name="captain"
+                                checked={isSelected}
+                                disabled={isAlreadyAdded}
+                                onChange={() => {
+                                  setSelectedUsers([u.id]);
+                                }}
+                                className="cursor-pointer"
+                              />
+                              <div className="flex-1">
+                                <div className="text-sm font-medium flex items-center gap-2">
+                                  {u.displayName}
+                                  {isSelected && <Crown className="h-4 w-4 text-yellow-500" />}
+                                </div>
+                                <div className="text-xs text-muted-foreground">@{u.username}</div>
+                              </div>
+                              {isAlreadyAdded && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Уже добавлен
+                                </Badge>
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2 pt-2 border-t">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setAddPlayerStep('select_captain');
+                        setSelectedUsers([]);
+                      }}
+                      className="flex-1"
+                    >
+                      <ChevronDown className="h-4 w-4 mr-2 rotate-90" />
+                      Назад
+                    </Button>
+                    <Button
+                      onClick={handleAddPlayers}
+                      disabled={selectedUsers.length === 0}
+                      className="flex-1"
+                    >
+                      <ChevronDown className="h-4 w-4 mr-2 -rotate-90" />
+                      Выбрать капитана
+                    </Button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              // Solo mode: Select multiple players
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <UserPlus className="h-5 w-5 text-primary" />
+                    Добавить игроков
+                  </DialogTitle>
+                  <DialogDescription>
+                    Выберите пользователей для доступа к карте
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
+                  <div>
+                    <Label>Поиск игроков</Label>
+                    <Input
+                      value={playerSearchQuery}
+                      onChange={(e) => setPlayerSearchQuery(e.target.value)}
+                      placeholder="Введите имя или username..."
+                      className="w-full"
+                    />
+                  </div>
+
+                  {selectedUsers.length > 0 && (
+                    <div className="flex items-center justify-between bg-primary/10 p-2 rounded">
+                      <span className="text-sm font-medium">Выбрано: {selectedUsers.length}</span>
+                      <Button size="sm" variant="ghost" onClick={() => setSelectedUsers([])}>
+                        Очистить
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="flex-1 overflow-y-auto border rounded p-2">
+                    {filteredUsers.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">Ничего не найдено</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {filteredUsers.map(u => {
+                          const isSelected = selectedUsers.includes(u.id);
+                          const isAlreadyAdded = eligiblePlayers.some(p => p.userId === u.id);
+
+                          return (
+                            <label
+                              key={u.id}
+                              className={cn(
+                                "flex items-center gap-3 p-3 rounded cursor-pointer transition-colors border",
+                                isAlreadyAdded ? "opacity-50 cursor-not-allowed bg-muted" : "hover:bg-muted hover:border-primary/50",
+                                isSelected && !isAlreadyAdded && "bg-primary/10 border-primary"
+                              )}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                disabled={isAlreadyAdded}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedUsers([...selectedUsers, u.id]);
+                                  } else {
+                                    setSelectedUsers(selectedUsers.filter(id => id !== u.id));
+                                  }
+                                }}
+                                className="cursor-pointer"
+                              />
+                              <div className="flex-1">
+                                <div className="text-sm font-medium">{u.displayName}</div>
+                                <div className="text-xs text-muted-foreground">@{u.username}</div>
+                              </div>
+                              {isAlreadyAdded && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Уже добавлен
+                                </Badge>
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2 pt-2 border-t">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setAddPlayerStep('select_captain');
+                        setSelectedUsers([]);
+                      }}
+                      className="flex-1"
+                    >
+                      <ChevronDown className="h-4 w-4 mr-2 rotate-90" />
+                      Назад
+                    </Button>
+                    <Button
+                      onClick={handleAddPlayers}
+                      disabled={selectedUsers.length === 0}
+                      className="flex-1"
+                    >
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Добавить ({selectedUsers.length})
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )
+          ) : (
+            // Step 3: Build Team (existing code)
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-primary" />
+                  Соберите команду
+                </DialogTitle>
+                <DialogDescription>
+                  Капитан: <span className="font-medium text-foreground">
+                    {allUsers.find(u => u.id === selectedCaptain)?.displayName}
+                  </span>
+                  <br />
+                  Добавьте членов команды или оставьте слоты пустыми
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 flex-1 overflow-y-auto">
+                {teamSlots.map((slot, index) => (
+                  <TeamSlotEditor
+                    key={index}
+                    slotNumber={index + 1}
+                    slot={slot}
+                    allUsers={allUsers.filter(u =>
+                      u.id !== selectedCaptain &&
+                      !teamSlots.some(s => s.userId === u.id) &&
+                      !eligiblePlayers.some(p => p.userId === u.id)
+                    )}
+                    onChange={(newSlot) => {
+                      const newSlots = [...teamSlots];
+                      newSlots[index] = newSlot;
+                      setTeamSlots(newSlots);
+                    }}
+                  />
+                ))}
+              </div>
+
+              <div className="flex gap-2 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setAddPlayerStep('build_team');
+                    setSelectedCaptain(null);
+                    setTeamSlots([]);
+                  }}
+                  className="flex-1"
+                >
+                  <ChevronDown className="h-4 w-4 mr-2 rotate-90" />
+                  Назад
+                </Button>
+                <Button
+                  onClick={handleSubmitTeam}
+                  className="flex-1"
+                >
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Добавить команду
+                </Button>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
       <Dialog open={showInviteDialog} onOpenChange={setShowInviteDialog}>
@@ -2315,6 +3283,36 @@ const resetZoom = useCallback(() => {
           <div className="space-y-4">
             {activeMap && (<>
               <div className="flex items-center gap-2"><input type="checkbox" id="settingsIsLocked" checked={settingsForm.isLocked} onChange={(e) => setSettingsForm({ ...settingsForm, isLocked: e.target.checked })} /><Label htmlFor="settingsIsLocked">Заблокировать карту</Label></div>
+
+              {/* Public Link */}
+              <div className="p-4 bg-muted/50 rounded-lg space-y-2">
+                <Label className="text-sm font-medium">Публичная ссылка</Label>
+                <p className="text-xs text-muted-foreground">Поделитесь этой ссылкой для просмотра карты без авторизации</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const publicUrl = `${window.location.origin}/dropmap/view/${activeMap.id}`;
+                    navigator.clipboard.writeText(publicUrl).then(() => {
+                      toast({
+                        title: "Ссылка скопирована!",
+                        description: "Публичная ссылка скопирована в буфер обмена",
+                      });
+                    }).catch(() => {
+                      toast({
+                        title: "Ошибка",
+                        description: "Не удалось скопировать ссылку",
+                        variant: "destructive",
+                      });
+                    });
+                  }}
+                  className="w-full"
+                >
+                  <LinkIcon className="h-4 w-4 mr-2" />
+                  Копировать публичную ссылку
+                </Button>
+              </div>
+
               <div><Label>Изображение карты</Label><div className="space-y-2"><input ref={mapImageInputRef} type="file" accept="image/*" onChange={(e) => setSettingsForm(prev => ({ ...prev, mapImageFile: e.target.files?.[0] || null }))} className="hidden" /><Button type="button" variant="outline" onClick={() => mapImageInputRef.current?.click()} className="w-full"><ImageIcon className="h-4 w-4 mr-2" />{settingsForm.mapImageFile ? settingsForm.mapImageFile.name : 'Выбрать новое изображение'}</Button>{settingsForm.mapImageFile && (<div className="text-xs text-muted-foreground">Размер: {(settingsForm.mapImageFile.size / 1024 / 1024).toFixed(2)} МБ</div>)}{activeMap.mapImageUrl && !settingsForm.mapImageFile && (<div className="text-xs text-muted-foreground">Текущее изображение установлено</div>)}</div></div>
               <Button onClick={handleSaveSettings} className="w-full">Сохранить</Button>
             </>)}
@@ -2341,6 +3339,182 @@ const resetZoom = useCallback(() => {
 </select>
 </div>
             <Button onClick={() => handleAssignPlayerToTerritory(assignPlayerForm.territoryId, assignPlayerForm.playerId)} disabled={!assignPlayerForm.territoryId || !assignPlayerForm.playerId} className="w-full">Назначить</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Player to Team Dialog */}
+      <Dialog open={showAddPlayerToTeamDialog} onOpenChange={setShowAddPlayerToTeamDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Добавить игрока в команду</DialogTitle>
+            <DialogDescription>
+              {addPlayerToTeamForm.teamName} ({addPlayerToTeamForm.currentMembers.length}/{getMaxTeamSize()})
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {!addPlayerToTeamForm.playerType ? (
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setAddPlayerToTeamForm({ ...addPlayerToTeamForm, playerType: 'real' })}
+                  className="h-auto py-6 flex flex-col items-center gap-2"
+                >
+                  <User className="h-6 w-6" />
+                  <div className="text-center">
+                    <div className="font-medium">Реальный пользователь</div>
+                    <div className="text-xs text-muted-foreground mt-1">С аккаунтом на сайте</div>
+                  </div>
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setAddPlayerToTeamForm({ ...addPlayerToTeamForm, playerType: 'virtual' })}
+                  className="h-auto py-6 flex flex-col items-center gap-2"
+                >
+                  <UserPlus className="h-6 w-6" />
+                  <div className="text-center">
+                    <div className="font-medium">Виртуальный игрок</div>
+                    <div className="text-xs text-muted-foreground mt-1">Без аккаунта</div>
+                  </div>
+                </Button>
+              </div>
+            ) : addPlayerToTeamForm.playerType === 'real' ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>Выберите игрока с сайта</Label>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setAddPlayerToTeamForm({ ...addPlayerToTeamForm, playerType: '', selectedUserId: '', searchQuery: '' })}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                <Input
+                  placeholder="Поиск по никнейму..."
+                  value={addPlayerToTeamForm.searchQuery}
+                  onChange={(e) => setAddPlayerToTeamForm({ ...addPlayerToTeamForm, searchQuery: e.target.value })}
+                />
+                <div className="border rounded-lg max-h-64 overflow-y-auto">
+                  {allUsers
+                    .filter(u => {
+                      // Filter out users already on the map
+                      const isOnMap = eligiblePlayers.some(p => p.userId === u.id);
+                      if (isOnMap) return false;
+
+                      // Filter by search query
+                      if (!addPlayerToTeamForm.searchQuery) return true;
+                      const query = addPlayerToTeamForm.searchQuery.toLowerCase();
+                      return u.displayName.toLowerCase().includes(query) ||
+                             u.username.toLowerCase().includes(query);
+                    })
+                    .map(u => (
+                      <button
+                        key={u.id}
+                        onClick={() => setAddPlayerToTeamForm({ ...addPlayerToTeamForm, selectedUserId: u.id })}
+                        className={cn(
+                          "w-full text-left p-3 border-b last:border-b-0 hover:bg-muted/50 transition-colors",
+                          addPlayerToTeamForm.selectedUserId === u.id && "bg-primary/10"
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          {addPlayerToTeamForm.selectedUserId === u.id && (
+                            <CheckCircle className="h-4 w-4 text-primary flex-shrink-0" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium truncate">{u.displayName}</div>
+                            <div className="text-xs text-muted-foreground truncate">@{u.username}</div>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  {allUsers.filter(u => {
+                    const isOnMap = eligiblePlayers.some(p => p.userId === u.id);
+                    if (isOnMap) return false;
+                    if (!addPlayerToTeamForm.searchQuery) return true;
+                    const query = addPlayerToTeamForm.searchQuery.toLowerCase();
+                    return u.displayName.toLowerCase().includes(query) ||
+                           u.username.toLowerCase().includes(query);
+                  }).length === 0 && (
+                    <div className="p-6 text-center text-muted-foreground text-sm">
+                      <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p>Нет доступных игроков</p>
+                    </div>
+                  )}
+                </div>
+                <Button
+                  onClick={handleSubmitAddPlayerToTeam}
+                  disabled={!addPlayerToTeamForm.selectedUserId}
+                  className="w-full"
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Добавить игрока
+                </Button>
+              </div>
+            ) : addPlayerToTeamForm.playerType === 'virtual' ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>Никнейм виртуального игрока</Label>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setAddPlayerToTeamForm({ ...addPlayerToTeamForm, playerType: '', virtualPlayerName: '' })}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                <Input
+                  placeholder="Например: Player123"
+                  value={addPlayerToTeamForm.virtualPlayerName}
+                  onChange={(e) => setAddPlayerToTeamForm({ ...addPlayerToTeamForm, virtualPlayerName: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && addPlayerToTeamForm.virtualPlayerName.trim()) {
+                      handleSubmitAddPlayerToTeam();
+                    }
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Виртуальный игрок не привязан к аккаунту на сайте
+                </p>
+                <Button
+                  onClick={handleSubmitAddPlayerToTeam}
+                  disabled={!addPlayerToTeamForm.virtualPlayerName.trim()}
+                  className="w-full"
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Добавить игрока
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmation Dialog */}
+      <Dialog open={confirmDialog.isOpen} onOpenChange={(open) => !open && setConfirmDialog(prev => ({ ...prev, isOpen: false }))}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className={cn("h-5 w-5", confirmDialog.variant === 'destructive' ? "text-destructive" : "text-primary")} />
+              {confirmDialog.title}
+            </DialogTitle>
+            <DialogDescription className="whitespace-pre-line">
+              {confirmDialog.message}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 justify-end mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+            >
+              Отмена
+            </Button>
+            <Button
+              variant={confirmDialog.variant === 'destructive' ? 'destructive' : 'default'}
+              onClick={confirmDialog.onConfirm}
+            >
+              Подтвердить
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

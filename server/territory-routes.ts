@@ -673,6 +673,314 @@ export function registerTerritoryRoutes(app: Express) {
     }
   });
 
+  // Добавить команду на карту (для командных режимов)
+  app.post("/api/maps/:mapId/add-team", async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const { mapId } = req.params;
+      const { captainId, members } = req.body;
+
+      if (!captainId) {
+        return res.status(400).json({ error: "Требуется captainId" });
+      }
+
+      if (!Array.isArray(members)) {
+        return res.status(400).json({ error: "members должен быть массивом" });
+      }
+
+      const [map] = await db
+        .select()
+        .from(dropMapSettings)
+        .where(eq(dropMapSettings.id, mapId));
+
+      if (!map) {
+        return res.status(404).json({ error: "Карта не найдена" });
+      }
+
+      // Get tournament info if map is linked to a tournament
+      let tournament = null;
+      if (map.tournamentId) {
+        const [tournamentData] = await db
+          .select()
+          .from(tournaments)
+          .where(eq(tournaments.id, map.tournamentId));
+        tournament = tournamentData;
+      }
+
+      const isTeamMode = tournament && tournament.teamMode && tournament.teamMode !== 'solo';
+
+      if (!isTeamMode) {
+        return res.status(400).json({ error: "Эта карта не для командного режима" });
+      }
+
+      // Get captain user
+      const captain = await storage.getUser(captainId);
+      if (!captain) {
+        return res.status(404).json({ error: "Капитан не найден" });
+      }
+
+      // Check if captain already on this map
+      const [existingCaptain] = await db
+        .select()
+        .from(dropMapEligiblePlayers)
+        .where(and(
+          eq(dropMapEligiblePlayers.settingsId, mapId),
+          eq(dropMapEligiblePlayers.userId, captainId)
+        ));
+
+      if (existingCaptain) {
+        return res.status(400).json({ error: "Капитан уже добавлен на эту карту" });
+      }
+
+      await db.transaction(async (tx) => {
+        let teamId = null;
+
+        // Check if captain already has a team for this tournament
+        if (tournament) {
+          const [existingReg] = await tx
+            .select()
+            .from(tournamentRegistrations)
+            .where(and(
+              eq(tournamentRegistrations.tournamentId, tournament.id),
+              eq(tournamentRegistrations.userId, captainId)
+            ));
+
+          if (existingReg && existingReg.teamId) {
+            teamId = existingReg.teamId;
+          } else {
+            // Create a new team with captain as leader
+            const teamName = `Team ${captain.displayName}`;
+            const [newTeam] = await tx
+              .insert(tournamentTeams)
+              .values({
+                tournamentId: tournament.id,
+                name: teamName,
+                leaderId: captainId,
+                status: 'registered',
+                paidAmount: 0,
+              })
+              .returning();
+
+            teamId = newTeam.id;
+
+            // Add captain as team member
+            await tx
+              .insert(tournamentTeamMembers)
+              .values({
+                teamId: teamId,
+                userId: captainId,
+                status: 'accepted',
+              });
+
+            // Create or update tournament registration
+            if (existingReg) {
+              await tx
+                .update(tournamentRegistrations)
+                .set({ teamId: teamId })
+                .where(eq(tournamentRegistrations.id, existingReg.id));
+            } else {
+              await tx
+                .insert(tournamentRegistrations)
+                .values({
+                  tournamentId: tournament.id,
+                  userId: captainId,
+                  teamId: teamId,
+                  status: 'registered',
+                  paidAmount: 0,
+                });
+            }
+          }
+        }
+
+        // If no tournament, generate a virtual team ID
+        if (!teamId) {
+          teamId = `virtual-team-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        }
+
+        // Add captain to dropmap
+        await tx
+          .insert(dropMapEligiblePlayers)
+          .values({
+            settingsId: mapId,
+            userId: captainId,
+            displayName: captain.displayName,
+            sourceType: 'manual',
+            addedBy: authResult.adminId,
+            teamId: teamId,
+            isTeamLeader: true,
+          });
+
+        // Add team members
+        for (const member of members) {
+          if (member.type === 'real') {
+            // Real player from site
+            const memberUser = await storage.getUser(member.userId);
+            if (!memberUser) {
+              console.error(`Team member user ${member.userId} not found, skipping`);
+              continue;
+            }
+
+            // Add member to tournament team if tournament exists
+            if (tournament && typeof teamId === 'string' && !teamId.startsWith('virtual-')) {
+              // Add to team members
+              const [existingMember] = await tx
+                .select()
+                .from(tournamentTeamMembers)
+                .where(and(
+                  eq(tournamentTeamMembers.teamId, teamId),
+                  eq(tournamentTeamMembers.userId, member.userId)
+                ));
+
+              if (!existingMember) {
+                await tx
+                  .insert(tournamentTeamMembers)
+                  .values({
+                    teamId: teamId,
+                    userId: member.userId,
+                    status: 'accepted',
+                  });
+              }
+
+              // Create tournament registration for member
+              const [existingMemberReg] = await tx
+                .select()
+                .from(tournamentRegistrations)
+                .where(and(
+                  eq(tournamentRegistrations.tournamentId, tournament.id),
+                  eq(tournamentRegistrations.userId, member.userId)
+                ));
+
+              if (!existingMemberReg) {
+                await tx
+                  .insert(tournamentRegistrations)
+                  .values({
+                    tournamentId: tournament.id,
+                    userId: member.userId,
+                    teamId: teamId,
+                    status: 'registered',
+                    paidAmount: 0,
+                  });
+              }
+            }
+
+            // Add to dropmap eligible players
+            await tx
+              .insert(dropMapEligiblePlayers)
+              .values({
+                settingsId: mapId,
+                userId: member.userId,
+                displayName: memberUser.displayName,
+                sourceType: 'manual',
+                addedBy: authResult.adminId,
+                teamId: teamId,
+                isTeamLeader: false,
+              });
+
+          } else if (member.type === 'virtual') {
+            // Virtual player (nickname only)
+            const virtualUserId = `virtual-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+            await tx
+              .insert(dropMapEligiblePlayers)
+              .values({
+                settingsId: mapId,
+                userId: virtualUserId,
+                displayName: member.displayName,
+                sourceType: 'invite',
+                addedBy: authResult.adminId,
+                teamId: teamId,
+                isTeamLeader: false,
+              });
+          }
+          // Empty slots are skipped - captain can invite later
+        }
+      });
+
+      res.json({
+        message: "Команда успешно добавлена",
+        captainId,
+        membersAdded: members.filter(m => m.type !== 'empty').length,
+      });
+    } catch (error) {
+      console.error('Add team error:', error);
+      res.status(500).json({
+        error: "Не удалось добавить команду",
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Add single player to existing team
+  app.post("/api/maps/:mapId/add-player-to-team", async (req, res) => {
+    try {
+      const authResult = await authenticateAdmin(req);
+      if ('error' in authResult) {
+        return res.status(authResult.status).json({ error: authResult.error });
+      }
+
+      const { mapId } = req.params;
+      const { userId, displayName, teamId, sourceType = 'invite', isTeamLeader = false } = req.body;
+
+      if (!userId || !displayName || !teamId) {
+        return res.status(400).json({ error: "Требуются userId, displayName и teamId" });
+      }
+
+      const [map] = await db
+        .select()
+        .from(dropMapSettings)
+        .where(eq(dropMapSettings.id, mapId));
+
+      if (!map) {
+        return res.status(404).json({ error: "Карта не найдена" });
+      }
+
+      // Check if player already exists on this map
+      const [existing] = await db
+        .select()
+        .from(dropMapEligiblePlayers)
+        .where(and(
+          eq(dropMapEligiblePlayers.settingsId, mapId),
+          eq(dropMapEligiblePlayers.userId, userId)
+        ));
+
+      if (existing) {
+        return res.status(400).json({ error: "Игрок уже добавлен на эту карту" });
+      }
+
+      // Add player to dropmap
+      await db
+        .insert(dropMapEligiblePlayers)
+        .values({
+          settingsId: mapId,
+          userId: userId,
+          displayName: displayName,
+          sourceType: sourceType,
+          addedBy: authResult.adminId,
+          teamId: teamId,
+          isTeamLeader: isTeamLeader,
+        });
+
+      console.log(`✅ Added player to team: ${displayName} (${userId}) → team ${teamId}`);
+
+      res.json({
+        message: "Игрок успешно добавлен в команду",
+        userId,
+        displayName,
+        teamId,
+      });
+    } catch (error) {
+      console.error('Add player to team error:', error);
+      res.status(500).json({
+        error: "Не удалось добавить игрока",
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
   // Удалить игрока с карты
   app.delete("/api/maps/:mapId/players/:userId", async (req, res) => {
     try {
@@ -1681,12 +1989,76 @@ app.get("/api/maps/:mapId/full-data", async (req, res) => {
 
 
 
+// Public API - Get map info without authentication
+app.get("/api/maps/:mapId/public", async (req, res) => {
+  try {
+    const { mapId } = req.params;
+
+    const [mapResult] = await db.select({
+      map: dropMapSettings,
+      tournament: tournaments
+    })
+      .from(dropMapSettings)
+      .leftJoin(tournaments, eq(dropMapSettings.tournamentId, tournaments.id))
+      .where(eq(dropMapSettings.id, mapId))
+      .limit(1);
+
+    if (!mapResult?.map) {
+      return res.status(404).json({ error: "Карта не найдена" });
+    }
+
+    const mapData = {
+      id: mapResult.map.id,
+      name: mapResult.map.name,
+      description: mapResult.map.description,
+      mapImageUrl: mapResult.map.mapImageUrl,
+      mode: mapResult.map.mode,
+      isLocked: mapResult.map.isLocked,
+      tournamentId: mapResult.map.tournamentId,
+      tournament: mapResult.tournament ? {
+        id: mapResult.tournament.id,
+        name: mapResult.tournament.name,
+        teamMode: mapResult.tournament.teamMode,
+      } : null
+    };
+
+    res.json(mapData);
+  } catch (error) {
+    console.error('Error fetching public map:', error);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
 app.get("/api/maps/:mapId/territories/public", async (req, res) => {
   try {
     const territoriesData = await territoryStorage.getMapTerritories(req.params.mapId);
     res.json(territoriesData);
   } catch (error) {
     console.error('Error fetching territories:', error);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+app.get("/api/maps/:mapId/eligible-players/public", async (req, res) => {
+  try {
+    const { mapId } = req.params;
+
+    // Get the map to check if it exists
+    const [mapResult] = await db
+      .select()
+      .from(dropMapSettings)
+      .where(eq(dropMapSettings.id, mapId))
+      .limit(1);
+
+    if (!mapResult) {
+      return res.status(404).json({ error: "Карта не найдена" });
+    }
+
+    // Get eligible players for this map
+    const eligiblePlayers = await territoryStorage.getEligiblePlayers(mapId);
+    res.json(eligiblePlayers);
+  } catch (error) {
+    console.error('Error fetching eligible players:', error);
     res.status(500).json({ error: "Внутренняя ошибка сервера" });
   }
 });
